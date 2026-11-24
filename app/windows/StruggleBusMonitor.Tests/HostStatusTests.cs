@@ -215,6 +215,28 @@ public class HostStatusTests
         Assert.False(HostsLogic.Row(agent, null, Now).HasJoined);
     }
 
+    [Theory]
+    [InlineData("", "")]
+    [InlineData("fleet", "")]
+    [InlineData("https://github.com/u64a/strugglebus#worker-host", "updates from https://github.com/u64a/strugglebus#worker-host")]
+    public void AReleaseSourceOtherThanTheFleetIsShown(string source, string label) =>
+        Assert.Equal(label, HostsLogic.ReleaseSourceLabel(source));
+
+    [Fact]
+    public void TheReleaseSourceIsReadFromTheStatusAndShownOnTheRow()
+    {
+        var moved = Parse("""{"sb_host_status":{"v":1,"agent":"host-office1-host","state":"online","workers":{"busy":0,"max":2},"release":{"source":"https://github.com/u64a/strugglebus#worker-host","serial":6}}}""")!;
+        var unchanged = Parse("""{"sb_host_status":{"v":1,"agent":"host-office1-host","state":"online","workers":{"busy":0,"max":2},"release":{"source":"fleet","serial":5}}}""")!;
+        var hostile = Parse("""{"sb_host_status":{"v":1,"agent":"host-office1-host","release":"elsewhere"}}""")!;
+
+        Assert.Equal("https://github.com/u64a/strugglebus#worker-host", moved.ReleaseSource);
+        Assert.Equal("0 of 2 workers busy  ·  updates from https://github.com/u64a/strugglebus#worker-host",
+            HostsLogic.Row(Agent("host-office1-host", Now), moved, Now).Meta);
+        Assert.Equal("0 of 2 workers busy", HostsLogic.Row(Agent("host-office1-host", Now), unchanged, Now).Meta);
+        Assert.Equal("", hostile.ReleaseSource);
+        Assert.Equal("", Parse(Full)!.ReleaseSource);
+    }
+
     [Fact]
     public void TheSummaryCountsSilentHostsAndThoseNeedingAttention()
     {
