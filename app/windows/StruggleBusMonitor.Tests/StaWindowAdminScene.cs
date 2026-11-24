@@ -48,6 +48,15 @@ internal sealed class StaWindowAdminPlatform : IWindowPlatform
         return ExportPath;
     }
 
+    public string? HostFilePath { get; set; }
+    public List<string> SuggestedHostFileNames { get; } = [];
+
+    public string? PickHostFilePath(Window owner, string suggestedName)
+    {
+        SuggestedHostFileNames.Add(suggestedName);
+        return HostFilePath;
+    }
+
     public void SetClipboardText(string text)
     {
         if (ClipboardBusy) throw new COMException("CLIPBRD_E_CANT_OPEN");

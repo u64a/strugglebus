@@ -28,6 +28,10 @@ public partial class MainWindow
         AdminDeviceList.ItemsSource = _adminDevices;
         AdminSpnList.ItemsSource = _adminServicePrincipals;
         AdminHostList.ItemsSource = _adminHosts;
+        HostSigners.Text = _settings.HostSigners;
+        HostRemotes.Text = _settings.HostRemotes;
+        HostFleetGit.IsChecked = _settings.HostFleetSource == "git";
+        HostFleetEither.IsChecked = _settings.HostFleetSource == "either";
         UpdateEnrollmentForm();
         SetExportWindow(DateTimeOffset.Now.AddDays(-1), DateTimeOffset.Now);
         ShowAdminTab();
@@ -48,6 +52,82 @@ public partial class MainWindow
     }
 
     internal async void AdminHostsReload_Click(object sender, RoutedEventArgs e) => await RunBusy(LoadHostsAsync, sender);
+
+    // ---- Add a host ---------------------------------------------------------------------------
+
+    private void HostName_TextChanged(object sender, TextChangedEventArgs e)
+    {
+        if (_ready) ShowNameFeedback(HostNameFeedback, AddHostLogic.NameFeedback(HostName.Text));
+    }
+
+    private string SelectedFleetSource
+    {
+        get
+        {
+            if (HostFleetGit.IsChecked == true) return "git";
+            return HostFleetEither.IsChecked == true ? "either" : AddHostLogic.DefaultFleetSource;
+        }
+    }
+
+    private AddHostForm ReadAddHostForm() => new(
+        HostName.Text, HostEngineClaude.IsChecked == true, HostEngineCopilot.IsChecked == true,
+        HostDedicated.IsChecked == true, HostSigners.Text, HostRemotes.Text, SelectedFleetSource, HostReason.Text.Trim());
+
+    internal async void HostCreate_Click(object sender, RoutedEventArgs e) => await RunBusy(CreateHostFileAsync, sender);
+
+    /// <summary>
+    /// Checks everything first, asks where to save, then Windows Hello, and only then asks the bus
+    /// for the code: a code works once, so it is not spent on a form that would be refused or a
+    /// save the operator cancels.
+    /// </summary>
+    private async Task CreateHostFileAsync()
+    {
+        if (_api.Session is not { } session) return;
+        var form = ReadAddHostForm();
+        var now = DateTimeOffset.Now;
+        if (AddHostLogic.Problem(form, session, _api.HasOperatorGrant(), now) is { } problem) throw new InvalidOperationException(problem);
+        var prefix = AddHostLogic.Prefix(form.PcName);
+        if (_platform.PickHostFilePath(this, HostEnrolFile.FileName) is not { } path) return;
+        await RequireHelloAsync(AddHostLogic.HelloPrompt(prefix));
+
+        var code = await MintHostCodeAsync(prefix, form.Reason);
+        var data = AddHostLogic.Data(form, session, code.Code ?? string.Empty, now);
+        var file = await WriteHostFileAsync(path, data);
+        RememberSiteSettings(form);
+        HostResult.Text = AddHostLogic.ResultText(Path.GetFileName(path), data, file, code.ExpiresAt, now);
+        HostResultPanel.Visibility = Visibility.Visible;
+        HostName.Clear();
+        HostReason.Clear();
+    }
+
+    /// <summary>Writes the file only if the installer would accept it, now that it holds the real code.</summary>
+    private static async Task<byte[]> WriteHostFileAsync(string path, HostEnrolData data)
+    {
+        if (HostEnrolFile.Problem(data) is { } refused) throw new InvalidOperationException(refused);
+        var file = HostEnrolFile.Render(data);
+        await File.WriteAllBytesAsync(path, file);
+        return file;
+    }
+
+    private void RememberSiteSettings(AddHostForm form)
+    {
+        _settings.HostSigners = form.Signers;
+        _settings.HostRemotes = form.Remotes;
+        _settings.HostFleetSource = form.FleetSource;
+        _settings.Save();
+    }
+
+    private async Task<HostCode> MintHostCodeAsync(string prefix, string reason)
+    {
+        try
+        {
+            return await _api.CreateHostEnrollmentAsync(Guid.NewGuid().ToString("D"), prefix, reason, CancellationToken.None);
+        }
+        catch (BusApiException error) when (AdminFlow.IsLegacyBus(error))
+        {
+            throw new InvalidOperationException(AddHostLogic.BusTooOld);
+        }
+    }
 
     /// <summary>Where each host's service principal came from. An older bus has no such list, and no host codes.</summary>
     private async Task<List<ManagedServicePrincipal>> HostPrincipalsAsync()
@@ -90,6 +170,7 @@ public partial class MainWindow
         AdminDevicesPanel.Visibility = VisibleWhen(AdminTabDevices.IsChecked == true);
         AdminSpnPanel.Visibility = VisibleWhen(AdminTabSpn.IsChecked == true);
         AdminHostsPanel.Visibility = VisibleWhen(AdminTabHosts.IsChecked == true);
+        AdminAddHostPanel.Visibility = VisibleWhen(AdminTabHosts.IsChecked == true);
         AdminEnrollPanel.Visibility = VisibleWhen(AdminTabEnroll.IsChecked == true);
         AdminAccessPanel.Visibility = VisibleWhen(AdminTabAccess.IsChecked == true);
         AdminExportPanel.Visibility = VisibleWhen(AdminTabExport.IsChecked == true);
