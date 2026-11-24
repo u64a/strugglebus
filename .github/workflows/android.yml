@@ -9,13 +9,8 @@ on:
       - 'app/*.gradle.kts'
       - 'app/gradle.properties'
       - '.github/workflows/android.yml'
+  # Every pull request runs this, whatever it touches, so it can be a required check.
   pull_request:
-    paths:
-      - 'app/app/**'
-      - 'app/gradle/**'
-      - 'app/*.gradle.kts'
-      - 'app/gradle.properties'
-      - '.github/workflows/android.yml'
   workflow_dispatch:
 
 permissions:
