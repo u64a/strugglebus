@@ -24,7 +24,8 @@ public sealed record HostStatus(
     int Outbox,
     long? FleetSerial,
     string ProblemText,
-    IReadOnlyList<string> Warnings);
+    IReadOnlyList<string> Warnings,
+    string ReleaseSource = "");
 
 /// <summary>
 /// Reads a host's status out of untrusted message metadata. Anything missing or of the wrong type
@@ -76,7 +77,8 @@ internal static class HostStatusParser
             Outbox: Count(status, "outbox", 9999),
             FleetSerial: Number(Property(status, "fleet"), "serial"),
             ProblemText: Text(Property(status, "problem"), "text"),
-            Warnings: Items(status, "warnings").Select(Clean).Where(warning => warning.Length > 0).ToList());
+            Warnings: Items(status, "warnings").Select(Clean).Where(warning => warning.Length > 0).ToList(),
+            ReleaseSource: Text(Property(status, "release"), "source"));
     }
 
     private static string State(string state) => KnownStates.Contains(state) ? state : "unknown";
@@ -240,8 +242,16 @@ internal static class HostsLogic
         string.Join(", ", status.Engines.Select(EngineLabel)),
         When(status.Account.Length > 0, $"runs as {status.Account}"),
         When(status.HeldClones > 0, $"{status.HeldClones} kept for unsaved work"),
-        When(status.Outbox > 0, $"{status.Outbox} replies waiting to post")
+        When(status.Outbox > 0, $"{status.Outbox} replies waiting to post"),
+        ReleaseSourceLabel(status.ReleaseSource)
     ];
+
+    /// <summary>
+    /// Where the host takes its own updates from. "fleet" is the long-standing default and is not
+    /// worth a mention; anything else is, because it changes whose repository the host follows.
+    /// </summary>
+    internal static string ReleaseSourceLabel(string source) =>
+        source.Length == 0 || source == "fleet" ? string.Empty : $"updates from {source}";
 
     private static string When(bool condition, string text) => condition ? text : string.Empty;
 
