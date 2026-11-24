@@ -9,8 +9,8 @@ public class HostEnrolFileTests
     private const string Key = "AAAAB3NzaC1yc2EAAAADAQABAAABAQDYWpfCDNW5PEj1Fldb+74c/5bsCxTzhdLOvXf0/V6IOcP1H3Kr1nddwSjVUI/4ipZFpGUiDLfksXjCeYGo+KtrfYVIY1EbrnRYgOKa/499xm7zzIrysttoQS5jc++2/fKlKkl3S0Se3TJh4f5YlraysDBiAj0EaikYZPtXjJXNM9fGgjRua5cvDULVsVVeSyvkIpHVZUWLa/+kKh4conEX7C2rpn36HBEu34NESh3MWf3KtjNKhgqA00nS9vAEv+W/U6T/AhA6ZIs6gRbT2PM8C6aunpQLxLDY0MpH1fzzfuBje1RWqfeTVqoaPE8WNdZfYCaTzaKRvvr4jEOp4M1f";
     private const string Namespaces = "namespaces=\"strugglebus-fleet,strugglebus-host-command\"";
 
-    /// <summary>The worker host project's vector, tests/data/vectors/sbhost-enrol.json, byte for byte.</summary>
-    private static byte[] Vector() => File.ReadAllBytes(Path.Combine(AppContext.BaseDirectory, "Vectors", "sbhost-enrol.json"));
+    /// <summary>The shared contract file, contracts/host-enrol/sbhost-enrol.json, byte for byte.</summary>
+    private static byte[] Vector() => File.ReadAllBytes(Path.Combine(AppContext.BaseDirectory, "Contracts", "host-enrol", "sbhost-enrol.json"));
 
     /// <summary>The values that vector was rendered from.</summary>
     private static HostEnrolData VectorData() => new(

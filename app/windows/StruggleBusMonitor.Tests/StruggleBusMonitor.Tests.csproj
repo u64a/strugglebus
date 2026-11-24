@@ -24,7 +24,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <None Include="Vectors\**" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\..\..\contracts\**" Link="Contracts\%(RecursiveDir)%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
 </Project>
