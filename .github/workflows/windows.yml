@@ -6,10 +6,8 @@ on:
     paths:
       - 'app/windows/**'
       - '.github/workflows/windows.yml'
+  # Every pull request runs this, whatever it touches, so it can be a required check.
   pull_request:
-    paths:
-      - 'app/windows/**'
-      - '.github/workflows/windows.yml'
   workflow_dispatch:
 
 permissions:
