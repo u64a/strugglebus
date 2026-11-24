@@ -1,0 +1,2 @@
+# Contract files are compared byte for byte, so no checkout may change them.
+contracts/** -text
