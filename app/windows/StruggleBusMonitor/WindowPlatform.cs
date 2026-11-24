@@ -18,6 +18,9 @@ internal interface IWindowPlatform
 
     /// <summary>Asks where to save the CSV export. Null when the operator cancels.</summary>
     string? PickExportPath(Window owner, string suggestedName);
+
+    /// <summary>Asks where to save a worker host's enrolment data file. Null when the operator cancels.</summary>
+    string? PickHostFilePath(Window owner, string suggestedName);
     void SetClipboardText(string text);
     Task<bool> VerifyHelloAsync(string message);
     Task Delay(TimeSpan time);
@@ -62,6 +65,22 @@ internal sealed class WindowPlatform : IWindowPlatform
         var dialog = ExportDialog(suggestedName);
         return dialog.ShowDialog(owner) == true ? dialog.FileName : null;
     }
+
+    public string? PickHostFilePath(Window owner, string suggestedName)
+    {
+        var dialog = HostFileDialog(suggestedName);
+        return dialog.ShowDialog(owner) == true ? dialog.FileName : null;
+    }
+
+    internal static SaveFileDialog HostFileDialog(string suggestedName) => new()
+    {
+        Filter = "Enrolment data (*.json)|*.json|All files (*.*)|*.*",
+        FileName = suggestedName,
+        DefaultExt = ".json",
+        AddExtension = true,
+        OverwritePrompt = true,
+        Title = "Save the worker host's enrolment data"
+    };
 
     internal static SaveFileDialog ExportDialog(string suggestedName) => new()
     {

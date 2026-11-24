@@ -192,6 +192,102 @@ public class AdminWindowTests(StaWindowAdminFixture sta)
         Assert.Equal(("host-office1", false), (row.Name, row.HasJoined));
     });
 
+    private const string HostSignerLines =
+        "owner namespaces=\"strugglebus-fleet,strugglebus-host-command\" ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGtleWtleWtleWtleWtleWtleWtleWtleWtleWtleWtleWtleWtl key-a\n" +
+        "backup namespaces=\"strugglebus-fleet,strugglebus-host-command\" ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGtleWtleWtleWtleWtleWtleWtleWtleWtleWtleWtleWtleWtl key-b";
+    private const string HostCode = "sbhe1_A1b2C3d4E5f6G7h8I9j0K-_zzzzzzzzzzzzzzzzzzzzY_x-W9v8u7t6s5r4q3p2onm";
+
+    private static void FillAddHost(MainWindow window)
+    {
+        window.AdminTabHosts.IsChecked = true;
+        window.HostName.Text = "Office1";
+        window.HostSigners.Text = HostSignerLines;
+        window.HostRemotes.Text = "https://github.com/acme/";
+        window.HostReason.Text = "new worker host";
+    }
+
+    [Fact]
+    public void AddingAHostMintsACodeAndSavesTheDataFileTheInstallerReads() => sta.Run(() =>
+    {
+        var path = Path.Combine(Path.GetTempPath(), $"sbhost-{Guid.NewGuid():N}.json");
+        try
+        {
+            using var scene = OpenAdmin();
+            var window = scene.Window;
+            scene.Platform.HostFilePath = path;
+            scene.Bus.On("POST /api/mobile/enrollments/hosts", _ => StaWindowAdminBus.Ok(
+                "{\"host_prefix\":\"host-office1\",\"expires_at\":\"2099-01-01T00:00:00Z\",\"code_issued\":true,\"code\":\"" + HostCode + "\"}"));
+            FillAddHost(window);
+            Assert.Equal(Visibility.Visible, window.AdminAddHostPanel.Visibility);
+            Assert.Equal("It will join the bus as host-office1", window.HostNameFeedback.Text);
+
+            StaWindowAdminScene.ClickAndWait(window.HostCreateButton);
+
+            Assert.Equal(["Create a one-time code for worker host host-office1"], scene.Platform.HelloPrompts);
+            Assert.Equal([HostEnrolFile.FileName], scene.Platform.SuggestedHostFileNames);
+            var request = scene.Bus.RequestsTo("POST /api/mobile/enrollments/hosts").Single();
+            Assert.Equal("host-office1", Text(Body(request), "host_prefix"));
+            Assert.Equal("new worker host", Text(Body(request), "reason"));
+
+            var file = File.ReadAllBytes(path);
+            var text = System.Text.Encoding.ASCII.GetString(file);
+            Assert.StartsWith("{\"v\":1,\"written_at\":\"", text);
+            Assert.Contains("\"device\":\"" + StaWindowAdminBus.DeviceLabel + "\"", text);
+            Assert.Contains("\"host_prefix\":\"host-office1\",\"enrol_code\":\"" + HostCode + "\",\"engines\":[\"claude\"],\"dedicated\":true,", text);
+            Assert.EndsWith("\"fleet_source\":\"bus\",\"remotes\":[\"https://github.com/acme/\"]}\n", text);
+
+            Assert.Equal(Visibility.Visible, window.HostResultPanel.Visibility);
+            Assert.Contains($"Data file digest:  {HostEnrolFile.Digest(file)}", window.HostResult.Text);
+            Assert.DoesNotContain(HostCode, window.HostResult.Text);
+            Assert.Equal("", window.HostName.Text);
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    });
+
+    [Fact]
+    public void ABadAddHostFormIsRefusedBeforeAnythingIsAskedOfTheBus() => sta.Run(() =>
+    {
+        using var scene = OpenAdmin();
+        var window = scene.Window;
+        scene.Platform.HostFilePath = Path.Combine(Path.GetTempPath(), "never-written.json");
+        FillAddHost(window);
+        window.HostSigners.Text = HostSignerLines.Split('\n')[0];
+
+        StaWindowAdminScene.ClickAndWait(window.HostCreateButton);
+
+        Assert.Contains("two signers", scene.Notice);
+        Assert.Empty(scene.Platform.HelloPrompts);
+        Assert.Empty(scene.Platform.SuggestedHostFileNames);
+        Assert.Empty(scene.Bus.RequestsTo("POST /api/mobile/enrollments/hosts"));
+        Assert.Equal(Visibility.Collapsed, window.HostResultPanel.Visibility);
+    });
+
+    [Fact]
+    public void CancellingTheSaveOrABusWithoutHostCodesLeavesNothingBehind() => sta.Run(() =>
+    {
+        using var scene = OpenAdmin();
+        var window = scene.Window;
+        FillAddHost(window);
+        window.HostFleetEither.IsChecked = true;
+
+        // The operator cancels the save dialog: no Windows Hello, no code.
+        StaWindowAdminScene.ClickAndWait(window.HostCreateButton);
+        Assert.Empty(scene.Platform.HelloPrompts);
+        Assert.Empty(scene.Bus.RequestsTo("POST /api/mobile/enrollments/hosts"));
+
+        // A bus that predates host codes answers 404.
+        var path = Path.Combine(Path.GetTempPath(), $"sbhost-{Guid.NewGuid():N}.json");
+        scene.Platform.HostFilePath = path;
+        StaWindowAdminScene.ClickAndWait(window.HostCreateButton);
+
+        Assert.Equal(AddHostLogic.BusTooOld, scene.Notice);
+        Assert.False(File.Exists(path));
+        Assert.Equal(Visibility.Collapsed, window.HostResultPanel.Visibility);
+    });
+
     [Fact]
     public void AnOlderBusOnlyOffersContainmentFromTheLiveRoster() => sta.Run(() =>
     {

@@ -42,6 +42,14 @@ public sealed class AppSettings
 
     public const int MaximumClearedWaiting = 500;
 
+    /// <summary>
+    /// The site's signer lines, repository locations and fleet source, as last used to add a
+    /// worker host. Public values only: an allowed_signers line holds a public key.
+    /// </summary>
+    public string HostSigners { get; set; } = string.Empty;
+    public string HostRemotes { get; set; } = string.Empty;
+    public string HostFleetSource { get; set; } = AddHostLogic.DefaultFleetSource;
+
     public void ClearWaiting(IEnumerable<long> sequences) =>
         ClearedWaiting = ClearedWaiting.Concat(sequences).Distinct().Order().TakeLast(MaximumClearedWaiting).ToList();
 
