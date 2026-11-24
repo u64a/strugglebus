@@ -1,0 +1,6 @@
+# One line per accepted finding, scoped to the exact commit, file, rule and line.
+# Do not allowlist a path or a rule: a new finding must fail the scan.
+
+# The public half of the worker host project's published test key (an ssh-rsa
+# public key in a test vector). It is not a secret; its private half was discarded.
+f4b7f84984c81021a022dccce1725362d30288c8:app/windows/StruggleBusMonitor.Tests/HostEnrolFileTests.cs:generic-api-key:9
