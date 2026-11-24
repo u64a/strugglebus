@@ -1,0 +1,247 @@
+name: Qualify immutable release assets
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Exact intended annotated tag, for example v0.2.6
+        required: true
+        type: string
+      release_commit:
+        description: Exact 40-character current main commit to qualify
+        required: true
+        type: string
+      approved_by:
+        description: Repository owner approving this qualification
+        required: true
+        type: string
+      approval:
+        description: Exact approval phrase publish-exact-qualified-bytes
+        required: true
+        type: string
+
+permissions:
+  actions: read
+  contents: read
+
+concurrency:
+  group: immutable-release-publication
+  cancel-in-progress: false
+
+env:
+  RELEASE_REPOSITORY: NZCypher819/strugglebus
+
+jobs:
+  qualify:
+    name: Qualify exact release assets once
+    if: >-
+      github.repository == 'NZCypher819/strugglebus' &&
+      github.event_name == 'workflow_dispatch' &&
+      github.ref == 'refs/heads/main' &&
+      github.actor == 'NZCypher819' &&
+      inputs.approved_by == 'NZCypher819' &&
+      inputs.approval == 'publish-exact-qualified-bytes'
+    runs-on: [self-hosted, prox-runner]
+    timeout-minutes: 30
+    steps:
+      - name: Check out the trusted default-branch qualification controls
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ github.workflow_sha }}
+
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version: "0.12.7"
+          checksum: "788f18abea7c5f55d6216e4f5613fd89d4d59b631efeec117b2b07fe72f1da21"
+          python-version: "3.13"
+          enable-cache: false
+
+      - name: Validate the approved owner qualification dispatch
+        id: gate
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          QUALIFICATION_ACTOR: ${{ github.actor }}
+          QUALIFICATION_APPROVAL: ${{ inputs.approval }}
+          QUALIFICATION_APPROVED_BY: ${{ inputs.approved_by }}
+          QUALIFICATION_COMMIT: ${{ inputs.release_commit }}
+          QUALIFICATION_EVENT_NAME: ${{ github.event_name }}
+          QUALIFICATION_REF: ${{ github.ref }}
+          QUALIFICATION_TAG: ${{ inputs.release_tag }}
+          QUALIFICATION_WORKFLOW_SHA: ${{ github.workflow_sha }}
+        run: |
+          set -euo pipefail
+          result="$(
+            python scripts/release_qualification.py gate \
+              --repository "$RELEASE_REPOSITORY" \
+              --tag "$QUALIFICATION_TAG" \
+              --commit "$QUALIFICATION_COMMIT" \
+              --actor "$QUALIFICATION_ACTOR" \
+              --workflow-sha "$QUALIFICATION_WORKFLOW_SHA" \
+              --event-name "$QUALIFICATION_EVENT_NAME" \
+              --ref "$QUALIFICATION_REF" \
+              --approved-by "$QUALIFICATION_APPROVED_BY" \
+              --approval "$QUALIFICATION_APPROVAL"
+          )"
+          version="$(python -c 'import json,sys; print(json.load(sys.stdin)["version"])' <<< "$result")"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Require the clean exact qualified source
+        id: identity
+        env:
+          QUALIFICATION_COMMIT: ${{ inputs.release_commit }}
+          QUALIFICATION_WORKFLOW_SHA: ${{ github.workflow_sha }}
+        run: |
+          set -euo pipefail
+          test -z "$(git status --porcelain=v1 --untracked-files=no)"
+          test "$(git rev-parse HEAD)" = "$QUALIFICATION_COMMIT"
+          test "$QUALIFICATION_WORKFLOW_SHA" = "$QUALIFICATION_COMMIT"
+          tree="$(git rev-parse "${QUALIFICATION_COMMIT}^{tree}")"
+          epoch="$(git show -s --format=%ct "$QUALIFICATION_COMMIT")"
+          uv_digest="$(sha256sum "$(command -v uv)" | cut -d' ' -f1)"
+          echo "source-tree=$tree" >> "$GITHUB_OUTPUT"
+          echo "source-date-epoch=$epoch" >> "$GITHUB_OUTPUT"
+          echo "uv-digest=$uv_digest" >> "$GITHUB_OUTPUT"
+
+      - name: Install locked dependencies
+        run: uv sync --locked --all-extras
+
+      - name: Install the supported qualification interpreters
+        run: uv python install 3.13
+
+      - name: Validate production dependency lock
+        run: uv run python scripts/check_requirements_lock.py
+
+      - name: Build the release wheel once
+        env:
+          SOURCE_DATE_EPOCH: ${{ steps.identity.outputs.source-date-epoch }}
+        run: uv build --wheel --out-dir dist
+
+      - name: Validate the built wheel contents
+        run: uv run python scripts/validate_release_artifacts.py dist
+
+      - name: Normalize the wheel into canonical bytes
+        env:
+          SOURCE_DATE_EPOCH: ${{ steps.identity.outputs.source-date-epoch }}
+        run: |
+          set -euo pipefail
+          wheels=(dist/strugglebus-*-py3-none-any.whl)
+          test "${#wheels[@]}" -eq 1
+          mkdir canonical-dist
+          uv run python scripts/canonical_wheel.py normalize \
+            "${wheels[0]}" "canonical-dist/$(basename "${wheels[0]}")"
+
+      - name: Generate the exact five canonical release assets
+        env:
+          QUALIFICATION_COMMIT: ${{ inputs.release_commit }}
+          QUALIFICATION_TAG: ${{ inputs.release_tag }}
+          SOURCE_TREE: ${{ steps.identity.outputs.source-tree }}
+        run: >-
+          uv run python scripts/release_bundle.py build
+          --repository .
+          --dist canonical-dist
+          --output release-assets
+          --tag "$QUALIFICATION_TAG"
+          --expected-commit "$QUALIFICATION_COMMIT"
+          --expected-tree "$SOURCE_TREE"
+          --pre-tag
+
+      - name: Verify the canonical release wheel
+        env:
+          SOURCE_DATE_EPOCH: ${{ steps.identity.outputs.source-date-epoch }}
+        run: |
+          set -euo pipefail
+          wheels=(release-assets/strugglebus-*-py3-none-any.whl)
+          test "${#wheels[@]}" -eq 1
+          uv run python scripts/canonical_wheel.py verify "${wheels[0]}" \
+            --source-date-epoch "$SOURCE_DATE_EPOCH"
+
+      - name: Validate the staged release identity and integrity
+        env:
+          QUALIFICATION_COMMIT: ${{ inputs.release_commit }}
+          QUALIFICATION_TAG: ${{ inputs.release_tag }}
+          SOURCE_TREE: ${{ steps.identity.outputs.source-tree }}
+        run: >-
+          python scripts/release_bundle.py validate release-assets
+          --expected-tag "$QUALIFICATION_TAG"
+          --expected-commit "$QUALIFICATION_COMMIT"
+          --expected-tree "$SOURCE_TREE"
+
+      - name: Validate clean exact-wheel installation on 3.13
+        run: |
+          set -euo pipefail
+          wheels=(release-assets/strugglebus-*-py3-none-any.whl)
+          test "${#wheels[@]}" -eq 1
+          for python_version in 3.13; do
+            if ! selected_python="$(uv python find --no-project "$python_version")"; then
+              echo "No Python $python_version interpreter is available" >&2
+              exit 1
+            fi
+            if [ -z "$selected_python" ] || [ ! -x "$selected_python" ]; then
+              echo "Selected Python $python_version interpreter is not executable" >&2
+              exit 1
+            fi
+            "$selected_python" scripts/validate_clean_install.py \
+              --wheel "${wheels[0]}" \
+              --requirements release-assets/requirements.lock \
+              --expected-python "$python_version"
+          done
+
+      - name: Write the qualification receipt
+        env:
+          QUALIFICATION_ACTOR: ${{ github.actor }}
+          QUALIFICATION_APPROVAL: ${{ inputs.approval }}
+          QUALIFICATION_APPROVED_BY: ${{ inputs.approved_by }}
+          QUALIFICATION_COMMIT: ${{ inputs.release_commit }}
+          QUALIFICATION_RUN_ATTEMPT: ${{ github.run_attempt }}
+          QUALIFICATION_RUN_ID: ${{ github.run_id }}
+          QUALIFICATION_TAG: ${{ inputs.release_tag }}
+          QUALIFICATION_VERSION: ${{ steps.gate.outputs.version }}
+          QUALIFICATION_WORKFLOW_SHA: ${{ github.workflow_sha }}
+          SOURCE_DATE_EPOCH: ${{ steps.identity.outputs.source-date-epoch }}
+          SOURCE_TREE: ${{ steps.identity.outputs.source-tree }}
+          UV_BINARY_SHA256: ${{ steps.identity.outputs.uv-digest }}
+        run: |
+          set -euo pipefail
+          mkdir qualification
+          python scripts/release_qualification.py receipt release-assets \
+            --output "qualification/strugglebus-qualification-receipt-v1.json" \
+            --repository "$RELEASE_REPOSITORY" \
+            --tag "$QUALIFICATION_TAG" \
+            --commit "$QUALIFICATION_COMMIT" \
+            --tree "$SOURCE_TREE" \
+            --version "$QUALIFICATION_VERSION" \
+            --run-id "$QUALIFICATION_RUN_ID" \
+            --run-attempt "$QUALIFICATION_RUN_ATTEMPT" \
+            --actor "$QUALIFICATION_ACTOR" \
+            --workflow-sha "$QUALIFICATION_WORKFLOW_SHA" \
+            --approved-by "$QUALIFICATION_APPROVED_BY" \
+            --approval "$QUALIFICATION_APPROVAL" \
+            --uv-binary-sha256 "$UV_BINARY_SHA256" \
+            --source-date-epoch "$SOURCE_DATE_EPOCH" \
+            --source-root .
+
+      - name: Upload the single immutable qualified release artifact
+        id: upload
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: strugglebus-qualified-release-${{ inputs.release_tag }}-${{ github.run_id }}
+          path: |
+            release-assets/*
+            qualification/*
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Report the qualified publication intent
+        env:
+          QUALIFICATION_ARTIFACT_ID: ${{ steps.upload.outputs.artifact-id }}
+          QUALIFICATION_RUN_ID: ${{ github.run_id }}
+          QUALIFICATION_TAG: ${{ inputs.release_tag }}
+        run: |
+          set -euo pipefail
+          {
+            echo "Qualified ${QUALIFICATION_TAG} from run ${QUALIFICATION_RUN_ID}."
+            echo "Artifact ${QUALIFICATION_ARTIFACT_ID} holds the exact publishable bytes."
+            echo "Publication rebuilds nothing and publishes only these bytes."
+          } >> "$GITHUB_STEP_SUMMARY"

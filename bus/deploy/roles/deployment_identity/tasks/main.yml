@@ -1,0 +1,82 @@
+---
+# Deployment identity guard.
+#
+# The service identity used to be pinned by literal equality inside every role
+# that touched TLS. The instinct was right - a mistyped inventory must never
+# point a deployment at an unintended name - but expressed as a bare literal it
+# also made a non-production deployment impossible without editing the guard
+# itself, which is precisely the wrong habit to teach an operator. A guard that
+# people routinely comment out is not a guard.
+#
+# The profile keeps the guard and removes the dead end. It is fail-closed in
+# both directions: production still requires the canonical identities exactly,
+# and development is forbidden from borrowing any of them. Neither profile can
+# impersonate the other, an absent profile means production, and an unknown
+# profile is refused rather than guessed.
+#
+# This role validates once and publishes the result. Roles that consume the
+# profile require the published fact, so a role run without this guard fails
+# closed instead of silently defaulting.
+
+- name: Validate the deployment profile selection
+  ansible.builtin.assert:
+    that:
+      - strugglebus_profile in ["production", "development"]
+    fail_msg: >-
+      strugglebus_deployment_profile must be exactly 'production' or
+      'development'. An unset profile means production. Unknown values are
+      refused rather than interpreted.
+    quiet: true
+
+- name: Validate the deployment identity for the selected profile
+  ansible.builtin.assert:
+    that:
+      # Both profiles require well-formed hostnames.
+      - strugglebus_domain is string
+      - strugglebus_external_domain is string
+      - strugglebus_domain is match(strugglebus_hostname_pattern)
+      - strugglebus_external_domain is match(strugglebus_hostname_pattern)
+      - strugglebus_tls_mode in ["internal", "external"]
+
+      # Production pins the canonical identities exactly, as it always has.
+      - >-
+        strugglebus_profile != "production"
+        or (
+          strugglebus_domain == "bus.lan"
+          and strugglebus_external_domain == "bus.u64.lan"
+          and strugglebus_domain != strugglebus_external_domain
+        )
+
+      # Development has one internal identity. Keeping both variables equal
+      # avoids inventing an unused second hostname while external TLS remains
+      # unavailable. Neither value may carry a production identity.
+      - >-
+        strugglebus_profile != "development"
+        or (
+          strugglebus_domain not in strugglebus_reserved_domains
+          and strugglebus_external_domain not in strugglebus_reserved_domains
+          and strugglebus_external_domain == strugglebus_domain
+          and strugglebus_tls_mode == "internal"
+        )
+
+      # The effective identity must follow from the mode, never be set apart
+      # from it. A hand-set effective domain is how a deployment ends up
+      # serving one name and validating another.
+      - >-
+        strugglebus_effective_domain
+        == (
+          strugglebus_external_domain
+          if strugglebus_tls_mode == "external"
+          else strugglebus_domain
+        )
+    fail_msg: >-
+      Deployment identity does not match the selected profile. Production
+      requires exactly bus.lan and bus.u64.lan. Development requires matching
+      non-production identity values for the same internal TLS endpoint,
+      and may not reuse a production identity or activate the dedicated LAN CA.
+    quiet: true
+
+- name: Publish the validated deployment profile
+  ansible.builtin.set_fact:
+    strugglebus_validated_profile: "{{ strugglebus_profile }}"
+    strugglebus_validated_reserved_domains: "{{ strugglebus_reserved_domains }}"

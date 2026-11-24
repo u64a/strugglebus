@@ -1,0 +1,55 @@
+---
+- name: Bootstrap only the independently approved prepare-only updater
+  hosts: strugglebus_guests
+  become: true
+  gather_facts: true
+  gather_subset: [min]
+  vars:
+    updater_release_root: "/opt/strugglebus-updater/releases/{{ strugglebus_updater_bootstrap_version }}"
+    updater_helper_sha256: c5432d25deba888d9398be9ef4ef1645955530898e8074a0305f1f8b7aa952f8
+  tasks:
+    - name: Require a separately approved exact worker bootstrap
+      ansible.builtin.assert:
+        that:
+          - ansible_facts.distribution == 'Debian'
+          - ansible_facts.distribution_major_version == '13'
+          - strugglebus_updater_bootstrap_version is match('^[0-9]+\.[0-9]+\.[0-9]+$')
+          - strugglebus_updater_bootstrap_version | length <= 32
+          - strugglebus_updater_bootstrap_approval == 'bootstrap-updater-' ~ strugglebus_updater_bootstrap_version
+          - strugglebus_assert_qualified_updater_bootstrap is sameas true
+          - strugglebus_assert_authenticated_github_acquisition is sameas true
+          - strugglebus_assert_immutable_github_release is sameas true
+          - strugglebus_verified_release_dir is defined
+          - strugglebus_updater_source_commit is match('^[0-9a-f]{40}$')
+          - strugglebus_updater_source_tree is match('^[0-9a-f]{40}$')
+          - strugglebus_updater_manifest_sha256 is match('^[0-9a-f]{64}$')
+          - strugglebus_data_dir == '/var/lib/strugglebus'
+          - strugglebus_runtime_dir == '/run/strugglebus'
+          - strugglebus_config_dir == '/etc/strugglebus'
+          - strugglebus_database_path == '/var/lib/strugglebus/strugglebus.db'
+          - strugglebus_backup_dir == '/var/backups/strugglebus'
+          - strugglebus_service_user is match('^[a-z_][a-z0-9_-]{0,31}$')
+          - strugglebus_service_group is match('^[a-z_][a-z0-9_-]{0,31}$')
+        fail_msg: >-
+          This opt-in play needs independently authenticated immutable release
+          pins and explicit worker qualification/approval. It cannot qualify a
+          candidate or provision storage.
+
+    - name: Resolve approved controller assets without invoking deployment
+      ansible.builtin.include_role:
+        name: release
+        tasks_from: resolve_release_assets.yml
+      vars:
+        strugglebus_release_action: prestage
+        strugglebus_release_version: "{{ strugglebus_updater_bootstrap_version }}"
+
+    - name: Bind worker code to the independently approved source and manifest
+      ansible.builtin.assert:
+        that:
+          - strugglebus_release_source_commit == strugglebus_updater_source_commit
+          - strugglebus_release_source_tree == strugglebus_updater_source_tree
+          - strugglebus_release_manifest_sha256 == strugglebus_updater_manifest_sha256
+
+    - name: Run the updater-only role without application or release handlers
+      ansible.builtin.include_role:
+        name: updater

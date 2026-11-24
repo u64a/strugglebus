@@ -1,0 +1,25 @@
+---
+- name: Enable the daily backup timer
+  ansible.builtin.systemd_service:
+    name: strugglebus-backup.timer
+    enabled: true
+    state: started
+  when: >-
+    not (
+      ansible_check_mode
+      and (
+        strugglebus_deployment_profile | default("production")
+      ) == "development"
+    )
+
+- name: Report backup timer enablement predicted by development check mode
+  ansible.builtin.debug:
+    msg: >-
+      Development check mode predicts enabling and starting
+      strugglebus-backup.timer after its unit is installed.
+  changed_when: true
+  when:
+    - ansible_check_mode
+    - >-
+      (strugglebus_deployment_profile | default("production"))
+      == "development"

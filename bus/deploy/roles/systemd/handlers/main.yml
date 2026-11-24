@@ -1,0 +1,10 @@
+---
+- name: Reload systemd
+  ansible.builtin.systemd_service:
+    daemon_reload: true
+
+- name: Restart Strugglebus
+  ansible.builtin.systemd_service:
+    name: strugglebus
+    state: restarted
+  when: active_release.stat.isdir | default(false)

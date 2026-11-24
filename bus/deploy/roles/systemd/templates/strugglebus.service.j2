@@ -1,0 +1,118 @@
+[Unit]
+Description=Strugglebus LAN message board
+After=network-online.target
+Wants=network-online.target
+ConditionPathIsDirectory={{ strugglebus_current_link }}
+
+[Service]
+Type=simple
+User={{ strugglebus_service_user }}
+Group={{ strugglebus_service_group }}
+WorkingDirectory={{ strugglebus_current_link }}
+RuntimeDirectory=strugglebus
+RuntimeDirectoryMode=0750
+LoadCredential=admin-token:{{ strugglebus_config_dir }}/credentials/admin-token
+Environment=STRUGGLEBUS_ADMIN_CREDENTIAL_PATH=%d/admin-token
+{% if strugglebus_operator_password_source | default('') | length > 0 %}
+LoadCredential=operator-password:{{ strugglebus_operator_password_source }}
+Environment=STRUGGLEBUS_OPERATOR_CREDENTIAL_PATH=%d/operator-password
+{% endif %}
+EnvironmentFile=-{{ strugglebus_current_link }}/release.env
+Environment=STRUGGLEBUS_DATA_DIR={{ strugglebus_data_dir }}
+Environment=STRUGGLEBUS_RUNTIME_DIR={{ strugglebus_runtime_dir }}
+Environment=STRUGGLEBUS_BACKUP_DIR={{ strugglebus_backup_dir }}
+Environment=STRUGGLEBUS_DATABASE_PATH={{ strugglebus_database_path }}
+Environment=STRUGGLEBUS_PUBLIC_BASE_URL=https://{{ strugglebus_effective_domain }}
+Environment=STRUGGLEBUS_BIND_HOST={{ strugglebus_bind_host }}
+Environment=STRUGGLEBUS_BIND_PORT={{ strugglebus_bind_port }}
+Environment=STRUGGLEBUS_ALLOWED_HOSTS={{ (strugglebus_domain ~ ',' ~ strugglebus_domain ~ ':*,') if (strugglebus_tls_mode != 'external' or (strugglebus_external_tls_legacy_compatibility_site | default(true))) else '' }}{{ (strugglebus_external_domain ~ ',' ~ strugglebus_external_domain ~ ':*,') if strugglebus_tls_mode == 'external' else '' }}127.0.0.1:*,localhost:*,[::1]:*
+Environment=STRUGGLEBUS_ALLOWED_ORIGINS={{ ('https://' ~ strugglebus_domain) if (strugglebus_tls_mode != 'external' or (strugglebus_external_tls_legacy_compatibility_site | default(true))) else '' }}{{ (((',' if (strugglebus_external_tls_legacy_compatibility_site | default(true)) else '') ~ 'https://' ~ strugglebus_external_domain) if strugglebus_tls_mode == 'external' else '') }}
+Environment=STRUGGLEBUS_MAX_MESSAGE_BYTES={{ strugglebus_max_message_bytes }}
+Environment=STRUGGLEBUS_MAX_REQUEST_BODY_BYTES={{ strugglebus_max_request_body_bytes }}
+Environment=STRUGGLEBUS_MAX_METADATA_BYTES={{ strugglebus_max_metadata_bytes }}
+Environment=STRUGGLEBUS_MAX_REST_REQUEST_BODY_BYTES={{ strugglebus_max_rest_request_body_bytes }}
+Environment=STRUGGLEBUS_AUTHENTICATED_REQUESTS_PER_MINUTE={{ strugglebus_authenticated_requests_per_minute }}
+Environment=STRUGGLEBUS_UNAUTHENTICATED_REQUESTS_PER_MINUTE={{ strugglebus_unauthenticated_requests_per_minute }}
+Environment=STRUGGLEBUS_SQLITE_BUSY_TIMEOUT_MS={{ strugglebus_sqlite_busy_timeout_ms }}
+Environment=STRUGGLEBUS_MAX_CHANNELS={{ strugglebus_max_channels }}
+Environment=STRUGGLEBUS_SSE_BATCH_SIZE={{ strugglebus_sse_batch_size }}
+Environment=STRUGGLEBUS_SSE_POLL_INTERVAL_MS={{ strugglebus_sse_poll_interval_ms }}
+Environment=STRUGGLEBUS_SSE_HEARTBEAT_SECONDS={{ strugglebus_sse_heartbeat_seconds }}
+Environment=STRUGGLEBUS_SSE_CONNECTION_SECONDS={{ strugglebus_sse_connection_seconds }}
+Environment=STRUGGLEBUS_SSE_MAX_CONNECTIONS_PER_AGENT={{ strugglebus_sse_max_connections_per_agent }}
+Environment=STRUGGLEBUS_HUMAN_ACTIVITY_LIMIT={{ strugglebus_human_activity_limit }}
+{% for setting in ['orientation_count_cap', 'orientation_channel_cap', 'orientation_candidate_limit', 'catch_up_candidate_limit', 'catch_up_drain_ttl_seconds', 'catch_up_max_drains', 'catch_up_max_drains_per_agent', 'liveness_refresh_seconds', 'shutdown_grace_seconds', 'mobile_confirmation_seconds', 'mobile_grant_device_per_minute', 'mobile_grant_global_per_minute'] %}
+{% if ('strugglebus_' ~ setting) in vars %}
+Environment=STRUGGLEBUS_{{ setting | upper }}={{ vars['strugglebus_' ~ setting] }}
+{% endif %}
+{% endfor %}
+{% for setting in ['operator_session_seconds', 'operator_session_idle_seconds', 'operator_max_sessions', 'operator_login_source_per_minute', 'operator_login_global_per_minute', 'operator_password_workers', 'operator_form_bytes', 'operator_form_timeout_seconds', 'reconnect_grant_seconds', 'reconnect_max_grants', 'reconnect_issue_session_per_minute', 'reconnect_issue_global_per_minute', 'reconnect_redeem_source_per_minute', 'reconnect_redeem_global_per_minute', 'mobile_enrollment_seconds', 'mobile_enroll_session_per_minute', 'mobile_enroll_global_per_minute'] %}
+{% if ('strugglebus_' ~ setting) in vars %}
+Environment=STRUGGLEBUS_{{ setting | upper }}={{ vars['strugglebus_' ~ setting] }}
+{% endif %}
+{% endfor %}
+Environment=STRUGGLEBUS_TRUSTED_PROXY_SOURCES={{ strugglebus_trusted_proxy_sources }}
+{% for setting in ['updater_socket_path', 'maintenance_socket_path', 'updater_confirm_session_per_minute', 'updater_confirm_global_per_minute', 'updater_review_seconds', 'updater_review_tickets'] %}
+{% if ('strugglebus_' ~ setting) in vars %}
+Environment=STRUGGLEBUS_{{ setting | upper }}={{ vars['strugglebus_' ~ setting] }}
+{% endif %}
+{% endfor %}
+Environment=STRUGGLEBUS_SATELLITE_HOSTNAME={{ strugglebus_satellite_hostname | default('') }}
+Environment=STRUGGLEBUS_SATELLITE_GATEWAY_WG_ADDRESS={{ strugglebus_satellite_gateway_wg_address | default('') }}
+{% if strugglebus_satellite_hostname | default('') | length > 0 %}
+LoadCredential=satellite-ca-key:{{ strugglebus_config_dir }}/credentials/satellite-ca-key
+Environment=STRUGGLEBUS_SATELLITE_CA_KEY_PATH=%d/satellite-ca-key
+{% endif %}
+{% for setting in ['satellite_port', 'satellite_ca_cert_path', 'satellite_cert_days'] %}
+{% if ('strugglebus_' ~ setting) in vars %}
+Environment=STRUGGLEBUS_{{ setting | upper }}={{ vars['strugglebus_' ~ setting] }}
+{% endif %}
+{% endfor %}
+{% for setting in ['spn_package_ttl_seconds', 'spn_max_outstanding_packages', 'spn_issues_per_minute'] %}
+{% if ('strugglebus_' ~ setting) in vars %}
+Environment=STRUGGLEBUS_{{ setting | upper }}={{ vars['strugglebus_' ~ setting] }}
+{% endif %}
+{% endfor %}
+Environment=STRUGGLEBUS_ROE_ENFORCEMENT_MODE={{ strugglebus_roe_enforcement_mode | default('observe') }}
+Environment=STRUGGLEBUS_MAX_ACTIVE_CREDENTIALS_PER_AGENT={{ strugglebus_max_active_credentials_per_agent | default(2) }}
+Environment=STRUGGLEBUS_MAX_PENDING_CREDENTIALS_PER_AGENT={{ strugglebus_max_pending_credentials_per_agent | default(1) }}
+Environment=STRUGGLEBUS_CREDENTIAL_PENDING_SECONDS={{ strugglebus_credential_pending_seconds | default(900) }}
+Environment=STRUGGLEBUS_SELF_ROTATIONS_PER_WINDOW={{ strugglebus_self_rotations_per_window | default(2) }}
+Environment=STRUGGLEBUS_SELF_ROTATION_WINDOW_SECONDS={{ strugglebus_self_rotation_window_seconds | default(86400) }}
+Environment=STRUGGLEBUS_ENROLLMENT_TTL_SECONDS={{ strugglebus_enrollment_ttl_seconds | default(900) }}
+Environment=STRUGGLEBUS_MAX_ENROLLMENT_USES={{ strugglebus_max_enrollment_uses | default(1) }}
+Environment=STRUGGLEBUS_CA_BUNDLE_PATH={{ (strugglebus_lan_ca_published_root_path | default(strugglebus_config_dir ~ '/lan-ca-root.crt')) if (strugglebus_tls_mode == 'external' and (strugglebus_lan_ca_published_root_path | default(strugglebus_config_dir ~ '/lan-ca-root.crt')) is match('^/')) else '' }}
+Environment=STRUGGLEBUS_CA_ROOT_SHA256={{ strugglebus_lan_ca_root_sha256 if (strugglebus_tls_mode == 'external' and strugglebus_lan_ca_root_sha256 is match('^[0-9a-f]{64}$')) else '' }}
+ExecStart={{ strugglebus_current_link }}/venv/bin/strugglebus serve
+Restart=always
+RestartSec=5s
+TimeoutStartSec=60s
+TimeoutStopSec=30s
+UMask=0027
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+ProtectProc=invisible
+ProcSubset=pid
+RestrictSUIDSGID=true
+RestrictRealtime=true
+RestrictNamespaces=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+RemoveIPC=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+ReadWritePaths={{ strugglebus_data_dir }} {{ strugglebus_runtime_dir }} {{ strugglebus_backup_dir }}
+
+[Install]
+WantedBy=multi-user.target

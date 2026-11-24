@@ -1,0 +1,320 @@
+---
+- name: Reject the internal Caddy activation test fixture
+  ansible.builtin.assert:
+    that:
+      - caddy_activation_test_fixture is not defined
+    fail_msg: The internal Caddy activation test fixture is forbidden in deployment.
+
+- name: Validate the selected Caddy TLS identity
+  ansible.builtin.assert:
+    that:
+      - strugglebus_tls_mode in ["internal", "external"]
+      - >-
+        (strugglebus_external_tls_legacy_compatibility_site | default(true))
+        is boolean
+      - >-
+        strugglebus_tls_mode == "external"
+        or (strugglebus_external_tls_legacy_compatibility_site | default(true))
+      # Identity pinning lives in the deployment_identity role so that a single
+      # guard covers every TLS-bearing role rather than each one repeating its
+      # own literals. Requiring the published fact keeps this role fail-closed
+      # if it is ever run without that guard having executed first.
+      - strugglebus_validated_profile is defined
+      - strugglebus_validated_profile in ["production", "development"]
+      - >-
+        strugglebus_effective_domain
+        == (
+          strugglebus_external_domain
+          if strugglebus_tls_mode == "external"
+          else strugglebus_domain
+        )
+    fail_msg: >-
+      Caddy TLS identity selection is incomplete or unsafe. The deployment
+      identity guard must run first, internal mode must retain the legacy
+      compatibility site, and only external mode may disable it.
+
+- name: Install Caddy
+  ansible.builtin.include_tasks: package.yml
+  when: caddy_manage_package | default(true)
+
+- name: Inspect the current external certificate link
+  ansible.builtin.stat:
+    path: "{{ strugglebus_tls_root }}/current"
+    follow: false
+  register: caddy_external_current_link
+  when: strugglebus_tls_mode == "external"
+
+- name: Require the versioned external certificate link
+  ansible.builtin.assert:
+    that:
+      - caddy_external_current_link.stat.islnk | default(false)
+      - >-
+        caddy_external_current_link.stat.lnk_source
+        is match(
+          '^' + strugglebus_tls_root
+          + '/generations/[0-9]{8}T[0-9]{6}Z-[0-9]+$'
+        )
+    fail_msg: Caddy external TLS requires a versioned current certificate link.
+  when: strugglebus_tls_mode == "external"
+
+- name: Validate external certificate identity before rendering Caddy
+  ansible.builtin.command:
+    argv:
+      - /usr/local/libexec/strugglebus-verify-certificate
+      - "{{ strugglebus_external_cert_path }}"
+      - "{{ strugglebus_external_key_path }}"
+      - "{{ strugglebus_lan_ca_bundle_path }}"
+      - "{{ strugglebus_external_domain }}"
+      - "{{ strugglebus_lan_ca_root_sha256 }}"
+      - "{{ strugglebus_lan_ca_intermediate_sha256 }}"
+      - "{{ strugglebus_lan_ca_critical_seconds | string }}"
+  changed_when: false
+  no_log: true
+  when:
+    - strugglebus_tls_mode == "external"
+    - not ansible_check_mode
+
+- name: Verify Caddy can read but cannot mutate the external private key
+  ansible.builtin.command:
+    argv:
+      - /usr/sbin/runuser
+      - --user
+      - caddy
+      - --
+      - /usr/bin/test
+      - "{{ item.test }}"
+      - "{{ strugglebus_external_key_path }}"
+  loop:
+    - test: -r
+      expected_rc: 0
+    - test: -w
+      expected_rc: 1
+  register: caddy_external_key_access
+  changed_when: false
+  failed_when: caddy_external_key_access.rc != item.expected_rc
+  no_log: true
+  when:
+    - strugglebus_tls_mode == "external"
+    - not ansible_check_mode
+
+- name: Create the Caddy systemd override directory
+  ansible.builtin.file:
+    path: >-
+      {{
+        caddy_systemd_override_dir
+        | default('/etc/systemd/system/caddy.service.d')
+      }}
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Install the private Caddy runtime directory policy
+  ansible.builtin.template:
+    src: strugglebus-runtime.conf.j2
+    dest: >-
+      {{
+        (
+          caddy_systemd_override_dir
+          | default('/etc/systemd/system/caddy.service.d')
+        ) + '/strugglebus-runtime.conf'
+      }}
+    owner: root
+    group: root
+    mode: "0644"
+  register: caddy_runtime_policy_result
+
+- name: Install the LAN-only Caddy configuration
+  ansible.builtin.template:
+    src: Caddyfile.j2
+    dest: "{{ caddy_config_path | default('/etc/caddy/Caddyfile') }}"
+    owner: root
+    group: caddy
+    mode: "0640"
+    validate: >-
+      {{
+        omit
+        if ansible_check_mode
+        else '/usr/bin/caddy validate --adapter caddyfile --config %s'
+      }}
+  register: caddy_config_result
+
+- name: Inspect the managed Caddy runtime policy
+  ansible.builtin.stat:
+    path: >-
+      {{
+        (
+          caddy_systemd_override_dir
+          | default('/etc/systemd/system/caddy.service.d')
+        ) + '/strugglebus-runtime.conf'
+      }}
+    follow: false
+    checksum_algorithm: sha256
+  register: caddy_runtime_policy_file
+
+- name: Inspect the managed Caddy configuration
+  ansible.builtin.stat:
+    path: "{{ caddy_config_path | default('/etc/caddy/Caddyfile') }}"
+    follow: false
+    checksum_algorithm: sha256
+  register: caddy_config_file
+
+- name: Require regular managed Caddy files
+  ansible.builtin.assert:
+    that:
+      - >-
+        ansible_check_mode
+        or (
+          caddy_runtime_policy_file.stat.isreg | default(false)
+          and not caddy_runtime_policy_file.stat.islnk | default(true)
+        )
+      - >-
+        ansible_check_mode
+        or (
+          caddy_config_file.stat.isreg | default(false)
+          and not caddy_config_file.stat.islnk | default(true)
+        )
+    fail_msg: A managed Caddy file is missing, non-regular, or a symbolic link.
+
+- name: Inspect the verified Caddy activation marker
+  ansible.builtin.stat:
+    path: /etc/caddy/.strugglebus-activated
+    follow: false
+  register: caddy_activation_marker_file
+
+- name: Require a protected Caddy activation marker
+  ansible.builtin.assert:
+    that:
+      - >-
+        not caddy_activation_marker_file.stat.exists
+        or (
+          caddy_activation_marker_file.stat.isreg | default(false)
+          and not caddy_activation_marker_file.stat.islnk | default(true)
+          and caddy_activation_marker_file.stat.pw_name | default('') == 'root'
+          and caddy_activation_marker_file.stat.gr_name | default('') == 'root'
+          and caddy_activation_marker_file.stat.mode | default('') == '0600'
+          and caddy_activation_marker_file.stat.nlink | default(0) == 1
+        )
+    fail_msg: The Caddy activation marker has unsafe ownership or metadata.
+
+- name: Read the verified Caddy activation marker
+  ansible.builtin.slurp:
+    path: /etc/caddy/.strugglebus-activated
+  register: caddy_activation_marker_read
+  when: caddy_activation_marker_file.stat.exists
+
+- name: Inspect the loaded Caddy systemd state
+  ansible.builtin.command:
+    argv:
+      - systemctl
+      - show
+      - caddy.service
+      - --property=ActiveState
+      - --property=SubState
+      - --property=UnitFileState
+      - --property=DropInPaths
+  register: caddy_unit_state_result
+  changed_when: false
+  check_mode: false
+  failed_when:
+    - caddy_unit_state_result.rc != 0
+    - not ansible_check_mode
+
+- name: Derive the explicit Caddy activation plan
+  ansible.builtin.include_tasks: activation_plan.yml
+
+- name: Apply the validated Caddy activation plan before enablement
+  ansible.builtin.include_tasks: apply.yml
+  when:
+    - not ansible_check_mode
+    - caddy_activation_required | bool
+
+- name: Report Caddy activation predicted by check mode
+  ansible.builtin.debug:
+    msg: >-
+      Caddy requires the sequential validate, daemon-reload/restart, and
+      fail-closed verification path before enablement.
+  changed_when: true
+  when:
+    - ansible_check_mode
+    - caddy_activation_required | bool
+
+- name: Enable Caddy after validated activation
+  ansible.builtin.systemd_service:
+    name: caddy
+    enabled: true
+  when:
+    - not ansible_check_mode
+    - caddy_enable_required | bool
+
+- name: Report Caddy enablement predicted by check mode
+  ansible.builtin.debug:
+    msg: Caddy requires enablement after the validated activation plan.
+  changed_when: true
+  when:
+    - ansible_check_mode
+    - caddy_enable_required | bool
+
+- name: Require Caddy runtime safety after activation planning
+  ansible.builtin.include_tasks: verify.yml
+  when: not ansible_check_mode
+
+# The restart policy on caddy.service only catches a crash. It does nothing for
+# a proxy that is running but no longer answering, and nothing once the start
+# limit burst is exhausted. On 8 September 2026 the application stayed healthy
+# on loopback for eighteen hours while no client could reach it, so this probes
+# the path a client actually uses.
+- name: Install the proxy watchdog helper
+  ansible.builtin.copy:
+    src: strugglebus-proxy-watchdog
+    dest: /usr/local/libexec/strugglebus-proxy-watchdog
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Install the proxy watchdog units
+  ansible.builtin.template:
+    src: "{{ item }}.j2"
+    dest: "/etc/systemd/system/{{ item }}"
+    owner: root
+    group: root
+    mode: "0644"
+  loop:
+    - strugglebus-proxy-watchdog.service
+    - strugglebus-proxy-watchdog.timer
+  register: caddy_watchdog_units
+
+- name: Reload systemd for changed proxy watchdog units
+  ansible.builtin.systemd_service:
+    daemon_reload: true
+  when:
+    - not ansible_check_mode
+    - caddy_watchdog_units is changed
+
+- name: Inspect the proxy watchdog timer
+  ansible.builtin.command:
+    argv:
+      - systemctl
+      - is-active
+      - strugglebus-proxy-watchdog.timer
+  register: caddy_watchdog_timer_state
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+# Deliberately not systemd_service with a running state: Caddy activation in
+# this role is a validated sequence, and the contract forbids that shortcut
+# here so nobody reintroduces it for the proxy itself.
+- name: Enable and start the proxy watchdog timer
+  ansible.builtin.command:
+    argv:
+      - systemctl
+      - enable
+      - --now
+      - strugglebus-proxy-watchdog.timer
+  when:
+    - not ansible_check_mode
+    - >-
+      caddy_watchdog_units is changed
+      or caddy_watchdog_timer_state.stdout | default('') | trim != 'active'
+  changed_when: true

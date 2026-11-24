@@ -1,0 +1,206 @@
+{
+  "purpose": "Provenance for every behavior represented by the disposable mobile contract mock. This is evidence metadata, not production authority.",
+  "levels": {
+    "machine-generated": "Extracted from deployed OpenAPI or the running integration guide and checked mechanically.",
+    "source-read": "Confirmed by strugglebus-agent after reading the deployed release source.",
+    "runtime-observed": "Observed against the deployed service or a real Android emulator.",
+    "assumed": "Proposed mobile behavior not yet implemented in StruggleBus; requires future source confirmation."
+  },
+  "behaviors": [
+    {
+      "id": "enrollment-secret-non-nullable",
+      "provenance": [
+        "machine-generated",
+        "source-read"
+      ],
+      "evidence": [
+        "OpenAPI RedeemedEnrollmentResponse",
+        "StruggleBus seq 91"
+      ],
+      "mock": "A successful one-time redemption returns one non-empty secret."
+    },
+    {
+      "id": "enrollment-replay-impossible",
+      "provenance": [
+        "source-read"
+      ],
+      "evidence": [
+        "StruggleBus seq 91"
+      ],
+      "mock": "Token validation precedes any request-id lookup and only a secret hash is retained; redemption replay is refused."
+    },
+    {
+      "id": "idempotent-credential-secret-issued",
+      "provenance": [
+        "machine-generated",
+        "source-read"
+      ],
+      "evidence": [
+        "OpenAPI IssuedCredentialResponse",
+        "StruggleBus seq 91"
+      ],
+      "mock": "Credential operations that are idempotent distinguish issued secrets from secretless replay."
+    },
+    {
+      "id": "stream-numeric-limits",
+      "provenance": [
+        "machine-generated",
+        "runtime-observed"
+      ],
+      "evidence": [
+        "Integration guide 1.8.0 limits",
+        "StruggleBus seq 87"
+      ],
+      "mock": "Three concurrent streams and a 300-second production lifetime; tests may override lifetime only."
+    },
+    {
+      "id": "snapshot-non-consuming",
+      "provenance": [
+        "source-read"
+      ],
+      "evidence": [
+        "StruggleBus seq 81 and seq 84"
+      ],
+      "mock": "Snapshot never calls catch-up and never advances a consuming cursor."
+    },
+    {
+      "id": "authentication-writes-coalesced",
+      "provenance": [
+        "source-read",
+        "runtime-observed"
+      ],
+      "evidence": [
+        "StruggleBus announce seq 188",
+        "StruggleBus v0.2.20 / guide 1.12.0"
+      ],
+      "mock": "Authenticated mobile requests coalesce last-use writes within the activity window."
+    },
+    {
+      "id": "sse-wire-format",
+      "provenance": [
+        "runtime-observed",
+        "source-read"
+      ],
+      "evidence": [
+        "StruggleBus seq 87",
+        "Android emulator POC"
+      ],
+      "mock": "Compact ASCII-escaped JSON, literal heartbeat comments, signed 64-bit sequence IDs, and terminal events without IDs."
+    },
+    {
+      "id": "mobile-reads-during-freeze",
+      "provenance": [
+        "source-read",
+        "runtime-observed"
+      ],
+      "evidence": [
+        "StruggleBus announce seq 188",
+        "StruggleBus v0.2.20 / guide 1.12.0"
+      ],
+      "mock": "Status reports frozen while snapshot, channels, agents, and stream continue returning real monitor data."
+    },
+    {
+      "id": "mobile-principal-separation",
+      "provenance": [
+        "source-read",
+        "runtime-observed"
+      ],
+      "evidence": [
+        "StruggleBus v0.2.19 deployment",
+        "StruggleBus v0.2.20 / guide 1.12.0"
+      ],
+      "mock": "Mobile credentials use a distinct principal and credential namespace and cannot authenticate as agents."
+    },
+    {
+      "id": "mobile-channel-visibility",
+      "provenance": [
+        "source-read",
+        "runtime-observed"
+      ],
+      "evidence": [
+        "StruggleBus v0.2.19 deployment",
+        "StruggleBus v0.2.20 / guide 1.12.0"
+      ],
+      "mock": "An active monitor can view all channels; client filtering does not narrow server authorization."
+    },
+    {
+      "id": "mid-stream-mobile-denial",
+      "provenance": [
+        "source-read",
+        "runtime-observed"
+      ],
+      "evidence": [
+        "StruggleBus v0.2.20 / guide 1.12.0",
+        "API 34 mock integration probe"
+      ],
+      "mock": "Credential and availability denial can terminate a stream between messages; freeze no longer terminates or truncates mobile delivery."
+    },
+    {
+      "id": "mobile-write-grant",
+      "provenance": [
+        "machine-generated",
+        "source-read"
+      ],
+      "evidence": [
+        "StruggleBus v0.2.22 OpenAPI MobileWriteGrantRequest/Response",
+        "Integration guide 1.14.0 monitors section"
+      ],
+      "mock": "The operator password is exchanged once for a returned-once per-device grant; replacement revokes the prior grant and creation is denied while frozen."
+    },
+    {
+      "id": "mobile-confirmation-binding",
+      "provenance": [
+        "machine-generated",
+        "source-read"
+      ],
+      "evidence": [
+        "StruggleBus v0.2.22 OpenAPI MobileConfirmationRequest/Response and MobileActionRequest",
+        "StruggleBus seq 327"
+      ],
+      "mock": "A short-lived confirmation binds one action and target; the action must redeclare the same pair and supply a human audit reason."
+    },
+    {
+      "id": "mobile-actions-during-freeze",
+      "provenance": [
+        "source-read"
+      ],
+      "evidence": [
+        "Integration guide 1.14.0 monitors section",
+        "StruggleBus seq 327"
+      ],
+      "mock": "Existing grants can activate or clear the global freeze while grant creation remains denied."
+    },
+    {
+      "id": "android-background-resume",
+      "provenance": [
+        "runtime-observed"
+      ],
+      "evidence": [
+        "API 34 ActivityScenario background/resume probe"
+      ],
+      "mock": "The app closes its active stream when backgrounded and resumes from the durable accepted sequence when foregrounded."
+    },
+    {
+      "id": "android-process-death-resume",
+      "provenance": [
+        "runtime-observed"
+      ],
+      "evidence": [
+        "API 34 two-process raw instrumentation probe"
+      ],
+      "mock": "Keystore credential state and the accepted sequence survive process termination; a new process resumes without replaying accepted messages."
+    },
+    {
+      "id": "android-real-routine-expiry",
+      "provenance": [
+        "machine-generated",
+        "runtime-observed"
+      ],
+      "evidence": [
+        "Integration guide 1.8.0 sse_connection_seconds=300",
+        "API 34 303.116-second instrumentation probe"
+      ],
+      "mock": "A stream ending at the real five-minute boundary is classified as routine closure rather than failure."
+    }
+  ]
+}

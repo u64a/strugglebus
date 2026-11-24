@@ -1,0 +1,163 @@
+---
+- name: Validate Caddy before activation
+  block:
+    - name: Validate Caddy configuration
+      ansible.builtin.command:
+        argv:
+          - caddy
+          - validate
+          - --config
+          - "{{ caddy_config_path | default('/etc/caddy/Caddyfile') }}"
+      changed_when: false
+      when: caddy_activation_test_fixture is not defined
+
+    - name: Validate the isolated Caddy activation fixture
+      ansible.builtin.command:
+        argv:
+          - "{{ ansible_playbook_python }}"
+          - -c
+          - >-
+            import pathlib,sys;
+            state=pathlib.Path(sys.argv[1]);
+            log=pathlib.Path(sys.argv[2]);
+            scenario=sys.argv[3];
+            assert state.read_text(encoding="ascii").strip()
+            == "package-default-stopped";
+            log.open("a",encoding="ascii").write("validate\n");
+            sys.exit(1) if scenario == "validation-failure" else None;
+            state.write_text("validated\n",encoding="ascii")
+          - "{{ caddy_activation_test_fixture.state }}"
+          - "{{ caddy_activation_test_fixture.log }}"
+          - "{{ caddy_activation_test_fixture.scenario }}"
+      changed_when: false
+      when: caddy_activation_test_fixture is defined
+  rescue:
+    - name: Stop Caddy after failed validation
+      ansible.builtin.systemd_service:
+        name: caddy
+        state: stopped
+      when: caddy_activation_test_fixture is not defined
+
+    - name: Stop the isolated fixture after failed validation
+      ansible.builtin.command:
+        argv:
+          - "{{ ansible_playbook_python }}"
+          - -c
+          - >-
+            import pathlib,sys;
+            pathlib.Path(sys.argv[1]).write_text("stopped\n",encoding="ascii");
+            pathlib.Path(sys.argv[2]).open("a",encoding="ascii").write("stop\n")
+          - "{{ caddy_activation_test_fixture.state }}"
+          - "{{ caddy_activation_test_fixture.log }}"
+      changed_when: true
+      when: caddy_activation_test_fixture is defined
+
+    - name: Report failed Caddy validation
+      ansible.builtin.fail:
+        msg: Caddy configuration validation failed and the service was stopped.
+
+- name: Reload systemd and restart Caddy
+  ansible.builtin.systemd_service:
+    name: caddy
+    daemon_reload: true
+    state: restarted
+  register: caddy_live_restart_result
+  ignore_errors: true
+  when:
+    - not ansible_check_mode
+    - caddy_activation_test_fixture is not defined
+
+- name: Restart the isolated Caddy activation fixture
+  ansible.builtin.command:
+    argv:
+      - "{{ ansible_playbook_python }}"
+      - -c
+      - >-
+        import pathlib,sys;
+        state=pathlib.Path(sys.argv[1]);
+        log=pathlib.Path(sys.argv[2]);
+        scenario=sys.argv[3];
+        assert state.read_text(encoding="ascii").strip() == "validated";
+        log.open("a",encoding="ascii").write("restart\n");
+        sys.exit(1) if scenario == "restart-failure" else None;
+        state.write_text("restarted\n",encoding="ascii")
+      - "{{ caddy_activation_test_fixture.state }}"
+      - "{{ caddy_activation_test_fixture.log }}"
+      - "{{ caddy_activation_test_fixture.scenario }}"
+  register: caddy_fixture_restart_result
+  changed_when: true
+  ignore_errors: true
+  when:
+    - not ansible_check_mode
+    - caddy_activation_test_fixture is defined
+
+- name: Record the Caddy restart result
+  ansible.builtin.set_fact:
+    caddy_restart_result: >-
+      {{
+        caddy_fixture_restart_result
+        if caddy_activation_test_fixture is defined
+        else caddy_live_restart_result
+      }}
+  when: not ansible_check_mode
+
+- name: Stop Caddy after failed restart
+  ansible.builtin.systemd_service:
+    name: caddy
+    state: stopped
+  when:
+    - not ansible_check_mode
+    - caddy_activation_test_fixture is not defined
+    - caddy_restart_result is failed
+
+- name: Stop the isolated fixture after failed restart
+  ansible.builtin.command:
+    argv:
+      - "{{ ansible_playbook_python }}"
+      - -c
+      - >-
+        import pathlib,sys;
+        pathlib.Path(sys.argv[1]).write_text("stopped\n",encoding="ascii");
+        pathlib.Path(sys.argv[2]).open("a",encoding="ascii").write("stop\n")
+      - "{{ caddy_activation_test_fixture.state }}"
+      - "{{ caddy_activation_test_fixture.log }}"
+  changed_when: true
+  when:
+    - not ansible_check_mode
+    - caddy_activation_test_fixture is defined
+    - caddy_restart_result is failed
+
+- name: Report failed Caddy restart
+  ansible.builtin.fail:
+    msg: Caddy failed to restart after validated configuration and was stopped.
+  when:
+    - not ansible_check_mode
+    - caddy_restart_result is failed
+
+- name: Verify Caddy runtime after restart
+  ansible.builtin.include_tasks: verify.yml
+  when: not ansible_check_mode
+
+- name: Record the verified Caddy activation fingerprints
+  ansible.builtin.copy:
+    dest: >-
+      {{
+        caddy_activation_test_fixture.marker
+        if caddy_activation_test_fixture is defined
+        else '/etc/caddy/.strugglebus-activated'
+      }}
+    content: "{{ caddy_expected_activation_marker }}\n"
+    owner: >-
+      {{
+        omit
+        if caddy_activation_test_fixture is defined
+        else 'root'
+      }}
+    group: >-
+      {{
+        omit
+        if caddy_activation_test_fixture is defined
+        else 'root'
+      }}
+    mode: "0600"
+  when: not ansible_check_mode

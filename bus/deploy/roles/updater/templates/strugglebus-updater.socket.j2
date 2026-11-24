@@ -1,0 +1,16 @@
+[Unit]
+Description=Strugglebus prepare-only updater IPC
+
+[Socket]
+ListenStream=/run/strugglebus-updater/worker.sock
+SocketUser=root
+SocketGroup={{ strugglebus_service_group }}
+SocketMode=0660
+DirectoryMode=0755
+Accept=no
+Backlog=4
+RemoveOnStop=true
+Service=strugglebus-updater.service
+
+[Install]
+WantedBy=sockets.target

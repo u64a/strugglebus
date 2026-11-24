@@ -1,0 +1,87 @@
+---
+- name: Validate deployment artifact and backup policy inputs
+  ansible.builtin.assert:
+    that:
+      - strugglebus_release_version is defined
+      - >-
+        (strugglebus_release_test_fixture | default(false))
+        or strugglebus_release_version is match('^[0-9]+\\.[0-9]+\\.[0-9]+$')
+      - >-
+        (strugglebus_release_test_fixture | default(false))
+        or strugglebus_release_version not in ['0.2.5', '0.2.6', '0.2.28', '0.2.31', '0.2.32', '0.2.33', '0.2.34', '0.2.35', '0.2.36', '0.2.37']
+      - >-
+        (strugglebus_release_test_fixture | default(false))
+        or strugglebus_verified_release_dir is defined
+      - >-
+        (strugglebus_release_test_fixture | default(false))
+        or strugglebus_release_tag == 'v' + strugglebus_release_version
+      - >-
+        (strugglebus_release_test_fixture | default(false))
+        or strugglebus_release_source_commit is match('^[0-9a-f]{40}$')
+      - >-
+        (strugglebus_release_test_fixture | default(false))
+        or strugglebus_release_source_tree is match('^[0-9a-f]{40}$')
+      - >-
+        (strugglebus_release_test_fixture | default(false))
+        or strugglebus_release_assets | length == 5
+      - strugglebus_wheel_src is defined
+      - strugglebus_wheel_sha256 is match('^[0-9a-f]{64}$')
+      - strugglebus_requirements_lock_src is defined
+      - strugglebus_requirements_lock_sha256 is match('^[0-9a-f]{64}$')
+      - >-
+        (strugglebus_assert_external_vzdump | default(false)) is boolean
+      - >-
+        (
+          strugglebus_owner_accepts_missing_weekly_vzdump_risk
+          | default(false)
+        ) is boolean
+      - >-
+        (strugglebus_assert_external_vzdump | default(false))
+        !=
+        (
+          strugglebus_owner_accepts_missing_weekly_vzdump_risk
+          | default(false)
+        )
+      - strugglebus_external_vzdump_retention | int >= 4
+      - >-
+        (
+          strugglebus_release_test_fixture | default(false)
+          and ansible_connection == "local"
+          and inventory_hostname == "localhost"
+        )
+        or (
+          strugglebus_domain is defined
+          and strugglebus_health_url
+              == 'https://'
+                 + (strugglebus_effective_domain | default(strugglebus_domain))
+                 + '/healthz'
+          and strugglebus_caddy_ca_path is defined
+          and strugglebus_caddy_ca_path | length > 0
+        )
+    fail_msg: >-
+      Supply a safe version, checksummed wheel and hash-locked requirements file,
+      then either affirm the external four-copy weekly vzdump policy or explicitly
+      record the owner's acceptance of the currently missing weekly backup.
+      Production deploys also require the exact internal-CA HTTPS health endpoint.
+
+- name: Validate the wheel filename with the canonical parser
+  ansible.builtin.command:
+    argv:
+      - "{{ ansible_playbook_python }}"
+      - "{{ playbook_dir }}/../../scripts/validate_wheel_filename.py"
+      - "{{ strugglebus_wheel_src }}"
+  delegate_to: localhost
+  become: false
+  changed_when: false
+  check_mode: false
+
+- name: Record the explicit missing-weekly-backup risk acceptance
+  ansible.builtin.debug:
+    msg: >-
+      The owner explicitly accepted release without a configured weekly vzdump.
+      A weekly snapshot-mode zstd job for this VMID with keep-last=4 remains an
+      operator action.
+  when:
+    - >-
+      strugglebus_owner_accepts_missing_weekly_vzdump_risk
+      | default(false)

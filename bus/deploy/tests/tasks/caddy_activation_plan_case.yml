@@ -1,0 +1,58 @@
+---
+- name: Set the Caddy activation planning fixture
+  ansible.builtin.set_fact:
+    caddy_runtime_policy_result:
+      changed: "{{ caddy_activation_case.runtime_changed }}"
+    caddy_config_result:
+      changed: "{{ caddy_activation_case.config_changed }}"
+    caddy_runtime_policy_file:
+      stat:
+        checksum: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+    caddy_config_file:
+      stat:
+        checksum: bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+    caddy_activation_marker_file:
+      stat:
+        exists: "{{ caddy_activation_case.marker != 'missing' }}"
+    caddy_activation_marker_read:
+      content: >-
+        {{
+          (
+            'runtime_sha256='
+            + (
+              'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+              'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+            )
+            + '\nconfig_sha256='
+            + (
+              (
+                'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'
+                'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'
+              )
+              if caddy_activation_case.marker == 'matching'
+              else (
+                'cccccccccccccccccccccccccccccccc'
+                'cccccccccccccccccccccccccccccccc'
+              )
+            )
+          )
+          | b64encode
+        }}
+    caddy_unit_state_result:
+      rc: 0
+      stdout: "{{ caddy_activation_case.state }}"
+
+- name: Run the production Caddy activation planner
+  ansible.builtin.include_tasks: ../../roles/caddy/tasks/activation_plan.yml
+
+- name: Require the expected Caddy activation plan
+  ansible.builtin.assert:
+    that:
+      - >-
+        caddy_activation_required | bool
+        == caddy_activation_case.activation_required
+      - >-
+        caddy_enable_required | bool
+        == caddy_activation_case.enable_required
+    fail_msg: >-
+      Caddy activation plan {{ caddy_activation_case.name }} did not match.

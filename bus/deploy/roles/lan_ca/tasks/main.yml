@@ -1,0 +1,561 @@
+---
+- name: Validate the dedicated LAN CA configuration
+  ansible.builtin.assert:
+    that:
+      - strugglebus_tls_mode in ["internal", "external"]
+      # Hostname pinning lives in the deployment_identity role; requiring its
+      # published fact keeps this role fail-closed without that guard.
+      - strugglebus_validated_profile is defined
+      - strugglebus_validated_profile in ["production", "development"]
+      - >-
+        (
+          strugglebus_validated_profile == "production"
+          and strugglebus_domain != strugglebus_external_domain
+        )
+        or (
+          strugglebus_validated_profile == "development"
+          and strugglebus_domain == strugglebus_external_domain
+        )
+      - >-
+        strugglebus_effective_domain
+        == (
+          strugglebus_external_domain
+          if strugglebus_tls_mode == "external"
+          else strugglebus_domain
+        )
+      - >-
+        strugglebus_health_url
+        == "https://" + strugglebus_effective_domain + "/healthz"
+      - strugglebus_lan_ca_stage | type_debug == "bool"
+      - strugglebus_lan_ca_renewal_enabled | type_debug == "bool"
+      - >-
+        not strugglebus_lan_ca_renewal_enabled | bool
+        or strugglebus_lan_ca_stage | bool
+      # The dedicated CA is itself a production identity. Production pins it
+      # exactly; development may not reach it at all and must leave this role
+      # inert, so a rehearsal host can never obtain a real service certificate.
+      - >-
+        strugglebus_validated_profile != "production"
+        or (
+          strugglebus_lan_ca_url == "https://ca.u64.lan"
+          and strugglebus_lan_ca_provisioner == "jwk-strugglebus"
+        )
+      - >-
+        strugglebus_validated_profile != "development"
+        or (
+          not strugglebus_lan_ca_stage | bool
+          and not strugglebus_lan_ca_renewal_enabled | bool
+        )
+      - strugglebus_lan_ca_root_sha256 is match('^[0-9a-f]{64}$')
+      - strugglebus_lan_ca_intermediate_sha256 is match('^[0-9a-f]{64}$')
+      - strugglebus_step_sha256 is match('^[0-9a-f]{64}$')
+      - strugglebus_lan_ca_critical_seconds | int == 14400
+      - strugglebus_lan_ca_warning_seconds | int == 43200
+      - strugglebus_lan_ca_renew_before_seconds | int == 57600
+      - >-
+        strugglebus_lan_ca_critical_seconds | int
+        < strugglebus_lan_ca_warning_seconds | int
+      - >-
+        strugglebus_lan_ca_warning_seconds | int
+        < strugglebus_lan_ca_renew_before_seconds | int
+      - >-
+        strugglebus_tls_mode != "external"
+        or strugglebus_lan_ca_stage | bool
+      - >-
+        strugglebus_tls_mode != "external"
+        or strugglebus_lan_ca_renewal_enabled | bool
+      - >-
+        strugglebus_tls_mode != "external"
+        or strugglebus_caddy_ca_path == strugglebus_lan_ca_bundle_path
+    fail_msg: Dedicated LAN CA configuration is incomplete or unsafe.
+
+- name: Validate LAN CA staging sources
+  ansible.builtin.assert:
+    that:
+      - strugglebus_lan_ca_bundle_src not in ["", "CHANGE_ME"]
+      - strugglebus_lan_ca_password_src not in ["", "CHANGE_ME"]
+      - strugglebus_step_src not in ["", "CHANGE_ME"]
+    fail_msg: Supply the public CA bundle, protected JWK password, and pinned step binary.
+  no_log: true
+  when:
+    - strugglebus_lan_ca_stage | bool
+    - not ansible_check_mode
+
+- name: Inspect the controller-provided step binary
+  ansible.builtin.stat:
+    path: "{{ strugglebus_step_src }}"
+    checksum_algorithm: sha256
+  delegate_to: localhost
+  become: false
+  register: strugglebus_step_source
+  when:
+    - strugglebus_lan_ca_stage | bool
+    - not ansible_check_mode
+
+- name: Require the exact controller-provided step binary
+  ansible.builtin.assert:
+    that:
+      - strugglebus_step_source.stat.isreg | default(false)
+      - not (strugglebus_step_source.stat.islnk | default(true))
+      - strugglebus_step_source.stat.checksum == strugglebus_step_sha256
+    fail_msg: The supplied step binary is missing, symlinked, or has the wrong digest.
+  when:
+    - strugglebus_lan_ca_stage | bool
+    - not ansible_check_mode
+
+- name: Resolve the existing Caddy service group
+  ansible.builtin.getent:
+    database: group
+    key: caddy
+  when:
+    - strugglebus_lan_ca_stage | bool
+    - not ansible_check_mode
+
+- name: Require Caddy to be installed before LAN CA staging
+  ansible.builtin.assert:
+    that:
+      - "'caddy' in ansible_facts.getent_group"
+    fail_msg: Apply the internal-mode Caddy deployment before staging LAN CA files.
+  when:
+    - strugglebus_lan_ca_stage | bool
+    - not ansible_check_mode
+
+- name: Create protected LAN CA directories
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    owner: root
+    group: "{{ item.group }}"
+    mode: "{{ item.mode }}"
+  loop:
+    - path: /etc/lan-ca
+      group: root
+      mode: "0700"
+    - path: "{{ strugglebus_tls_root }}"
+      group: caddy
+      mode: "0750"
+    - path: "{{ strugglebus_tls_root }}/generations"
+      group: caddy
+      mode: "0750"
+  when:
+    - strugglebus_lan_ca_stage | bool
+    - not ansible_check_mode
+
+- name: Install the pinned step client
+  ansible.builtin.copy:
+    src: "{{ strugglebus_step_src }}"
+    dest: /usr/local/bin/step
+    owner: root
+    group: root
+    mode: "0755"
+  when:
+    - strugglebus_lan_ca_stage | bool
+    - not ansible_check_mode
+
+- name: Inspect the installed step client
+  ansible.builtin.stat:
+    path: /usr/local/bin/step
+    checksum_algorithm: sha256
+    follow: false
+  register: strugglebus_step_installed
+  when:
+    - strugglebus_lan_ca_stage | bool
+    - not ansible_check_mode
+
+- name: Require the exact protected step client
+  ansible.builtin.assert:
+    that:
+      - strugglebus_step_installed.stat.isreg | default(false)
+      - not (strugglebus_step_installed.stat.islnk | default(true))
+      - strugglebus_step_installed.stat.nlink | default(0) == 1
+      - strugglebus_step_installed.stat.pw_name | default("") == "root"
+      - strugglebus_step_installed.stat.gr_name | default("") == "root"
+      - strugglebus_step_installed.stat.mode | default("") == "0755"
+      - strugglebus_step_installed.stat.checksum == strugglebus_step_sha256
+    fail_msg: Installed step client failed identity, mode, or digest verification.
+  when:
+    - strugglebus_lan_ca_stage | bool
+    - not ansible_check_mode
+
+- name: Install reviewed LAN CA helpers
+  ansible.builtin.copy:
+    src: "{{ item.src }}"
+    dest: "/usr/local/libexec/{{ item.dest }}"
+    owner: root
+    group: root
+    mode: "0755"
+  loop:
+    - src: strugglebus-lan-ca-common.sh
+      dest: strugglebus-lan-ca-common
+    - src: strugglebus-verify-ca-bundle.sh
+      dest: strugglebus-verify-ca-bundle
+    - src: strugglebus-verify-certificate.sh
+      dest: strugglebus-verify-certificate
+    - src: strugglebus-renew-certificate.sh
+      dest: strugglebus-renew-certificate
+    - src: strugglebus-check-certificate-expiry.sh
+      dest: strugglebus-check-certificate-expiry
+  when:
+    - strugglebus_lan_ca_stage | bool
+    - not ansible_check_mode
+
+- name: Install the exact public LAN CA bundle
+  ansible.builtin.copy:
+    src: "{{ strugglebus_lan_ca_bundle_src }}"
+    dest: "{{ strugglebus_lan_ca_bundle_path }}"
+    owner: root
+    group: root
+    mode: "0644"
+    validate: >-
+      /usr/local/libexec/strugglebus-verify-ca-bundle
+      %s
+      {{ strugglebus_lan_ca_root_sha256 }}
+      {{ strugglebus_lan_ca_intermediate_sha256 }}
+  when:
+    - strugglebus_lan_ca_stage | bool
+    - not ansible_check_mode
+
+- name: Derive the exact CA endpoint trust root from the verified bundle
+  ansible.builtin.command:
+    argv:
+      - /usr/local/libexec/strugglebus-verify-ca-bundle
+      - --install-root
+      - "{{ strugglebus_lan_ca_bundle_path }}"
+      - "{{ strugglebus_lan_ca_root_sha256 }}"
+      - "{{ strugglebus_lan_ca_intermediate_sha256 }}"
+      - "{{ strugglebus_lan_ca_root_path }}"
+  register: strugglebus_lan_ca_root_install
+  changed_when: "'status=changed' in strugglebus_lan_ca_root_install.stdout"
+  when:
+    - strugglebus_lan_ca_stage | bool
+    - not ansible_check_mode
+
+- name: Publish the verified public trust anchor where the service can read it
+  ansible.builtin.copy:
+    src: "{{ strugglebus_lan_ca_root_path }}"
+    dest: >-
+      {{
+        strugglebus_lan_ca_published_root_path
+        | default(strugglebus_config_dir ~ '/lan-ca-root.crt')
+      }}
+    remote_src: true
+    owner: root
+    group: "{{ strugglebus_service_group }}"
+    mode: "0640"
+  when:
+    - strugglebus_lan_ca_stage | bool
+    - not ansible_check_mode
+
+- name: Install the protected JWK password outside check mode
+  ansible.builtin.copy:
+    src: "{{ strugglebus_lan_ca_password_src }}"
+    dest: "{{ strugglebus_lan_ca_password_path }}"
+    owner: root
+    group: root
+    mode: "0600"
+  no_log: true
+  diff: false
+  when:
+    - strugglebus_lan_ca_stage | bool
+    - not ansible_check_mode
+
+- name: Inspect the installed protected JWK password metadata
+  ansible.builtin.stat:
+    path: "{{ strugglebus_lan_ca_password_path }}"
+    follow: false
+  register: strugglebus_lan_ca_password_installed
+  no_log: true
+  when:
+    - strugglebus_lan_ca_stage | bool
+    - not ansible_check_mode
+
+- name: Require protected JWK password metadata
+  ansible.builtin.assert:
+    that:
+      - strugglebus_lan_ca_password_installed.stat.isreg | default(false)
+      - not (strugglebus_lan_ca_password_installed.stat.islnk | default(true))
+      - strugglebus_lan_ca_password_installed.stat.nlink | default(0) == 1
+      - >-
+        strugglebus_lan_ca_password_installed.stat.pw_name
+        | default("") == "root"
+      - >-
+        strugglebus_lan_ca_password_installed.stat.gr_name
+        | default("") == "root"
+      - strugglebus_lan_ca_password_installed.stat.mode | default("") == "0600"
+    fail_msg: Installed JWK password metadata is unsafe.
+  no_log: true
+  when:
+    - strugglebus_lan_ca_stage | bool
+    - not ansible_check_mode
+
+- name: Report protected password staging without reading its source
+  ansible.builtin.debug:
+    msg: A protected systemd credential would be staged during apply.
+  changed_when: true
+  when:
+    - strugglebus_lan_ca_stage | bool
+    - ansible_check_mode
+
+- name: Install the public renewal configuration
+  ansible.builtin.template:
+    src: strugglebus-renew.env.j2
+    dest: /etc/lan-ca/strugglebus-renew.env
+    owner: root
+    group: root
+    mode: "0644"
+  when:
+    - strugglebus_lan_ca_stage | bool
+    - not ansible_check_mode
+
+- name: Install inert LAN CA systemd units
+  ansible.builtin.template:
+    src: "{{ item }}.j2"
+    dest: "/etc/systemd/system/{{ item }}"
+    owner: root
+    group: root
+    mode: "0644"
+  loop:
+    - strugglebus-cert-renew.service
+    - strugglebus-cert-renew.timer
+    - strugglebus-cert-expiry.service
+    - strugglebus-cert-expiry.timer
+  notify: Reload systemd for LAN CA units
+  when:
+    - strugglebus_lan_ca_stage | bool
+    - not ansible_check_mode
+
+- name: Apply LAN CA unit definitions before state management
+  ansible.builtin.meta: flush_handlers
+  when:
+    - strugglebus_lan_ca_stage | bool
+    - not ansible_check_mode
+
+- name: Inspect installed LAN CA unit definitions
+  ansible.builtin.stat:
+    path: "/etc/systemd/system/{{ item }}"
+    follow: false
+  loop:
+    - strugglebus-cert-renew.service
+    - strugglebus-cert-renew.timer
+    - strugglebus-cert-expiry.service
+    - strugglebus-cert-expiry.timer
+  register: strugglebus_lan_ca_installed_units
+
+- name: Keep one-shot LAN CA services inactive
+  ansible.builtin.systemd_service:
+    name: "{{ item.item }}"
+    state: stopped
+  loop: "{{ strugglebus_lan_ca_installed_units.results }}"
+  when:
+    - not ansible_check_mode
+    - not strugglebus_lan_ca_renewal_enabled | bool
+    - item.stat.exists | default(false)
+    - item.item is match('.*[.]service$')
+
+- name: Disable previously installed LAN CA timers in inert mode
+  ansible.builtin.systemd_service:
+    name: "{{ item.item }}"
+    enabled: false
+    state: stopped
+  loop: "{{ strugglebus_lan_ca_installed_units.results }}"
+  when:
+    - not ansible_check_mode
+    - not strugglebus_lan_ca_renewal_enabled | bool
+    - item.stat.exists | default(false)
+    - item.item is match('.*[.]timer$')
+
+- name: Inspect exact external activation evidence
+  ansible.builtin.stat:
+    path: "{{ strugglebus_lan_ca_activation_evidence_src }}"
+  delegate_to: localhost
+  become: false
+  register: strugglebus_lan_ca_evidence_file
+  no_log: true
+  when: >-
+    strugglebus_tls_mode == "external"
+    or strugglebus_lan_ca_renewal_enabled | bool
+
+- name: Capture exact external activation evidence once
+  ansible.builtin.slurp:
+    src: "{{ strugglebus_lan_ca_activation_evidence_src }}"
+  delegate_to: localhost
+  become: false
+  register: strugglebus_lan_ca_evidence_blob
+  no_log: true
+  when: >-
+    strugglebus_tls_mode == "external"
+    or strugglebus_lan_ca_renewal_enabled | bool
+
+- name: Decode captured external activation evidence
+  ansible.builtin.set_fact:
+    strugglebus_lan_ca_evidence_content: >-
+      {{ strugglebus_lan_ca_evidence_blob.content | b64decode }}
+  no_log: true
+  when: >-
+    strugglebus_tls_mode == "external"
+    or strugglebus_lan_ca_renewal_enabled | bool
+
+- name: Parse captured external activation evidence
+  ansible.builtin.set_fact:
+    strugglebus_lan_ca_evidence: >-
+      {{ strugglebus_lan_ca_evidence_content | from_json }}
+  no_log: true
+  when: >-
+    strugglebus_tls_mode == "external"
+    or strugglebus_lan_ca_renewal_enabled | bool
+
+- name: Require complete machine-readable external activation evidence
+  ansible.builtin.assert:
+    that:
+      - >-
+        strugglebus_lan_ca_activation_evidence_sha256
+        is match('^[0-9a-f]{64}$')
+      - strugglebus_lan_ca_evidence_file.stat.isreg | default(false)
+      - not (strugglebus_lan_ca_evidence_file.stat.islnk | default(true))
+      - >-
+        strugglebus_lan_ca_evidence_content | hash('sha256')
+        == strugglebus_lan_ca_activation_evidence_sha256
+      - >-
+        strugglebus_lan_ca_evidence.keys() | sort
+        == [
+          'ca_custody',
+          'ca_url',
+          'client_dual_root',
+          'human_approval',
+          'intermediate_sha256',
+          'lan_dns',
+          'legacy_dns',
+          'off_machine_restore',
+          'root_sha256',
+          'schema',
+          'server_policy',
+          'service_dns'
+        ]
+      - >-
+        strugglebus_lan_ca_evidence.schema
+        == "strugglebus-lan-ca-activation-v1"
+      - >-
+        strugglebus_lan_ca_evidence.service_dns
+        == strugglebus_external_domain
+      - strugglebus_lan_ca_evidence.legacy_dns == strugglebus_domain
+      - strugglebus_lan_ca_evidence.ca_url == strugglebus_lan_ca_url
+      - >-
+        strugglebus_lan_ca_evidence.root_sha256
+        == strugglebus_lan_ca_root_sha256
+      - >-
+        strugglebus_lan_ca_evidence.intermediate_sha256
+        == strugglebus_lan_ca_intermediate_sha256
+      - >-
+        strugglebus_lan_ca_evidence.human_approval.keys() | sort
+        == ['approved', 'approved_at', 'approved_by']
+      - strugglebus_lan_ca_evidence.human_approval.approved is sameas true
+      - >-
+        strugglebus_lan_ca_evidence.human_approval.approved_at
+        is match('^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$')
+      - >-
+        strugglebus_lan_ca_evidence.human_approval.approved_by
+        is match('^[0-9A-Za-z][0-9A-Za-z ._@-]{0,63}$')
+      - >-
+        strugglebus_lan_ca_evidence.lan_dns.keys() | sort
+        == ['service_dns', 'verified']
+      - strugglebus_lan_ca_evidence.lan_dns.verified is sameas true
+      - >-
+        strugglebus_lan_ca_evidence.lan_dns.service_dns
+        == strugglebus_external_domain
+      - >-
+        strugglebus_lan_ca_evidence.client_dual_root.keys() | sort
+        == ['legacy_root_retained', 'verified']
+      - strugglebus_lan_ca_evidence.client_dual_root.verified is sameas true
+      - >-
+        strugglebus_lan_ca_evidence.client_dual_root.legacy_root_retained
+        is sameas true
+      - >-
+        strugglebus_lan_ca_evidence.server_policy.keys() | sort
+        == ['dns_sans', 'extended_key_usage', 'verified']
+      - strugglebus_lan_ca_evidence.server_policy.verified is sameas true
+      - >-
+        strugglebus_lan_ca_evidence.server_policy.dns_sans
+        == [strugglebus_external_domain]
+      - >-
+        strugglebus_lan_ca_evidence.server_policy.extended_key_usage
+        == ["serverAuth"]
+      - >-
+        strugglebus_lan_ca_evidence.ca_custody.keys() | sort
+        == ['intermediate_only', 'root_offline', 'verified']
+      - strugglebus_lan_ca_evidence.ca_custody.verified is sameas true
+      - strugglebus_lan_ca_evidence.ca_custody.root_offline is sameas true
+      - >-
+        strugglebus_lan_ca_evidence.ca_custody.intermediate_only
+        is sameas true
+      - >-
+        strugglebus_lan_ca_evidence.off_machine_restore.keys() | sort
+        == ['isolated', 'verified']
+      - strugglebus_lan_ca_evidence.off_machine_restore.verified is sameas true
+      - strugglebus_lan_ca_evidence.off_machine_restore.isolated is sameas true
+    fail_msg: External TLS activation evidence is missing, stale, or incomplete.
+  no_log: true
+  when: >-
+    strugglebus_tls_mode == "external"
+    or strugglebus_lan_ca_renewal_enabled | bool
+
+- name: Inspect the external certificate generation link
+  ansible.builtin.stat:
+    path: "{{ strugglebus_tls_root }}/current"
+    follow: false
+  register: strugglebus_lan_ca_current_link
+  when: strugglebus_tls_mode == "external"
+
+- name: Require an atomic external certificate generation link
+  ansible.builtin.assert:
+    that:
+      - strugglebus_lan_ca_current_link.stat.islnk | default(false)
+      - >-
+        strugglebus_lan_ca_current_link.stat.lnk_source
+        is match(
+          '^' + strugglebus_tls_root
+          + '/generations/[0-9]{8}T[0-9]{6}Z-[0-9]+$'
+        )
+    fail_msg: External TLS requires a valid versioned current certificate link.
+  when: strugglebus_tls_mode == "external"
+
+- name: Validate the current external certificate outside check mode
+  ansible.builtin.command:
+    argv:
+      - /usr/local/libexec/strugglebus-verify-certificate
+      - "{{ strugglebus_external_cert_path }}"
+      - "{{ strugglebus_external_key_path }}"
+      - "{{ strugglebus_lan_ca_bundle_path }}"
+      - "{{ strugglebus_external_domain }}"
+      - "{{ strugglebus_lan_ca_root_sha256 }}"
+      - "{{ strugglebus_lan_ca_intermediate_sha256 }}"
+      - "{{ strugglebus_lan_ca_critical_seconds | string }}"
+  changed_when: false
+  no_log: true
+  when:
+    - strugglebus_tls_mode == "external"
+    - not ansible_check_mode
+
+- name: Enable explicitly evidence-gated LAN CA timers
+  ansible.builtin.systemd_service:
+    name: "{{ item }}"
+    enabled: true
+    state: started
+  loop:
+    - strugglebus-cert-renew.timer
+    - strugglebus-cert-expiry.timer
+  when:
+    - strugglebus_lan_ca_stage | bool
+    - not ansible_check_mode
+    - strugglebus_lan_ca_renewal_enabled | bool
+
+- name: Verify the renewal timer is active for external TLS
+  ansible.builtin.command:
+    argv:
+      - systemctl
+      - is-active
+      - --quiet
+      - strugglebus-cert-renew.timer
+  changed_when: false
+  when:
+    - strugglebus_tls_mode == "external"
+    - not ansible_check_mode

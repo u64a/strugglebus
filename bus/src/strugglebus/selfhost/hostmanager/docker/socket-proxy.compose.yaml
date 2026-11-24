@@ -1,0 +1,70 @@
+# A read-only window onto this Docker host for a bus agent.
+#
+# Start it on the Docker host:
+#   docker compose -f socket-proxy.compose.yaml up -d
+# Stop and remove it (this takes the agent's access away):
+#   docker compose -f socket-proxy.compose.yaml down
+#
+# The agent talks to this proxy instead of the Docker socket. The proxy passes
+# on read requests (GET) for the parts listed below and answers everything else
+# with "403 Forbidden". The agent uses it by setting, on its own PC:
+#   DOCKER_HOST=tcp://127.0.0.1:2375
+#
+# In the settings below "1" means allowed and "0" means refused.
+name: bus-hostmanager
+services:
+  docker-readonly:
+    image: tecnativa/docker-socket-proxy:v0.5.0
+    environment:
+      # The master switch. "0" refuses every request that is not a read (GET),
+      # whatever else is switched on. Never change this.
+      POST: "0"
+
+      # What the agent may read.
+      CONTAINERS: "1"   # list containers, their state, settings, logs and usage
+      IMAGES: "1"       # list images
+      NETWORKS: "1"     # list networks
+      VOLUMES: "1"      # list volumes
+      INFO: "1"         # host summary (docker info)
+      VERSION: "1"      # Docker version
+      SYSTEM: "1"       # disk space used (docker system df)
+      EVENTS: "1"       # what started, stopped or died
+      PING: "1"         # is Docker answering
+
+      # Everything else stays off.
+      ALLOW_START: "0"
+      ALLOW_STOP: "0"
+      ALLOW_RESTARTS: "0"
+      EXEC: "0"
+      BUILD: "0"
+      COMMIT: "0"
+      AUTH: "0"
+      SECRETS: "0"
+      CONFIGS: "0"
+      SWARM: "0"
+      SERVICES: "0"
+      TASKS: "0"
+      NODES: "0"
+      PLUGINS: "0"
+      SESSION: "0"
+      DISTRIBUTION: "0"
+      GRPC: "0"
+    volumes:
+      # ":ro" stops the proxy replacing the socket file. It does not by itself
+      # make Docker read-only; the settings above do that.
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    ports:
+      # 127.0.0.1 means only programs on this Docker host can reach the proxy.
+      # Use this when the agent runs on the Docker host, or reaches it through
+      # an SSH tunnel (see README.md). That is the safe choice.
+      #
+      # If the agent runs on another machine and you cannot use an SSH tunnel,
+      # replace 127.0.0.1 with this host's own LAN address, for example:
+      #   - "192.0.2.10:2375:2375"
+      # The risk: the proxy has no password and no encryption. Every device on
+      # that network can then read your container list, logs and container
+      # settings, and container settings often hold passwords. Never use
+      # 0.0.0.0, never forward this port from the internet, and limit it with
+      # the host firewall to the agent's PC if you can.
+      - "127.0.0.1:2375:2375"
+    restart: unless-stopped

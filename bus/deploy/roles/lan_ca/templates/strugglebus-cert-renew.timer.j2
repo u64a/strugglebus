@@ -1,0 +1,11 @@
+[Unit]
+Description=Schedule Strugglebus dedicated LAN certificate renewal
+
+[Timer]
+OnBootSec=10m
+OnUnitActiveSec=1h
+RandomizedDelaySec=5m
+Persistent=true
+
+[Install]
+WantedBy=timers.target

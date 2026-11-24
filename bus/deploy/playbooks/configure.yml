@@ -1,0 +1,26 @@
+---
+- name: Configure the Strugglebus guest
+  hosts: strugglebus_guests
+  become: true
+  gather_facts: true
+  pre_tasks:
+    - name: Inspect retained maintenance recovery before live configuration
+      ansible.builtin.stat:
+        path: /var/lib/strugglebus-maintenance/operation.json
+        follow: false
+      register: strugglebus_configure_maintenance_record
+
+    - name: Keep maintenance configuration and recovery under one upgrade flow
+      ansible.builtin.assert:
+        that:
+          - not strugglebus_configure_maintenance_record.stat.exists
+        fail_msg: >-
+          Retained maintenance recovery owns the active service configuration.
+          Use maintenance_deploy.yml, not live configure, for candidate settings.
+          Topology or credential changes require a separately reviewed operation.
+  roles:
+    - role: deployment_identity
+    - role: guest_base
+    - role: lan_ca
+    - role: caddy
+    - role: systemd

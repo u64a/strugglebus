@@ -1,0 +1,11 @@
+---
+- name: Exercise production helper bootstrap tasks
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: Validate and install fixture Python helpers
+      ansible.builtin.include_tasks:
+        file: ../roles/guest_base/tasks/validated_python_helper.yml
+      loop: "{{ strugglebus_helper_cases }}"
+      loop_control:
+        loop_var: strugglebus_python_helper

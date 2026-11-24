@@ -1,0 +1,89 @@
+---
+- name: Inspect the versioned release directory
+  ansible.builtin.stat:
+    path: "{{ strugglebus_release_root }}/{{ strugglebus_release_version }}"
+  register: existing_release_directory
+
+- name: Require any versioned release path to be a directory
+  ansible.builtin.assert:
+    that:
+      - >-
+        not existing_release_directory.stat.exists
+        or existing_release_directory.stat.isdir
+    fail_msg: The versioned release path exists but is not a directory.
+
+- name: Find existing wheel artifacts in the versioned release
+  ansible.builtin.find:
+    paths: "{{ strugglebus_release_root }}/{{ strugglebus_release_version }}"
+    patterns: "*.whl"
+    file_type: any
+    recurse: false
+    hidden: true
+  when: existing_release_directory.stat.isdir | default(false)
+  register: existing_release_wheels
+
+- name: Inspect existing remote release artifacts
+  ansible.builtin.stat:
+    path: "{{ strugglebus_release_root }}/{{ strugglebus_release_version }}/{{ item.dest }}"
+    checksum_algorithm: sha256
+  loop:
+    - dest: "{{ strugglebus_wheel_src | basename }}"
+      checksum: "{{ strugglebus_wheel_sha256 }}"
+    - dest: requirements.lock
+      checksum: "{{ strugglebus_requirements_lock_sha256 }}"
+    - dest: release.env
+      checksum: "{{ strugglebus_release_identity_content | hash('sha256') }}"
+  register: existing_release_artifacts
+
+- name: Inspect the existing installation marker
+  ansible.builtin.stat:
+    path: "{{ strugglebus_release_root }}/{{ strugglebus_release_version }}/.installed"
+  register: existing_installation_marker
+
+- name: Read the existing installation marker
+  ansible.builtin.slurp:
+    src: "{{ strugglebus_release_root }}/{{ strugglebus_release_version }}/.installed"
+  when: existing_installation_marker.stat.isreg | default(false)
+  register: existing_installation_marker_content
+
+- name: Refuse to mutate a versioned release
+  ansible.builtin.assert:
+    that:
+      - not item.stat.exists or item.stat.checksum == item.item.checksum
+    fail_msg: >-
+      Release {{ strugglebus_release_version }} already contains different
+      artifacts; choose a new immutable version.
+  loop: "{{ existing_release_artifacts.results }}"
+
+- name: Refuse a changed wheel basename in a versioned release
+  ansible.builtin.assert:
+    that:
+      - existing_release_wheels.matched | default(0) <= 1
+      - >-
+        existing_release_wheels.matched | default(0) == 0
+        or existing_release_wheels.files[0].path
+        == strugglebus_release_root + '/' + strugglebus_release_version
+           + '/' + (strugglebus_wheel_src | basename)
+    fail_msg: >-
+      The versioned release contains a different or ambiguous wheel artifact;
+      choose a new immutable version.
+
+- name: Refuse inconsistent installed release metadata
+  ansible.builtin.assert:
+    that:
+      - >-
+        not existing_release_directory.stat.exists
+        or (
+          existing_installation_marker.stat.isreg | default(false)
+          and existing_release_wheels.matched | default(0) == 1
+          and existing_release_artifacts.results[0].stat.isreg | default(false)
+          and existing_release_artifacts.results[1].stat.isreg | default(false)
+          and existing_release_artifacts.results[2].stat.isreg | default(false)
+          and (existing_installation_marker_content.content | default(''))
+              | b64decode
+              == strugglebus_expected_installed_marker
+        )
+    fail_msg: >-
+      An existing version must be a complete installed release whose wheel
+      filename, artifacts, and marker match exactly; choose a new version for
+      every partial or conflicting release.

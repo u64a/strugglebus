@@ -1,0 +1,227 @@
+---
+# Copy this inventory tree to ../live/ and replace placeholders there.
+proxmox_api_host: CHANGE_ME
+proxmox_api_user: CHANGE_ME
+proxmox_api_token_id: CHANGE_ME
+proxmox_api_token_secret: "{{ lookup('env', 'PROXMOX_TOKEN_SECRET') }}"
+proxmox_api_validate_certs: true
+proxmox_api_ca_path: ""
+proxmox_node: CHANGE_ME
+
+strugglebus_vmid: 120
+strugglebus_hostname: strugglebus
+strugglebus_cores: 2
+strugglebus_memory_mb: 2048
+strugglebus_swap_mb: 512
+strugglebus_disk_gb: 16
+strugglebus_bridge: vmbr0
+strugglebus_storage: local-lvm
+strugglebus_template: CHANGE_ME
+strugglebus_ipv4: dhcp
+strugglebus_start_after_create: true
+# Configure exactly one in ignored live inventory. The value is an OpenSSH
+# public key; the path is resolved on the Ansible controller.
+strugglebus_ssh_public_key: ""
+strugglebus_ssh_public_key_path: CHANGE_ME
+
+# Deployment profile. Production is the default and is what an unset value
+# means; it pins the canonical identities exactly. 'development' is for a
+# non-production rehearsal host and is refused if it names any production
+# identity or tries to activate the dedicated LAN CA. Unknown values are
+# refused rather than guessed. See deploy/roles/deployment_identity.
+strugglebus_deployment_profile: production
+
+# Internal mode remains the existing bus.lan deployment. The future canonical
+# identity is promoted only by the separately approved external TLS activation.
+# The current development rehearsal overrides the profile to development and
+# sets both domain variables to dev-bus.u64.lan in its protected inventory.
+strugglebus_domain: bus.lan
+strugglebus_external_domain: bus.u64.lan
+strugglebus_tls_mode: internal
+# External TLS keeps the legacy bus.lan internal-CA site by default. A clean
+# dedicated-CA rebuild may explicitly set this false; internal mode requires true.
+strugglebus_external_tls_legacy_compatibility_site: true
+strugglebus_effective_domain: >-
+  {{
+    strugglebus_external_domain
+    if strugglebus_tls_mode == 'external'
+    else strugglebus_domain
+  }}
+strugglebus_service_user: strugglebus
+strugglebus_service_group: strugglebus
+strugglebus_release_root: /opt/strugglebus/releases
+strugglebus_current_link: /opt/strugglebus/current
+# Concurrent deploy/rollback waits at most 30 seconds. The process-owned lock
+# self-releases after two hours if the controller disappears.
+strugglebus_release_lock_wait_seconds: 30
+strugglebus_release_lock_lease_seconds: 7200
+strugglebus_data_dir: /var/lib/strugglebus
+strugglebus_runtime_dir: /run/strugglebus
+strugglebus_backup_dir: /var/backups/strugglebus
+strugglebus_config_dir: /etc/strugglebus
+strugglebus_database_path: /var/lib/strugglebus/strugglebus.db
+strugglebus_app_target: strugglebus.app:app
+strugglebus_bind_host: 127.0.0.1
+strugglebus_bind_port: 8080
+strugglebus_health_url: "https://{{ strugglebus_effective_domain }}/healthz"
+strugglebus_deploy_stopped_path_budget_seconds: 55
+strugglebus_max_message_bytes: 1048576
+strugglebus_max_request_body_bytes: 1048576
+strugglebus_max_metadata_bytes: 16384
+strugglebus_max_rest_request_body_bytes: 6308864
+strugglebus_authenticated_requests_per_minute: 600
+strugglebus_unauthenticated_requests_per_minute: 60
+strugglebus_sqlite_busy_timeout_ms: 5000
+strugglebus_max_channels: 1000
+strugglebus_sse_batch_size: 100
+strugglebus_sse_poll_interval_ms: 250
+strugglebus_sse_heartbeat_seconds: 15
+strugglebus_sse_connection_seconds: 300
+strugglebus_sse_max_connections_per_agent: 3
+strugglebus_human_activity_limit: 100
+strugglebus_trusted_proxy_sources: 127.0.0.1,::1
+
+# Candidate-only reconnect settings are opt-in. Maintenance verifies that the
+# selected candidate actually supports each requested field before activation.
+# Omit them when deploying an older wheel; its loader would otherwise ignore them.
+# strugglebus_orientation_count_cap: 500
+# strugglebus_orientation_channel_cap: 50
+# strugglebus_orientation_candidate_limit: 4096
+# strugglebus_catch_up_candidate_limit: 4096
+# strugglebus_catch_up_drain_ttl_seconds: 300
+# strugglebus_catch_up_max_drains: 256
+# strugglebus_catch_up_max_drains_per_agent: 16
+
+# Guest-side reference only. Prepare the root-owned 0600 verifier through the
+# local installed operator password command; never put a password/hash here.
+# Missing configuration disables the whole human console, not agent APIs.
+strugglebus_operator_password_source: ""
+# Operator-capable candidates only; omit these when using older wheels.
+# Absolute session lifetime (max 28800 = 8 hours) and the sliding idle window
+# that extends on console activity but never past the absolute deadline.
+# strugglebus_operator_session_seconds: 28800
+# strugglebus_operator_session_idle_seconds: 1800
+# strugglebus_operator_max_sessions: 16
+# strugglebus_operator_login_source_per_minute: 5
+# strugglebus_operator_login_global_per_minute: 20
+# strugglebus_operator_password_workers: 2
+# strugglebus_operator_form_bytes: 8192
+# strugglebus_operator_form_timeout_seconds: 10
+# strugglebus_reconnect_grant_seconds: 900
+# strugglebus_reconnect_max_grants: 256
+# strugglebus_reconnect_issue_session_per_minute: 5
+# strugglebus_reconnect_issue_global_per_minute: 20
+# strugglebus_reconnect_redeem_source_per_minute: 10
+# strugglebus_reconnect_redeem_global_per_minute: 60
+# Mobile device enrollment. The code is displayed on a screen where it can be
+# photographed, so its lifetime is bounded to 120-300 seconds by the service
+# and cannot be widened here.
+# strugglebus_mobile_enrollment_seconds: 180
+# strugglebus_mobile_enroll_session_per_minute: 5
+# strugglebus_mobile_enroll_global_per_minute: 20
+# Authentication refreshes last-used/last-seen timestamps inside the
+# authorising transaction, so every authenticated read is otherwise a write.
+# This is how stale such a timestamp may be before that write happens. Raising
+# it reduces SQLite write contention from polling clients at the cost of
+# coarser liveness reporting; it never changes an authorization decision.
+# strugglebus_liveness_refresh_seconds: 60
+
+# Hard bound, in seconds, on how long a graceful shutdown may take before open
+# connections are closed anyway. Live tails end themselves as soon as a stop is
+# requested, so this is only the backstop for anything that does not. It must
+# stay comfortably below the unit's TimeoutStopSec (30s): a shutdown that loses
+# that race is killed, and a killed unit's failed state blocks a deployment
+# from continuing until the state is cleared.
+# strugglebus_shutdown_grace_seconds: 10
+
+# How long a device action confirmation stays spendable, in seconds. Long
+# enough to read the described effect and present a fingerprint; short enough
+# that confirmations cannot be obtained in advance and banked.
+# strugglebus_mobile_confirmation_seconds: 120
+
+# Establishing a device write grant is the one mobile call that verifies the
+# operator password, and that verification runs on the same bounded worker
+# pool as console login. These are kept small so a burst cannot lock the owner
+# out of the console they would use to revoke the device causing it. It is a
+# once-per-device operation, not a routine one.
+# strugglebus_mobile_grant_device_per_minute: 3
+# strugglebus_mobile_grant_global_per_minute: 10
+
+# SPN-onboarding-capable application adoption only; omit for older wheels.
+# strugglebus_spn_package_ttl_seconds: 300
+# strugglebus_spn_max_outstanding_packages: 32
+# strugglebus_spn_issues_per_minute: 10
+
+# Updater-capable application adoption only; omit all of these for older wheels.
+# The separate updater_bootstrap play never sets these or restarts the bus.
+# No App IDs, credential material or actual private inventory belong here.
+# strugglebus_updater_socket_path: /run/strugglebus-updater/worker.sock
+# Set only after the separately approved self-update adoption play has
+# published the root-owned supervisor socket.
+# strugglebus_maintenance_socket_path: /run/strugglebus-maintenance/control.sock
+# strugglebus_updater_confirm_session_per_minute: 3
+# strugglebus_updater_confirm_global_per_minute: 6
+# strugglebus_updater_review_seconds: 300
+# strugglebus_updater_review_tickets: 8
+
+# Satellite sites: remote machines reaching the agent plane through a gateway.
+# Empty disables them. The hostname is the gateway's public DNS name, which
+# satellites send as the TLS server name. The site CA key is projected to the
+# service as a systemd credential from the config directory.
+strugglebus_satellite_hostname: ""
+# strugglebus_satellite_port: 443
+# strugglebus_satellite_ca_cert_path: /etc/strugglebus-satellite/ca.crt
+# strugglebus_satellite_cert_days: 30
+# The tunnel for deploy/playbooks/satellite.yml. The guest dials the gateway;
+# its private key is generated on the guest and never leaves it.
+# strugglebus_satellite_wg_address: 10.99.0.2/30
+# strugglebus_satellite_gateway_wg_address: 10.99.0.1
+# strugglebus_satellite_gateway_endpoint: <gateway public DNS name>:51820
+# strugglebus_satellite_gateway_public_key: <from configure-gateway.sh init>
+
+# Dedicated LAN CA staging is inert unless explicitly selected. Runtime tooling
+# is supplied from protected controller storage; production never downloads it.
+strugglebus_lan_ca_stage: false
+strugglebus_lan_ca_renewal_enabled: false
+strugglebus_lan_ca_url: https://ca.u64.lan
+strugglebus_lan_ca_provisioner: jwk-strugglebus
+strugglebus_lan_ca_bundle_src: CHANGE_ME
+strugglebus_lan_ca_root_sha256: 96a933a6805b3a828b1a8d11acc65690a5417a8ceab24af09a16376d19993126
+strugglebus_lan_ca_intermediate_sha256: 7086fd7cf3d1a38ae7f81f45a1a21e5ad82d37093bfbba4158e0dc90acb796f5
+strugglebus_lan_ca_password_src: CHANGE_ME
+strugglebus_step_src: CHANGE_ME
+strugglebus_step_sha256: e44a5dc5f880a694b24a0f2941a69a81b0bc6ee053170fdfde18453d4d5816de
+strugglebus_lan_ca_bundle_path: /etc/lan-ca/ca-bundle.pem
+strugglebus_lan_ca_root_path: /etc/lan-ca/root_ca.crt
+# The CA staging directory stays root-only because it holds the provisioner
+# password, so the public root is republished where the service user can read it.
+strugglebus_lan_ca_published_root_path: /etc/strugglebus/lan-ca-root.crt
+strugglebus_lan_ca_password_path: /etc/lan-ca/strugglebus-jwk-password.txt
+strugglebus_tls_root: /etc/strugglebus-tls
+strugglebus_external_cert_path: /etc/strugglebus-tls/current/cert.pem
+strugglebus_external_key_path: /etc/strugglebus-tls/current/key.pem
+strugglebus_lan_ca_renew_before_seconds: 57600
+strugglebus_lan_ca_warning_seconds: 43200
+strugglebus_lan_ca_critical_seconds: 14400
+# External mode requires an exact, checksummed JSON evidence record outside Git.
+strugglebus_lan_ca_activation_evidence_src: CHANGE_ME
+strugglebus_lan_ca_activation_evidence_sha256: CHANGE_ME
+
+# The active endpoint trust path is maintained in protected inventory. Internal
+# mode uses Caddy's exported local root; external mode uses the LAN CA bundle.
+strugglebus_caddy_ca_path: /var/lib/caddy/.local/share/caddy/pki/authorities/local/root.crt
+
+# Set this only in ignored live inventory or with -e. The source file must be
+# outside Git and contain only the admin token.
+strugglebus_admin_token_src: CHANGE_ME
+
+# Supply the Linux x86-64 standalone uv binary from protected controller storage.
+strugglebus_uv_src: CHANGE_ME
+strugglebus_uv_sha256: CHANGE_ME
+
+# Weekly vzdump is configured and tested on Proxmox by the operator.
+strugglebus_assert_external_vzdump: false
+# Exceptional, explicit owner acceptance that the weekly job is currently
+# missing. Never set this true when strugglebus_assert_external_vzdump is true.
+strugglebus_owner_accepts_missing_weekly_vzdump_risk: false
+strugglebus_external_vzdump_retention: 4

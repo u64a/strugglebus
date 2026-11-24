@@ -1,0 +1,54 @@
+# Managed by the satellite role. A separate Caddy process, so the LAN site's
+# configuration and activation stay untouched. This is the only site on its
+# listener and it has no host matcher: satellites send a loopback Host through
+# their byte pipe, so the Host-must-match-SNI check is off. That is safe only
+# because nothing else shares this listener. Port 8443, not 443: the LAN Caddy
+# listens on 443 on every interface, including the tunnel.
+{
+	admin off
+	auto_https off
+	servers {
+		strict_sni_host insecure_off
+		# No body or write timeout: SSE and MCP streams are long-lived, and the
+		# app bounds their lifetime. These do not bound handshakes or concurrency.
+		timeouts {
+			read_header 10s
+			idle 2m
+		}
+	}
+}
+
+:8443 {
+	bind {{ strugglebus_satellite_wg_address.split('/')[0] }}
+	tls /etc/strugglebus-satellite/server.crt /etc/strugglebus-satellite/server.key {
+		protocols tls1.2 tls1.3
+		client_auth {
+			mode require_and_verify
+			# The older directive works on Caddy 2.6 and current Caddy alike, so a
+			# guest not yet upgraded still validates.
+			trusted_ca_cert_file {{ strugglebus_satellite_ca_cert_path | default('/etc/strugglebus-satellite/ca.crt') }}
+		}
+	}
+
+	# One JSON line per request in the journal, naming the site by its
+	# certificate (request>tls). Headers are dropped: they carry credentials.
+	log {
+		output stderr
+		format filter {
+			request>headers delete
+			resp_headers delete
+		}
+	}
+
+	@agent path /api/* /mcp /mcp/*
+	handle @agent {
+		reverse_proxy {{ strugglebus_bind_host }}:{{ strugglebus_bind_port }} {
+			header_up Host {{ strugglebus_effective_domain }}
+			header_up X-Strugglebus-Satellite-Cert {http.request.tls.client.fingerprint}
+			flush_interval -1
+		}
+	}
+	handle {
+		respond 404
+	}
+}

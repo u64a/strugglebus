@@ -1,0 +1,50 @@
+[Unit]
+Description=Strugglebus bounded self-update maintenance run
+After=network-online.target strugglebus-updater.socket
+Wants=network-online.target
+Requires=strugglebus-updater.socket
+ConditionPathIsDirectory=/opt/strugglebus-updater/current/venv
+
+[Service]
+Type=oneshot
+WorkingDirectory=/var/lib/strugglebus-maintenance
+ExecStart=/opt/strugglebus-updater/current/venv/bin/python -I -m strugglebus.maintenance_daemon run --config /etc/strugglebus-maintenance/maintenance.json
+Environment=PYTHONDONTWRITEBYTECODE=1
+Environment=HTTP_PROXY= HTTPS_PROXY= ALL_PROXY= NO_PROXY=*
+UMask=0077
+TimeoutStartSec=20min
+TimeoutStopSec=30s
+KillMode=mixed
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+ProtectProc=invisible
+ProcSubset=pid
+RestrictSUIDSGID=true
+RestrictRealtime=true
+RestrictNamespaces=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+RemoveIPC=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+SocketBindDeny=any
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+ReadOnlyPaths=/etc/strugglebus-maintenance /var/lib/strugglebus-updater-cache /var/lib/caddy
+ReadWritePaths={{ strugglebus_current_link | dirname }} {{ strugglebus_release_root }} /opt/strugglebus-updater /var/lib/strugglebus-maintenance /usr/local/libexec/strugglebus-maintenance {{ strugglebus_data_dir }} {{ strugglebus_backup_dir }} /etc/systemd/system -/run/lock/strugglebus
+MemoryMax=1G
+MemorySwapMax=0
+TasksMax=64
+LimitNOFILE=256
+LimitCORE=0
+StandardOutput=journal
+StandardError=journal

@@ -1,0 +1,64 @@
+---
+- name: Query the requested VMID through the Proxmox API
+  community.proxmox.proxmox_vm_info:
+    api_host: "{{ proxmox_api_host }}"
+    api_user: "{{ proxmox_api_user }}"
+    api_token_id: "{{ proxmox_api_token_id }}"
+    api_token_secret: "{{ proxmox_api_token_secret }}"
+    validate_certs: "{{ proxmox_api_validate_certs }}"
+    ca_path: "{{ proxmox_api_ca_path | default(omit, true) }}"
+    vmid: "{{ strugglebus_vmid }}"
+  register: requested_lxc
+  no_log: true
+
+- name: Create the unprivileged LXC only when the API reports an unused VMID
+  community.proxmox.proxmox:
+    api_host: "{{ proxmox_api_host }}"
+    api_user: "{{ proxmox_api_user }}"
+    api_token_id: "{{ proxmox_api_token_id }}"
+    api_token_secret: "{{ proxmox_api_token_secret }}"
+    validate_certs: "{{ proxmox_api_validate_certs }}"
+    ca_path: "{{ proxmox_api_ca_path | default(omit, true) }}"
+    node: "{{ proxmox_node }}"
+    vmid: "{{ strugglebus_vmid }}"
+    hostname: "{{ strugglebus_hostname }}"
+    ostemplate: "{{ strugglebus_template }}"
+    cores: "{{ strugglebus_cores }}"
+    memory: "{{ strugglebus_memory_mb }}"
+    swap: "{{ strugglebus_swap_mb }}"
+    disk: "{{ strugglebus_disk_gb }}"
+    storage: "{{ strugglebus_storage }}"
+    netif:
+      net0: "name=eth0,bridge={{ strugglebus_bridge }},ip={{ strugglebus_ipv4 }},firewall=1"
+    pubkey: "{{ strugglebus_effective_ssh_public_key }}"
+    unprivileged: true
+    onboot: true
+    state: present
+    update: false
+    timeout: 300
+  when: requested_lxc.proxmox_vms | length == 0
+  register: lxc_created
+  no_log: true
+
+- name: Refuse to mutate an existing guest through the API backend
+  ansible.builtin.debug:
+    msg: >-
+      VMID {{ strugglebus_vmid }} already exists. API provisioning left it
+      unchanged.
+  when: requested_lxc.proxmox_vms | length > 0
+
+- name: Start a newly created API guest when requested
+  community.proxmox.proxmox:
+    api_host: "{{ proxmox_api_host }}"
+    api_user: "{{ proxmox_api_user }}"
+    api_token_id: "{{ proxmox_api_token_id }}"
+    api_token_secret: "{{ proxmox_api_token_secret }}"
+    validate_certs: "{{ proxmox_api_validate_certs }}"
+    ca_path: "{{ proxmox_api_ca_path | default(omit, true) }}"
+    node: "{{ proxmox_node }}"
+    vmid: "{{ strugglebus_vmid }}"
+    state: started
+  when:
+    - lxc_created is changed
+    - strugglebus_start_after_create | bool
+  no_log: true

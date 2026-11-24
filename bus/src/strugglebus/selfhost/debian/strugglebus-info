@@ -1,0 +1,18 @@
+#!/bin/bash
+# Prints what the operator needs after an install: address, setup code, fingerprint.
+set -euo pipefail
+[ "$(id -u)" = "0" ] || { echo "strugglebus-info: run this as root (sudo strugglebus-info)." >&2; exit 1; }
+base_url="$(sed -n 's/^STRUGGLEBUS_PUBLIC_BASE_URL=//p' /etc/strugglebus/strugglebus.env)"
+echo "Console address : $base_url"
+if [ -s /var/lib/strugglebus/operator/setup-code ]; then
+  echo "Setup code      : $(cat /var/lib/strugglebus/operator/setup-code)"
+  echo "                  (one use; valid for 24 hours after the service starts. 'systemctl restart strugglebus' issues a new one)"
+else
+  echo "Setup code      : none - the operator password is already set"
+fi
+echo "Certificate root: /etc/strugglebus/ca-root.crt"
+python3 -c "
+import hashlib, ssl, sys
+digest = hashlib.sha256(ssl.PEM_cert_to_DER_cert(open(sys.argv[1]).read())).hexdigest().upper()
+print('SHA-256 print   : ' + ':'.join(digest[i:i + 2] for i in range(0, 64, 2)))
+" /etc/strugglebus/ca-root.crt

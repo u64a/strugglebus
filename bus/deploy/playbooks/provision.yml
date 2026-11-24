@@ -1,0 +1,6 @@
+---
+- name: Provision the create-only Strugglebus LXC
+  hosts: proxmox_control
+  gather_facts: false
+  roles:
+    - role: proxmox_lxc

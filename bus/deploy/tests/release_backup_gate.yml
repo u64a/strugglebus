@@ -1,0 +1,20 @@
+---
+- name: Exercise the release backup-policy gate offline
+  hosts: localhost
+  gather_facts: false
+  vars:
+    strugglebus_release_test_fixture: true
+    strugglebus_release_version: offline-test
+    strugglebus_wheel_src: /tmp/strugglebus-0.2.0-py3-none-any.whl
+    strugglebus_wheel_sha256: >-
+      aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+    strugglebus_requirements_lock_src: /tmp/offline-requirements.lock
+    strugglebus_requirements_lock_sha256: >-
+      bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+    strugglebus_external_vzdump_retention: 4
+    strugglebus_domain: offline.test
+    strugglebus_health_url: https://offline.test/healthz
+    strugglebus_caddy_ca_path: /tmp/offline-caddy-root.crt
+  tasks:
+    - name: Run the exact production release precondition tasks
+      ansible.builtin.include_tasks: ../roles/release/tasks/validate.yml

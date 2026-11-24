@@ -1,0 +1,33 @@
+---
+- name: Exercise release HTTPS readiness trust
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: Require an explicit release readiness CA path
+      ansible.builtin.assert:
+        that:
+          - release_https_test_ca_path is defined
+          - release_https_test_ca_path | length > 0
+
+    - name: Probe release readiness with certificate validation
+      ansible.builtin.uri:
+        url: "{{ release_https_test_url }}"
+        method: GET
+        status_code: 200
+        return_content: true
+        ca_path: "{{ release_https_test_ca_path }}"
+        validate_certs: true
+        timeout: 1
+      register: release_https_test_health
+      retries: 4
+      delay: 1
+      until:
+        - release_https_test_health.status == 200
+        - "release_https_test_health.json == {'status': 'ok'}"
+
+    - name: Require the exact readiness response
+      ansible.builtin.assert:
+        that:
+          - release_https_test_health.status == 200
+          - "release_https_test_health.json == {'status': 'ok'}"

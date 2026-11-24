@@ -1,0 +1,48 @@
+---
+- name: Prove LAN CA check mode is secret-blind and mutation-free
+  hosts: localhost
+  gather_facts: false
+  vars_files:
+    - ../inventory/example/group_vars/all.yml
+  pre_tasks:
+    - name: Select isolated LAN CA check-mode inputs
+      ansible.builtin.set_fact:
+        strugglebus_lan_ca_stage: true
+        strugglebus_lan_ca_password_src: /tmp/strugglebus-lan-ca-check-secret.fifo
+
+    - name: Remove a stale secret-read sentinel
+      ansible.builtin.file:
+        path: "{{ strugglebus_lan_ca_password_src }}"
+        state: absent
+      check_mode: false
+
+    - name: Create a blocking secret source
+      ansible.builtin.command:
+        argv:
+          - /usr/bin/mkfifo
+          - "{{ strugglebus_lan_ca_password_src }}"
+      changed_when: true
+      check_mode: false
+
+  roles:
+    - role: deployment_identity
+    - role: lan_ca
+
+  post_tasks:
+    - name: Verify the secret source remains an unread FIFO
+      ansible.builtin.stat:
+        path: "{{ strugglebus_lan_ca_password_src }}"
+        follow: false
+      register: lan_ca_secret_fifo
+
+    - name: Require the secret source to remain untouched
+      ansible.builtin.assert:
+        that:
+          - lan_ca_secret_fifo.stat.exists
+          - lan_ca_secret_fifo.stat.isfifo
+
+    - name: Remove the secret-read sentinel
+      ansible.builtin.file:
+        path: "{{ strugglebus_lan_ca_password_src }}"
+        state: absent
+      check_mode: false

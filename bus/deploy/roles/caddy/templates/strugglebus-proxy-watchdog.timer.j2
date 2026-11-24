@@ -1,0 +1,11 @@
+[Unit]
+Description=Probe the Strugglebus proxy every minute
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec={{ strugglebus_watchdog_interval_seconds | default(60) }}s
+AccuracySec=5s
+Unit=strugglebus-proxy-watchdog.service
+
+[Install]
+WantedBy=timers.target

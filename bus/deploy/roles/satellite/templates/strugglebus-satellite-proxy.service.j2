@@ -1,0 +1,24 @@
+[Unit]
+Description=Strugglebus satellite proxy (client certificates, agent routes only)
+Requires=wg-quick@sbsat0.service
+After=wg-quick@sbsat0.service network-online.target
+
+[Service]
+Type=simple
+User=caddy
+Group=caddy
+ExecStart=/usr/bin/caddy run --adapter caddyfile --config /etc/strugglebus-satellite/Caddyfile
+StateDirectory=strugglebus-satellite-proxy
+Environment=XDG_DATA_HOME=/var/lib/strugglebus-satellite-proxy
+Environment=XDG_CONFIG_HOME=/var/lib/strugglebus-satellite-proxy
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+Restart=on-failure
+RestartSec=5s
+
+[Install]
+WantedBy=multi-user.target

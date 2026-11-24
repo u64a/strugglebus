@@ -1,0 +1,36 @@
+[Unit]
+Description=Probe the Strugglebus proxy the way a client does, and recover it
+Documentation=https://github.com/NZCypher819/strugglebus
+After=network-online.target caddy.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+UMask=0077
+ExecStart=/usr/local/libexec/strugglebus-proxy-watchdog
+Environment=STRUGGLEBUS_WATCHDOG_URL=https://{{ strugglebus_effective_domain }}/healthz
+Environment=STRUGGLEBUS_WATCHDOG_CA={{ strugglebus_lan_ca_published_root_path | default('/etc/strugglebus/lan-ca-root.crt') }}
+Environment=STRUGGLEBUS_WATCHDOG_THRESHOLD={{ strugglebus_watchdog_threshold | default(3) }}
+Environment=STRUGGLEBUS_WATCHDOG_COOLDOWN={{ strugglebus_watchdog_cooldown_seconds | default(600) }}
+Environment=STRUGGLEBUS_WATCHDOG_TIMEOUT={{ strugglebus_watchdog_timeout_seconds | default(10) }}
+RuntimeDirectory=strugglebus-proxy-watchdog
+RuntimeDirectoryMode=0700
+RuntimeDirectoryPreserve=yes
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectHome=true
+ProtectSystem=strict
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectClock=true
+RestrictSUIDSGID=true
+RestrictRealtime=true
+RestrictNamespaces=true
+LockPersonality=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+SystemCallArchitectures=native

@@ -1,0 +1,13 @@
+---
+- name: Exercise development backup timer configuration in check mode
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    strugglebus_deployment_profile: development
+
+  tasks:
+    - name: Run only the backup timer activation tasks
+      ansible.builtin.include_role:
+        name: systemd
+        tasks_from: backup_timer

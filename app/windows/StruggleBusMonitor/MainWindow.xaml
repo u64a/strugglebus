@@ -1,0 +1,832 @@
+<Window x:Class="StruggleBusMonitor.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:local="clr-namespace:StruggleBusMonitor"
+        Title="StruggleBus Monitor" Height="820" Width="1280" MinHeight="620" MinWidth="980"
+        Background="{DynamicResource Bg}" Foreground="{DynamicResource Fg}"
+        FontFamily="Segoe UI Variable Text, Segoe UI" FontSize="13"
+        WindowStartupLocation="CenterScreen" Icon="icon.ico"
+        PreviewKeyDown="Window_PreviewKeyDown">
+    <Window.Resources>
+        <ResourceDictionary>
+            <ResourceDictionary.MergedDictionaries>
+                <ResourceDictionary Source="Styles.xaml"/>
+            </ResourceDictionary.MergedDictionaries>
+            <DataTemplate x:Key="ThemeCard">
+                <Button Style="{StaticResource ThemeCardButton}" Click="ThemeCard_Click" ToolTip="{Binding Name}"/>
+            </DataTemplate>
+        </ResourceDictionary>
+    </Window.Resources>
+
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="52"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <!-- Header -->
+        <Border Grid.Row="0" Background="{DynamicResource S1}" BorderBrush="{DynamicResource Line}" BorderThickness="0,0,0,1">
+            <Grid Margin="16,0">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                    <TextBlock Text="STRUGGLEBUS" FontFamily="{StaticResource Mono}" FontWeight="Bold" FontSize="14" Foreground="{DynamicResource AccentText}"/>
+                    <TextBlock Text="Operator console" Style="{StaticResource MutedText}" Margin="14,0,0,0" VerticalAlignment="Center"/>
+                </StackPanel>
+                <Button x:Name="QuickFindButton" Grid.Column="1" Style="{StaticResource SearchTrigger}" Width="420" HorizontalAlignment="Center" VerticalAlignment="Center" IsEnabled="False" Click="QuickFindButton_Click"/>
+                <Button x:Name="UpdateButton" Grid.Column="2" Style="{StaticResource Btn}" Padding="12,6" Margin="0,0,12,0" VerticalAlignment="Center" Visibility="Collapsed" Click="UpdateRestart_Click"/>
+                <Border Grid.Column="3" BorderBrush="{DynamicResource Line}" BorderThickness="1" CornerRadius="6" Padding="10,6" VerticalAlignment="Center">
+                    <StackPanel Orientation="Horizontal">
+                        <Ellipse x:Name="StatusDot" Width="8" Height="8" Fill="{DynamicResource Warn}" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                        <TextBlock x:Name="StatusText" Text="NOT ENROLLED" FontFamily="{StaticResource Mono}" FontWeight="Bold" FontSize="12" VerticalAlignment="Center"/>
+                        <TextBlock x:Name="StatusDetailText" FontFamily="{StaticResource Mono}" FontSize="12" Foreground="{DynamicResource Muted}" Margin="8,0,0,0" VerticalAlignment="Center" MaxWidth="340" TextTrimming="CharacterEllipsis"/>
+                    </StackPanel>
+                </Border>
+                <TextBlock x:Name="DeviceLabelText" Grid.Column="4" FontFamily="{StaticResource Mono}" FontSize="12" Foreground="{DynamicResource Muted}" Margin="14,0,0,0" VerticalAlignment="Center"/>
+            </Grid>
+        </Border>
+
+        <Grid Grid.Row="1">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="76"/>
+                <ColumnDefinition Width="*"/>
+            </Grid.ColumnDefinitions>
+
+            <!-- Navigation rail -->
+            <Border Background="{DynamicResource S1}" BorderBrush="{DynamicResource Line}" BorderThickness="0,0,1,0">
+                <DockPanel Margin="0,10" LastChildFill="False">
+                    <RadioButton x:Name="SettingsNav" DockPanel.Dock="Bottom" GroupName="Nav" Style="{StaticResource NavItem}" Content="Settings" Tag="{StaticResource IconSettings}" Checked="Nav_Checked"/>
+                    <RadioButton x:Name="MonitorNav" DockPanel.Dock="Top" GroupName="Nav" Style="{StaticResource NavItem}" Content="Monitor" Tag="{StaticResource IconMonitor}" Checked="Nav_Checked"/>
+                    <Grid DockPanel.Dock="Top">
+                        <RadioButton x:Name="HumansNav" GroupName="Nav" Style="{StaticResource NavItem}" Content="Humans" Tag="{StaticResource IconHumans}" IsEnabled="False" Checked="Nav_Checked"/>
+                        <Border x:Name="HumansBadge" Background="{DynamicResource Accent}" CornerRadius="8" Padding="5,0" HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,4,10,0" Visibility="Collapsed" IsHitTestVisible="False">
+                            <TextBlock x:Name="HumansBadgeText" FontFamily="{StaticResource Mono}" FontSize="10" FontWeight="Bold" Foreground="{DynamicResource OnAccent}"/>
+                        </Border>
+                    </Grid>
+                    <RadioButton x:Name="AdminNav" DockPanel.Dock="Top" GroupName="Nav" Style="{StaticResource NavItem}" Content="Admin" Tag="{StaticResource IconAdmin}" IsEnabled="False" Checked="Nav_Checked"/>
+                </DockPanel>
+            </Border>
+
+            <Grid Grid.Column="1">
+
+                <!-- Enrollment -->
+                <Border x:Name="EnrollmentPanel" MaxWidth="720" HorizontalAlignment="Center" VerticalAlignment="Center" Background="{DynamicResource S1}" BorderBrush="{DynamicResource Line}" BorderThickness="1" CornerRadius="8" Padding="30">
+                    <StackPanel>
+                        <TextBlock Text="DEVICE ENROLLMENT" Style="{StaticResource Label}"/>
+                        <TextBlock Text="Connect this PC to your StruggleBus" FontSize="24" FontWeight="SemiBold" Margin="0,9,0,6"/>
+                        <TextBlock Text="Paste the short-lived enrollment JSON from the StruggleBus device console. The server certificate fingerprint is checked before the token is sent." Foreground="{DynamicResource Muted}" TextWrapping="Wrap" FontSize="14" LineHeight="21" Margin="0,0,0,20"/>
+                        <TextBox x:Name="EnrollmentBox" MinHeight="116" MaxHeight="220" AcceptsReturn="True" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto" FontFamily="{StaticResource Mono}" Tag="Paste enrollment JSON here" VerticalContentAlignment="Top"/>
+                        <DockPanel Margin="0,16,0,0">
+                            <Button x:Name="EnrollButton" DockPanel.Dock="Right" Content="Verify and enroll" Style="{StaticResource Btn}" Click="Enroll_Click"/>
+                            <TextBlock Text="Single use. Expires 2 to 5 minutes after it is created." Style="{StaticResource MutedText}" VerticalAlignment="Center"/>
+                        </DockPanel>
+                    </StackPanel>
+                </Border>
+
+                <Grid x:Name="WorkspacePanel" Visibility="Collapsed">
+
+                    <!-- Monitor -->
+                    <Grid x:Name="MonitorPage">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="280"/>
+                            <ColumnDefinition Width="*"/>
+                        </Grid.ColumnDefinitions>
+
+                        <Border BorderBrush="{DynamicResource Line}" BorderThickness="0,0,1,0">
+                            <DockPanel>
+                                <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="14,14,14,10">
+                                    <TextBlock Text="AGENTS" Style="{StaticResource Label}" Foreground="{DynamicResource Fg}"/>
+                                    <TextBlock x:Name="AgentCountText" Style="{StaticResource MutedMono}" Margin="8,0,0,0"/>
+                                </StackPanel>
+                                <TextBox x:Name="AgentFilterBox" DockPanel.Dock="Top" Margin="12,0,12,10" Tag="Filter agents by name or host" TextChanged="AgentFilterBox_TextChanged"/>
+                                <TextBlock DockPanel.Dock="Bottom" Text="Click an agent to show only its messages. Click it again to clear." Style="{StaticResource MutedText}" TextWrapping="Wrap" Margin="14,10"/>
+                                <Border DockPanel.Dock="Bottom" Height="1" Background="{DynamicResource Line}"/>
+                                <Grid>
+                                    <ListBox x:Name="AgentList" ItemContainerStyle="{StaticResource RowItem}" SelectionMode="Single" PreviewMouseLeftButtonDown="AgentList_PreviewMouseLeftButtonDown" SelectionChanged="AgentList_SelectionChanged" ScrollViewer.CanContentScroll="False">
+                                        <ListBox.ItemTemplate>
+                                            <DataTemplate>
+                                                <Grid Margin="10,8,12,8">
+                                                    <Grid.ColumnDefinitions>
+                                                        <ColumnDefinition Width="Auto"/>
+                                                        <ColumnDefinition Width="*"/>
+                                                        <ColumnDefinition Width="Auto"/>
+                                                    </Grid.ColumnDefinitions>
+                                                    <ContentControl Content="{Binding Presence}" ContentTemplate="{StaticResource PresenceDot}" VerticalAlignment="Center" Margin="0,0,10,0" Focusable="False"/>
+                                                    <StackPanel Grid.Column="1">
+                                                        <TextBlock Text="{Binding Name}" FontFamily="{StaticResource Mono}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"/>
+                                                        <TextBlock Text="{Binding Meta}" Style="{StaticResource MutedText}" TextTrimming="CharacterEllipsis" Margin="0,2,0,0"/>
+                                                    </StackPanel>
+                                                    <TextBlock Grid.Column="2" Text="{Binding CountLabel}" Style="{StaticResource MutedMono}" FontSize="11" VerticalAlignment="Center" Margin="8,0,0,0" ToolTip="Messages from this agent currently loaded"/>
+                                                </Grid>
+                                            </DataTemplate>
+                                        </ListBox.ItemTemplate>
+                                    </ListBox>
+                                    <TextBlock x:Name="AgentEmptyText" Text="No agent matches that filter." Style="{StaticResource MutedText}" Margin="14,16" Visibility="Collapsed" IsHitTestVisible="False"/>
+                                </Grid>
+                            </DockPanel>
+                        </Border>
+
+                        <DockPanel Grid.Column="1">
+                            <ListBox x:Name="ChannelFilter" DockPanel.Dock="Top" Margin="16,12,16,8" SelectionMode="Single" SelectionChanged="ChannelFilter_SelectionChanged" ItemContainerStyle="{StaticResource ChipItem}" ScrollViewer.HorizontalScrollBarVisibility="Auto" ScrollViewer.VerticalScrollBarVisibility="Disabled">
+                                <ListBox.ItemsPanel>
+                                    <ItemsPanelTemplate><StackPanel Orientation="Horizontal"/></ItemsPanelTemplate>
+                                </ListBox.ItemsPanel>
+                                <ListBox.ItemTemplate>
+                                    <DataTemplate><TextBlock Text="{Binding Label}" FontFamily="{StaticResource Mono}" FontSize="12"/></DataTemplate>
+                                </ListBox.ItemTemplate>
+                            </ListBox>
+                            <Border DockPanel.Dock="Top" BorderBrush="{DynamicResource Line}" BorderThickness="0,0,0,1" Padding="16,0,16,12">
+                                <DockPanel>
+                                    <TextBox x:Name="MessageFilterBox" DockPanel.Dock="Left" Width="300" Tag="Filter messages by text" TextChanged="MessageFilterBox_TextChanged"/>
+                                    <Button x:Name="AgentChip" DockPanel.Dock="Left" Style="{StaticResource ChipButton}" Margin="10,0,0,0" Visibility="Collapsed" Click="AgentChip_Click" ToolTip="Clear the agent filter"/>
+                                    <Button DockPanel.Dock="Right" Content="Refresh" Style="{StaticResource BtnGhost}" Margin="12,0,0,0" Click="Refresh_Click" ToolTip="Reload the latest snapshot from the bus"/>
+                                    <TextBlock x:Name="ActivityCountText" Style="{StaticResource MutedMono}" HorizontalAlignment="Right" VerticalAlignment="Center"/>
+                                </DockPanel>
+                            </Border>
+                            <Border x:Name="ActivityHoldBar" DockPanel.Dock="Bottom" Background="{DynamicResource S1}" BorderBrush="{DynamicResource Line}" BorderThickness="0,1,0,0" Padding="16,9" Visibility="Collapsed">
+                                <DockPanel>
+                                    <Button DockPanel.Dock="Right" Content="Jump to latest" Style="{StaticResource Btn}" Padding="12,5" Click="ActivityJump_Click"/>
+                                    <TextBlock x:Name="ActivityHoldText" VerticalAlignment="Center"/>
+                                </DockPanel>
+                            </Border>
+                            <Grid>
+                                <ListBox x:Name="ActivityList" ItemContainerStyle="{StaticResource FeedItem}" ScrollViewer.CanContentScroll="False" ScrollViewer.ScrollChanged="ActivityList_ScrollChanged" MouseDoubleClick="ActivityList_MouseDoubleClick">
+                                    <ListBox.ItemTemplate>
+                                        <DataTemplate>
+                                            <Grid Margin="16,11">
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="112"/>
+                                                    <ColumnDefinition Width="*"/>
+                                                </Grid.ColumnDefinitions>
+                                                <TextBlock Text="{Binding TimeLabel}" Style="{StaticResource MutedMono}" Margin="0,1,0,0"/>
+                                                <StackPanel Grid.Column="1">
+                                                    <DockPanel>
+                                                        <TextBlock DockPanel.Dock="Right" Text="{Binding SequenceLabel}" Style="{StaticResource MutedMono}" FontSize="11" VerticalAlignment="Center"/>
+                                                        <Button DockPanel.Dock="Right" Content="Copy" Style="{StaticResource BtnGhost}" Tag="{Binding}" Click="CopyMessage_Click" Margin="0,-3,10,-3" Visibility="{Binding IsMouseOver, RelativeSource={RelativeSource AncestorType=ListBoxItem}, Converter={StaticResource BoolToVisibility}}"/>
+                                                        <TextBlock Text="{Binding AgentName}" FontFamily="{StaticResource Mono}" FontWeight="Bold" Foreground="{DynamicResource AccentText}" VerticalAlignment="Center"/>
+                                                        <TextBlock Text="{Binding ChannelLabel}" Style="{StaticResource MutedMono}" Margin="10,0,0,0" VerticalAlignment="Center"/>
+                                                        <Border Style="{StaticResource KindBadge}" Margin="10,0,0,0" HorizontalAlignment="Left"><TextBlock Text="{Binding KindLabel}" Style="{StaticResource MutedMono}" FontSize="11"/></Border>
+                                                    </DockPanel>
+                                                    <TextBlock local:RichText.Text="{Binding DisplayBody}" local:RichText.Highlight="{Binding Highlight}" TextWrapping="Wrap" FontSize="14" LineHeight="20" Margin="0,5,0,0">
+                                                        <TextBlock.Style>
+                                                            <Style TargetType="TextBlock">
+                                                                <Setter Property="Foreground" Value="{DynamicResource Fg}"/>
+                                                                <Setter Property="MaxHeight" Value="60"/>
+                                                                <Setter Property="TextTrimming" Value="CharacterEllipsis"/>
+                                                                <Style.Triggers>
+                                                                    <DataTrigger Binding="{Binding IsExpanded}" Value="True">
+                                                                        <Setter Property="MaxHeight" Value="100000"/>
+                                                                        <Setter Property="TextTrimming" Value="None"/>
+                                                                    </DataTrigger>
+                                                                </Style.Triggers>
+                                                            </Style>
+                                                        </TextBlock.Style>
+                                                    </TextBlock>
+                                                    <Button Content="{Binding ExpandLabel}" Visibility="{Binding ExpandVisibility}" Style="{StaticResource LinkButton}" Tag="{Binding}" Click="ExpandMessage_Click" HorizontalAlignment="Left" Margin="0,5,0,0"/>
+                                                </StackPanel>
+                                            </Grid>
+                                        </DataTemplate>
+                                    </ListBox.ItemTemplate>
+                                </ListBox>
+                                <TextBlock x:Name="EmptyActivityText" Text="No messages match. Clear a filter to see more." Style="{StaticResource MutedText}" HorizontalAlignment="Center" VerticalAlignment="Center" Visibility="Collapsed" IsHitTestVisible="False"/>
+                            </Grid>
+                        </DockPanel>
+                    </Grid>
+
+                    <!-- Humans -->
+                    <Grid x:Name="HumansPage" Visibility="Collapsed">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="270"/>
+                        </Grid.ColumnDefinitions>
+                        <DockPanel>
+                            <Border DockPanel.Dock="Top" BorderBrush="{DynamicResource Line}" BorderThickness="0,0,0,1" Padding="20,14">
+                                <DockPanel>
+                                    <TextBlock x:Name="HumansCountText" DockPanel.Dock="Right" Style="{StaticResource MutedMono}" VerticalAlignment="Center"/>
+                                    <TextBlock Text="#humans" FontFamily="{StaticResource Mono}" FontWeight="Bold" FontSize="15" VerticalAlignment="Center"/>
+                                    <TextBlock x:Name="HumansNotice" Style="{StaticResource MutedText}" Margin="12,0,12,0" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"/>
+                                </DockPanel>
+                            </Border>
+
+                            <Border DockPanel.Dock="Bottom" Background="{DynamicResource S1}" BorderBrush="{DynamicResource Line}" BorderThickness="0,1,0,0" Padding="20,12,20,12">
+                                <StackPanel>
+                                    <DockPanel x:Name="HumansReplyBanner" Visibility="Collapsed" Margin="0,0,0,8">
+                                        <Button DockPanel.Dock="Right" Content="Cancel reply" Style="{StaticResource BtnGhost}" Click="HumansCancelReply_Click" Margin="12,0,0,0"/>
+                                        <TextBlock x:Name="HumansReplyText" Style="{StaticResource MutedText}" TextTrimming="CharacterEllipsis" VerticalAlignment="Center"/>
+                                    </DockPanel>
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto"/>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                        </Grid.ColumnDefinitions>
+                                        <StackPanel Orientation="Horizontal" VerticalAlignment="Bottom" Margin="0,0,10,0">
+                                            <RadioButton x:Name="HumansKindChat" GroupName="HumanKind" Content="Chat" IsChecked="True" Style="{StaticResource SegItem}"/>
+                                            <RadioButton x:Name="HumansKindQuestion" GroupName="HumanKind" Content="Question" Style="{StaticResource SegItem}" Margin="-1,0,0,0"/>
+                                            <RadioButton x:Name="HumansKindAnswer" GroupName="HumanKind" Content="Answer" Style="{StaticResource SegItem}" Margin="-1,0,0,0"/>
+                                        </StackPanel>
+                                        <TextBox x:Name="HumansComposer" Grid.Column="1" MinHeight="40" MaxHeight="160" AcceptsReturn="True" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto" MaxLength="4000" FontSize="14" Tag="Message #humans. Type @ to mention an agent." PreviewKeyDown="HumansComposer_PreviewKeyDown" TextChanged="HumansComposer_TextChanged" SelectionChanged="HumansComposer_SelectionChanged" LostKeyboardFocus="HumansComposer_LostKeyboardFocus"/>
+                                        <Button x:Name="HumansSendButton" Grid.Column="2" Content="Send" Style="{StaticResource Btn}" Click="HumansSend_Click" Margin="10,0,0,0" VerticalAlignment="Bottom"/>
+                                    </Grid>
+                                    <DockPanel Margin="0,8,0,0">
+                                        <TextBlock x:Name="HumansCharCount" DockPanel.Dock="Right" Text="0 / 4000" Style="{StaticResource MutedMono}"/>
+                                        <TextBlock Text="Enter sends.  Shift+Enter adds a new line.  @ mentions an agent." Style="{StaticResource MutedText}"/>
+                                    </DockPanel>
+                                    <Popup x:Name="MentionPopup" PlacementTarget="{Binding ElementName=HumansComposer}" Placement="Top" VerticalOffset="-6" StaysOpen="True" AllowsTransparency="True" Focusable="False">
+                                        <Border Background="{DynamicResource Bg}" BorderBrush="{DynamicResource Line}" BorderThickness="1" CornerRadius="8" Width="400" Margin="0,0,0,4">
+                                            <StackPanel>
+                                                <TextBlock x:Name="MentionHeader" Style="{StaticResource Label}" Margin="14,10,14,6"/>
+                                                <ListBox x:Name="MentionList" ItemContainerStyle="{StaticResource RowItem}" Focusable="False" MaxHeight="300" PreviewMouseLeftButtonDown="MentionList_PreviewMouseLeftButtonDown">
+                                                    <ListBox.ItemTemplate>
+                                                        <DataTemplate>
+                                                            <DockPanel Margin="12,8,14,8">
+                                                                <TextBlock DockPanel.Dock="Right" Text="{Binding Meta}" Style="{StaticResource MutedText}" VerticalAlignment="Center" Margin="12,0,0,0"/>
+                                                                <ContentControl DockPanel.Dock="Left" Content="{Binding Presence}" ContentTemplate="{StaticResource PresenceDot}" VerticalAlignment="Center" Margin="0,0,10,0" Width="8" Focusable="False"/>
+                                                                <TextBlock Text="{Binding Display}" FontFamily="{StaticResource Mono}" FontWeight="Bold"/>
+                                                            </DockPanel>
+                                                        </DataTemplate>
+                                                    </ListBox.ItemTemplate>
+                                                </ListBox>
+                                                <Border BorderBrush="{DynamicResource Line}" BorderThickness="0,1,0,0" Padding="14,8">
+                                                    <TextBlock Text="Up and Down move.  Tab or Enter inserts.  Esc dismisses." Style="{StaticResource MutedText}"/>
+                                                </Border>
+                                            </StackPanel>
+                                        </Border>
+                                    </Popup>
+                                </StackPanel>
+                            </Border>
+
+                            <Border x:Name="HumansNewBar" DockPanel.Dock="Bottom" Background="{DynamicResource S1}" BorderBrush="{DynamicResource Line}" BorderThickness="0,1,0,0" Padding="20,9" Visibility="Collapsed">
+                                <DockPanel>
+                                    <Button DockPanel.Dock="Right" Content="Jump to latest" Style="{StaticResource Btn}" Padding="12,5" Click="HumansJump_Click"/>
+                                    <TextBlock x:Name="HumansNewText" VerticalAlignment="Center"/>
+                                </DockPanel>
+                            </Border>
+
+                            <Grid>
+                                <ListBox x:Name="HumansList" ItemContainerStyle="{StaticResource ChatItem}" ScrollViewer.CanContentScroll="False" ScrollViewer.ScrollChanged="HumansList_ScrollChanged">
+                                    <ListBox.ItemTemplate>
+                                        <DataTemplate>
+                                            <!-- Your own messages sit on the right, like a text conversation; agents are on the left. -->
+                                            <Border Margin="20,6" Padding="14,10" CornerRadius="10" MaxWidth="760" BorderThickness="1">
+                                                <Border.Style>
+                                                    <Style TargetType="Border">
+                                                        <Setter Property="HorizontalAlignment" Value="Left"/>
+                                                        <Setter Property="Background" Value="{DynamicResource S1}"/>
+                                                        <Setter Property="BorderBrush" Value="{DynamicResource Line}"/>
+                                                        <Style.Triggers>
+                                                            <DataTrigger Binding="{Binding IsOperator}" Value="True">
+                                                                <Setter Property="HorizontalAlignment" Value="Right"/>
+                                                                <Setter Property="Background" Value="{DynamicResource AccentSoft}"/>
+                                                                <Setter Property="BorderBrush" Value="{DynamicResource Accent}"/>
+                                                            </DataTrigger>
+                                                        </Style.Triggers>
+                                                    </Style>
+                                                </Border.Style>
+                                                <StackPanel>
+                                                    <StackPanel Orientation="Horizontal">
+                                                        <TextBlock Text="{Binding AuthorLabel}" FontFamily="{StaticResource Mono}" FontWeight="Bold" VerticalAlignment="Center">
+                                                            <TextBlock.Style>
+                                                                <Style TargetType="TextBlock">
+                                                                    <Setter Property="Foreground" Value="{DynamicResource AccentText}"/>
+                                                                    <Style.Triggers>
+                                                                        <DataTrigger Binding="{Binding IsOperator}" Value="True"><Setter Property="Foreground" Value="{DynamicResource Fg}"/></DataTrigger>
+                                                                    </Style.Triggers>
+                                                                </Style>
+                                                            </TextBlock.Style>
+                                                        </TextBlock>
+                                                        <Border Style="{StaticResource KindBadge}" Margin="10,0,0,0"><TextBlock Text="{Binding KindLabel}" Style="{StaticResource MutedMono}" FontSize="11"/></Border>
+                                                        <TextBlock Text="{Binding TimeLabel}" Style="{StaticResource MutedMono}" Margin="10,0,0,0" VerticalAlignment="Center"/>
+                                                        <TextBlock Text="{Binding StateLabel}" Style="{StaticResource MutedText}" Margin="10,0,0,0" VerticalAlignment="Center"/>
+                                                    </StackPanel>
+                                                    <TextBlock Text="{Binding ReplyContext}" Visibility="{Binding ReplyContextVisibility}" Style="{StaticResource MutedText}" TextTrimming="CharacterEllipsis" Margin="0,4,0,0"/>
+                                                    <!-- Selectable, so a command an agent asks for can be picked out and copied. -->
+                                                    <local:SelectableTextBlock local:RichText.Text="{Binding Body}" TextWrapping="Wrap" FontSize="14" LineHeight="21" Margin="0,4,0,0"/>
+                                                    <TextBlock Text="{Binding Error}" Visibility="{Binding ErrorVisibility}" Foreground="{DynamicResource Bad}" TextWrapping="Wrap" Margin="0,6,0,0"/>
+                                                    <StackPanel Orientation="Horizontal" Margin="0,7,0,0">
+                                                        <Button Content="Reply" Tag="{Binding}" Visibility="{Binding ReplyVisibility}" Style="{StaticResource BtnGhost}" Click="HumansReply_Click" Margin="0,0,8,0"/>
+                                                        <Button Content="Copy" Tag="{Binding}" Visibility="{Binding CopyVisibility}" Style="{StaticResource BtnGhost}" Click="CopyHumans_Click" Margin="0,0,8,0"/>
+                                                        <Button Content="Retry" Tag="{Binding}" Visibility="{Binding RetryVisibility}" Style="{StaticResource BtnGhost}" Click="HumansRetry_Click" Margin="0,0,8,0"/>
+                                                        <Button Content="Discard" Tag="{Binding}" Visibility="{Binding DiscardVisibility}" Style="{StaticResource BtnGhost}" Click="HumansDiscard_Click"/>
+                                                    </StackPanel>
+                                                </StackPanel>
+                                            </Border>
+                                        </DataTemplate>
+                                    </ListBox.ItemTemplate>
+                                </ListBox>
+                                <TextBlock x:Name="HumansEmptyText" Text="No messages on #humans yet." Style="{StaticResource MutedText}" HorizontalAlignment="Center" VerticalAlignment="Center" IsHitTestVisible="False"/>
+                            </Grid>
+                        </DockPanel>
+
+                        <Border Grid.Column="1" Background="{DynamicResource S1}" BorderBrush="{DynamicResource Line}" BorderThickness="1,0,0,0">
+                            <DockPanel>
+                                <DockPanel DockPanel.Dock="Top" Margin="16,12,12,8">
+                                    <Button x:Name="WaitingClearAll" DockPanel.Dock="Right" Content="Clear all" Style="{StaticResource BtnGhost}" Click="WaitingClearAll_Click"/>
+                                    <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                        <TextBlock Text="WAITING ON YOU" Style="{StaticResource Label}" Foreground="{DynamicResource Fg}"/>
+                                        <TextBlock x:Name="WaitingCountText" Style="{StaticResource MutedMono}" Margin="8,0,0,0"/>
+                                    </StackPanel>
+                                </DockPanel>
+                                <TextBlock x:Name="WaitingHint" DockPanel.Dock="Bottom" Text="Questions from agents that you have not replied to. Click one to jump to it and start a reply." Style="{StaticResource MutedText}" TextWrapping="Wrap" Margin="16,12"/>
+                                <ListBox x:Name="WaitingList" ItemContainerStyle="{StaticResource RowItem}" SelectionChanged="WaitingList_SelectionChanged" ScrollViewer.CanContentScroll="False">
+                                    <ListBox.ItemTemplate>
+                                        <DataTemplate>
+                                            <StackPanel Margin="14,10,10,10">
+                                                <DockPanel>
+                                                    <Button DockPanel.Dock="Right" Content="Clear" Tag="{Binding}" ToolTip="Remove from this list. The message stays in the conversation." Style="{StaticResource BtnGhost}" Click="WaitingClear_Click"/>
+                                                    <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                                        <TextBlock Text="{Binding AgentName}" FontFamily="{StaticResource Mono}" FontWeight="Bold" Foreground="{DynamicResource AccentText}"/>
+                                                        <TextBlock Text="{Binding TimeLabel}" Style="{StaticResource MutedMono}" Margin="8,0,0,0"/>
+                                                    </StackPanel>
+                                                </DockPanel>
+                                                <TextBlock Text="{Binding Snippet}" TextWrapping="Wrap" MaxHeight="54" TextTrimming="CharacterEllipsis" Margin="0,4,0,0"/>
+                                            </StackPanel>
+                                        </DataTemplate>
+                                    </ListBox.ItemTemplate>
+                                </ListBox>
+                            </DockPanel>
+                        </Border>
+                    </Grid>
+
+                    <!-- Admin -->
+                    <ScrollViewer x:Name="AdminPage" Visibility="Collapsed" VerticalScrollBarVisibility="Auto">
+                        <ScrollViewer.Resources>
+                            <DataTemplate x:Key="AdminRowTemplate">
+                                <Border BorderBrush="{DynamicResource Line}" BorderThickness="0,0,0,1" Padding="2,10">
+                                    <DockPanel>
+                                        <ItemsControl DockPanel.Dock="Right" ItemsSource="{Binding Actions}" VerticalAlignment="Center" Focusable="False">
+                                            <ItemsControl.ItemsPanel>
+                                                <ItemsPanelTemplate><StackPanel Orientation="Horizontal"/></ItemsPanelTemplate>
+                                            </ItemsControl.ItemsPanel>
+                                            <ItemsControl.ItemTemplate>
+                                                <DataTemplate>
+                                                    <Button Content="{Binding Label}" Tag="{Binding}" ToolTip="{Binding Effect}" Click="AdminRowAction_Click" Margin="8,0,0,0">
+                                                        <Button.Style>
+                                                            <Style TargetType="Button" BasedOn="{StaticResource BtnGhost}">
+                                                                <Setter Property="Foreground" Value="{DynamicResource Fg}"/>
+                                                                <Style.Triggers>
+                                                                    <DataTrigger Binding="{Binding IsDanger}" Value="True"><Setter Property="Foreground" Value="{DynamicResource Bad}"/></DataTrigger>
+                                                                </Style.Triggers>
+                                                            </Style>
+                                                        </Button.Style>
+                                                    </Button>
+                                                </DataTemplate>
+                                            </ItemsControl.ItemTemplate>
+                                        </ItemsControl>
+                                        <StackPanel VerticalAlignment="Center">
+                                            <StackPanel Orientation="Horizontal">
+                                                <TextBlock Text="{Binding Name}" FontFamily="{StaticResource Mono}" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                                                <Border Style="{StaticResource KindBadge}" Margin="10,0,0,0">
+                                                    <TextBlock Text="{Binding StateLabel}" FontFamily="{StaticResource Mono}" FontSize="11">
+                                                        <TextBlock.Style>
+                                                            <Style TargetType="TextBlock">
+                                                                <Setter Property="Foreground" Value="{DynamicResource Muted}"/>
+                                                                <Style.Triggers>
+                                                                    <DataTrigger Binding="{Binding Tone}" Value="Ok"><Setter Property="Foreground" Value="{DynamicResource Ok}"/></DataTrigger>
+                                                                    <DataTrigger Binding="{Binding Tone}" Value="Warn"><Setter Property="Foreground" Value="{DynamicResource Warn}"/></DataTrigger>
+                                                                </Style.Triggers>
+                                                            </Style>
+                                                        </TextBlock.Style>
+                                                    </TextBlock>
+                                                </Border>
+                                                <TextBlock Text="{Binding Note}" Style="{StaticResource MutedText}" Margin="10,0,0,0" VerticalAlignment="Center"/>
+                                            </StackPanel>
+                                            <TextBlock Text="{Binding Meta}" Style="{StaticResource MutedText}" TextTrimming="CharacterEllipsis" Margin="0,3,0,0"/>
+                                        </StackPanel>
+                                    </DockPanel>
+                                </Border>
+                            </DataTemplate>
+                        </ScrollViewer.Resources>
+                        <StackPanel MaxWidth="940" Margin="28,22">
+                            <TextBlock Text="Admin" FontSize="22" FontWeight="SemiBold"/>
+                            <TextBlock Text="The operator console. Every change is reviewed here and approved with Windows Hello before it runs, and is recorded on the bus with your reason." Style="{StaticResource MutedText}" TextWrapping="Wrap" Margin="0,6,0,14"/>
+
+                            <WrapPanel Margin="0,0,0,14">
+                                <RadioButton x:Name="AdminTabAgents" GroupName="AdminTab" Content="Agents" IsChecked="True" Style="{StaticResource SegItem}" Checked="AdminTab_Checked"/>
+                                <RadioButton x:Name="AdminTabDevices" GroupName="AdminTab" Content="Devices" Style="{StaticResource SegItem}" Margin="-1,0,0,0" Checked="AdminTab_Checked"/>
+                                <RadioButton x:Name="AdminTabSpn" GroupName="AdminTab" Content="Service principals" Style="{StaticResource SegItem}" Margin="-1,0,0,0" Checked="AdminTab_Checked"/>
+                                <RadioButton x:Name="AdminTabHosts" GroupName="AdminTab" Content="Worker hosts" Style="{StaticResource SegItem}" Margin="-1,0,0,0" Checked="AdminTab_Checked"/>
+                                <RadioButton x:Name="AdminTabEnroll" GroupName="AdminTab" Content="Enroll" Style="{StaticResource SegItem}" Margin="-1,0,0,0" Checked="AdminTab_Checked"/>
+                                <RadioButton x:Name="AdminTabAccess" GroupName="AdminTab" Content="Access and freeze" Style="{StaticResource SegItem}" Margin="-1,0,0,0" Checked="AdminTab_Checked"/>
+                                <RadioButton x:Name="AdminTabExport" GroupName="AdminTab" Content="Export" Style="{StaticResource SegItem}" Margin="-1,0,0,0" Checked="AdminTab_Checked"/>
+                            </WrapPanel>
+
+                            <Border x:Name="AdminResultPanel" Visibility="Collapsed" Background="{DynamicResource AccentSoft}" BorderBrush="{DynamicResource Accent}" BorderThickness="1" CornerRadius="6" Padding="14" Margin="0,0,0,14">
+                                <TextBlock x:Name="AdminResult" TextWrapping="Wrap"/>
+                            </Border>
+
+                            <Border x:Name="EnrollResultPanel" Visibility="Collapsed" Background="{DynamicResource S1}" BorderBrush="{DynamicResource Accent}" BorderThickness="1" CornerRadius="6" Padding="14" Margin="0,0,0,14">
+                                <StackPanel>
+                                    <TextBlock x:Name="EnrollResultTitle" FontFamily="{StaticResource Mono}" FontWeight="Bold"/>
+                                    <TextBlock x:Name="EnrollResultDetail" Style="{StaticResource MutedText}" TextWrapping="Wrap" Margin="0,6,0,0"/>
+                                    <TextBox x:Name="EnrollResultSecret" IsReadOnly="True" FontFamily="{StaticResource Mono}" FontSize="12" TextWrapping="NoWrap" AcceptsReturn="True" MaxHeight="260" VerticalContentAlignment="Top" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto" Margin="0,10,0,0"/>
+                                    <WrapPanel Margin="0,10,0,0">
+                                        <Button x:Name="EnrollCopyButton" Content="Copy" Style="{StaticResource Btn}" Padding="14,6" Click="EnrollCopy_Click" Margin="0,0,8,0"/>
+                                        <Button Content="Clear" Style="{StaticResource BtnOutline}" Padding="14,6" Click="EnrollClear_Click"/>
+                                    </WrapPanel>
+                                </StackPanel>
+                            </Border>
+
+                            <Border x:Name="AdminReasonCard" Style="{StaticResource Card}" Padding="20,14">
+                                <StackPanel>
+                                    <TextBlock Text="AUDIT REASON" Style="{StaticResource Label}"/>
+                                    <TextBox x:Name="ActionReason" Tag="Why you are doing this. Required for every action below." Margin="0,8,0,0"/>
+                                </StackPanel>
+                            </Border>
+
+                            <Border x:Name="AdminAgentsPanel" Style="{StaticResource Card}">
+                                <StackPanel>
+                                    <DockPanel>
+                                        <Button DockPanel.Dock="Right" Content="Reload" Style="{StaticResource BtnGhost}" Click="AdminReload_Click"/>
+                                        <CheckBox x:Name="AdminShowRetired" DockPanel.Dock="Right" Content="Show retired" VerticalAlignment="Center" Margin="0,0,14,0" Foreground="{DynamicResource Muted}" Checked="AdminShowRetired_Changed" Unchecked="AdminShowRetired_Changed"/>
+                                        <TextBlock Text="AGENTS" Style="{StaticResource Label}" VerticalAlignment="Center"/>
+                                    </DockPanel>
+                                    <TextBlock x:Name="AdminAgentsSummary" Style="{StaticResource MutedText}" TextWrapping="Wrap" Margin="0,8,0,10"/>
+                                    <TextBox x:Name="AdminAgentFilter" Tag="Find an agent by name, host or state" TextChanged="AdminAgentFilter_TextChanged"/>
+                                    <ItemsControl x:Name="AdminAgentList" ItemTemplate="{StaticResource AdminRowTemplate}" Margin="0,6,0,0" Focusable="False"/>
+                                </StackPanel>
+                            </Border>
+
+                            <Border x:Name="AdminDevicesPanel" Style="{StaticResource Card}">
+                                <StackPanel>
+                                    <DockPanel>
+                                        <Button DockPanel.Dock="Right" Content="Reload" Style="{StaticResource BtnGhost}" Click="AdminReload_Click"/>
+                                        <TextBlock Text="DEVICES" Style="{StaticResource Label}" VerticalAlignment="Center"/>
+                                    </DockPanel>
+                                    <TextBlock x:Name="AdminDevicesSummary" Style="{StaticResource MutedText}" TextWrapping="Wrap" Margin="0,8,0,0"/>
+                                    <TextBlock Text="Phones and PCs enrolled to watch and operate the bus. Revoking is permanent and the label cannot be reused. Revoking this PC signs it out. Add a device on the Enroll tab." Style="{StaticResource MutedText}" TextWrapping="Wrap" Margin="0,4,0,6"/>
+                                    <ItemsControl x:Name="AdminDeviceList" ItemTemplate="{StaticResource AdminRowTemplate}" Focusable="False"/>
+                                </StackPanel>
+                            </Border>
+
+                            <Border x:Name="AdminSpnPanel" Style="{StaticResource Card}">
+                                <StackPanel>
+                                    <DockPanel>
+                                        <Button DockPanel.Dock="Right" Content="Reload" Style="{StaticResource BtnGhost}" Click="AdminReload_Click"/>
+                                        <TextBlock Text="SERVICE PRINCIPALS" Style="{StaticResource Label}" VerticalAlignment="Center"/>
+                                    </DockPanel>
+                                    <TextBlock x:Name="AdminSpnSummary" Style="{StaticResource MutedText}" TextWrapping="Wrap" Margin="0,8,0,0"/>
+                                    <TextBlock Text="Automation identities that create short-lived worker agents. Rotating replaces the secret and shows the new one once." Style="{StaticResource MutedText}" TextWrapping="Wrap" Margin="0,4,0,6"/>
+                                    <ItemsControl x:Name="AdminSpnList" ItemTemplate="{StaticResource AdminRowTemplate}" Focusable="False"/>
+                                </StackPanel>
+                            </Border>
+
+                            <Border x:Name="AdminHostsPanel" Style="{StaticResource Card}">
+                                <StackPanel>
+                                    <DockPanel>
+                                        <Button x:Name="AdminHostsReload" DockPanel.Dock="Right" Content="Reload" Style="{StaticResource BtnGhost}" Click="AdminHostsReload_Click"/>
+                                        <TextBlock Text="WORKER HOSTS" Style="{StaticResource Label}" VerticalAlignment="Center"/>
+                                    </DockPanel>
+                                    <TextBlock x:Name="AdminHostsSummary" Style="{StaticResource MutedText}" TextWrapping="Wrap" Margin="0,8,0,0"/>
+                                    <TextBlock Text="PCs that run agent workers for this bus. Whether a host is responding comes from the bus. Everything else is what the host last reported about itself." Style="{StaticResource MutedText}" TextWrapping="Wrap" Margin="0,4,0,6"/>
+                                    <ItemsControl x:Name="AdminHostList" Focusable="False">
+                                        <ItemsControl.ItemTemplate>
+                                            <DataTemplate>
+                                                <Border BorderBrush="{DynamicResource Line}" BorderThickness="0,0,0,1" Padding="2,10">
+                                                    <StackPanel>
+                                                        <StackPanel Orientation="Horizontal">
+                                                            <TextBlock Text="{Binding Name}" FontFamily="{StaticResource Mono}" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                                                            <Border Style="{StaticResource KindBadge}" Margin="10,0,0,0">
+                                                                <TextBlock Text="{Binding StateLabel}" FontFamily="{StaticResource Mono}" FontSize="11">
+                                                                    <TextBlock.Style>
+                                                                        <Style TargetType="TextBlock">
+                                                                            <Setter Property="Foreground" Value="{DynamicResource Muted}"/>
+                                                                            <Style.Triggers>
+                                                                                <DataTrigger Binding="{Binding Tone}" Value="Ok"><Setter Property="Foreground" Value="{DynamicResource Ok}"/></DataTrigger>
+                                                                                <DataTrigger Binding="{Binding Tone}" Value="Warn"><Setter Property="Foreground" Value="{DynamicResource Warn}"/></DataTrigger>
+                                                                            </Style.Triggers>
+                                                                        </Style>
+                                                                    </TextBlock.Style>
+                                                                </TextBlock>
+                                                            </Border>
+                                                        </StackPanel>
+                                                        <TextBlock Text="{Binding Meta}" Style="{StaticResource MutedText}" TextWrapping="Wrap" Margin="0,3,0,0"/>
+                                                        <TextBlock Text="{Binding Joined}" FontFamily="{StaticResource Mono}" FontSize="12" TextWrapping="Wrap" Margin="0,4,0,0">
+                                                            <TextBlock.Style>
+                                                                <Style TargetType="TextBlock">
+                                                                    <Setter Property="Foreground" Value="{DynamicResource Fg}"/>
+                                                                    <Style.Triggers>
+                                                                        <DataTrigger Binding="{Binding HasJoined}" Value="False"><Setter Property="Visibility" Value="Collapsed"/></DataTrigger>
+                                                                    </Style.Triggers>
+                                                                </Style>
+                                                            </TextBlock.Style>
+                                                        </TextBlock>
+                                                        <TextBlock Text="{Binding Alerts}" Foreground="{DynamicResource Warn}" FontSize="12" TextWrapping="Wrap" Margin="0,4,0,0">
+                                                            <TextBlock.Style>
+                                                                <Style TargetType="TextBlock">
+                                                                    <Style.Triggers>
+                                                                        <DataTrigger Binding="{Binding HasAlerts}" Value="False"><Setter Property="Visibility" Value="Collapsed"/></DataTrigger>
+                                                                    </Style.Triggers>
+                                                                </Style>
+                                                            </TextBlock.Style>
+                                                        </TextBlock>
+                                                    </StackPanel>
+                                                </Border>
+                                            </DataTemplate>
+                                        </ItemsControl.ItemTemplate>
+                                    </ItemsControl>
+                                </StackPanel>
+                            </Border>
+
+                            <Border x:Name="AdminEnrollPanel" Style="{StaticResource Card}">
+                                <StackPanel>
+                                    <TextBlock Text="ENROLL" Style="{StaticResource Label}"/>
+                                    <TextBlock Text="Create an enrollment for a new agent, service principal or device. Windows Hello confirms first. What comes back is shown once and is not saved on this PC." Style="{StaticResource MutedText}" TextWrapping="Wrap" Margin="0,8,0,12"/>
+                                    <StackPanel Orientation="Horizontal">
+                                        <RadioButton x:Name="EnrollKindAgent" GroupName="EnrollKind" Content="Agent" IsChecked="True" Style="{StaticResource SegItem}" Checked="EnrollKind_Checked"/>
+                                        <RadioButton x:Name="EnrollKindSpn" GroupName="EnrollKind" Content="Service principal" Style="{StaticResource SegItem}" Margin="-1,0,0,0" Checked="EnrollKind_Checked"/>
+                                        <RadioButton x:Name="EnrollKindDevice" GroupName="EnrollKind" Content="Device" Style="{StaticResource SegItem}" Margin="-1,0,0,0" Checked="EnrollKind_Checked"/>
+                                    </StackPanel>
+                                    <TextBlock x:Name="EnrollNameLabel" Text="Agent name" Style="{StaticResource FieldLabel}"/>
+                                    <TextBox x:Name="EnrollName" FontFamily="{StaticResource Mono}" Tag="lowercase-with-hyphens" TextChanged="EnrollNaming_TextChanged"/>
+                                    <TextBlock x:Name="EnrollNameFeedback" FontSize="12" TextWrapping="Wrap" Margin="0,6,0,0" Visibility="Collapsed"/>
+                                    <StackPanel x:Name="EnrollSecondPanel">
+                                        <TextBlock x:Name="EnrollSecondLabel" Text="Description (optional)" Style="{StaticResource FieldLabel}"/>
+                                        <TextBox x:Name="EnrollSecond" TextChanged="EnrollNaming_TextChanged"/>
+                                        <TextBlock x:Name="EnrollSecondFeedback" FontSize="12" TextWrapping="Wrap" Margin="0,6,0,0" Visibility="Collapsed"/>
+                                    </StackPanel>
+                                    <TextBlock x:Name="EnrollHint" Style="{StaticResource MutedText}" TextWrapping="Wrap" Margin="0,8,0,0"/>
+                                    <TextBlock Text="Audit reason" Style="{StaticResource FieldLabel}"/>
+                                    <TextBox x:Name="EnrollReason" Tag="Why you are creating this"/>
+                                    <Button x:Name="EnrollCreateButton" Content="Create onboarding package" Style="{StaticResource Btn}" Click="EnrollCreate_Click" HorizontalAlignment="Left" Margin="0,16,0,0"/>
+                                </StackPanel>
+                            </Border>
+
+                            <StackPanel x:Name="AdminAccessPanel">
+                            <Border Style="{StaticResource Card}">
+                                <StackPanel>
+                                    <TextBlock Text="OPERATOR ACCESS" Style="{StaticResource Label}"/>
+                                    <TextBlock x:Name="GrantStatusText" Style="{StaticResource MutedText}" TextWrapping="Wrap" Margin="0,8,0,0"/>
+                                    <TextBlock Text="Operator password" Style="{StaticResource FieldLabel}"/>
+                                    <PasswordBox x:Name="OperatorPassword"/>
+                                    <TextBlock Text="Audit reason" Style="{StaticResource FieldLabel}"/>
+                                    <TextBox x:Name="GrantReason" Text="Windows operator setup"/>
+                                    <Button Content="Save operator access" Style="{StaticResource Btn}" Click="Grant_Click" HorizontalAlignment="Left" Margin="0,16,0,0"/>
+                                </StackPanel>
+                            </Border>
+                            <Border Style="{StaticResource Card}">
+                                <StackPanel>
+                                    <TextBlock Text="FREEZE" Style="{StaticResource Label}"/>
+                                    <TextBlock Text="A freeze denies every agent at once and ends their open streams. This app and the console keep working. Clearing it does not unblock agents you blocked meanwhile. Uses the audit reason above." Style="{StaticResource MutedText}" TextWrapping="Wrap" Margin="0,8,0,14"/>
+                                    <WrapPanel>
+                                        <Button Content="Activate freeze" Style="{StaticResource BtnDanger}" Click="Freeze_Click" Margin="0,0,8,0"/>
+                                        <Button Content="Clear freeze" Style="{StaticResource BtnOutline}" Click="ClearFreeze_Click"/>
+                                    </WrapPanel>
+                                </StackPanel>
+                            </Border>
+                            </StackPanel>
+
+                            <Border x:Name="AdminExportPanel" Style="{StaticResource Card}">
+                                <StackPanel>
+                                    <TextBlock Text="EXPORT ACTIVITY" Style="{StaticResource Label}"/>
+                                    <TextBlock Text="Saves the latest 200 messages the bus keeps as CSV. Times are this PC's local time. Leave a box empty for no limit." Style="{StaticResource MutedText}" TextWrapping="Wrap" Margin="0,8,0,0"/>
+                                    <Grid Margin="0,4,0,0">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="16"/>
+                                            <ColumnDefinition Width="*"/>
+                                        </Grid.ColumnDefinitions>
+                                        <StackPanel>
+                                            <TextBlock Text="From" Style="{StaticResource FieldLabel}"/>
+                                            <TextBox x:Name="ExportFrom" FontFamily="{StaticResource Mono}" Tag="YYYY-MM-DD HH:mm"/>
+                                        </StackPanel>
+                                        <StackPanel Grid.Column="2">
+                                            <TextBlock Text="To" Style="{StaticResource FieldLabel}"/>
+                                            <TextBox x:Name="ExportTo" FontFamily="{StaticResource Mono}" Tag="YYYY-MM-DD HH:mm"/>
+                                        </StackPanel>
+                                    </Grid>
+                                    <WrapPanel Margin="0,14,0,0">
+                                        <Button Content="Export CSV" Style="{StaticResource Btn}" Click="ExportCsv_Click" Margin="0,0,8,0"/>
+                                        <Button Content="Last 24 hours" Style="{StaticResource BtnOutline}" Click="ExportLastDay_Click" Margin="0,0,8,0"/>
+                                        <Button Content="Clear dates" Style="{StaticResource BtnOutline}" Click="ClearExportFilter_Click"/>
+                                    </WrapPanel>
+                                </StackPanel>
+                            </Border>
+                        </StackPanel>
+                    </ScrollViewer>
+                </Grid>
+
+                <!-- Settings (available before enrollment too) -->
+                <DockPanel x:Name="SettingsPage" Visibility="Collapsed" Background="{DynamicResource Bg}">
+                    <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="28,18,28,0">
+                        <RadioButton x:Name="SettingsTabGeneral" GroupName="SettingsTab" Content="General" IsChecked="True" Style="{StaticResource SegItem}" Checked="SettingsTab_Checked"/>
+                        <RadioButton x:Name="SettingsTabLogs" GroupName="SettingsTab" Content="Logs" Style="{StaticResource SegItem}" Margin="-1,0,0,0" Checked="SettingsTab_Checked"/>
+                    </StackPanel>
+                    <Grid>
+                <ScrollViewer x:Name="SettingsGeneralPanel" VerticalScrollBarVisibility="Auto">
+                    <StackPanel Margin="28,22">
+                        <DockPanel>
+                            <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Bottom">
+                                <RadioButton x:Name="ModeDark" GroupName="ThemeMode" Content="Dark" Style="{StaticResource SegItem}" Checked="ThemeMode_Checked"/>
+                                <RadioButton x:Name="ModeLight" GroupName="ThemeMode" Content="Light" Style="{StaticResource SegItem}" Margin="-1,0,0,0" Checked="ThemeMode_Checked"/>
+                                <RadioButton x:Name="ModeSystem" GroupName="ThemeMode" Content="Match Windows" Style="{StaticResource SegItem}" Margin="-1,0,0,0" Checked="ThemeMode_Checked"/>
+                            </StackPanel>
+                            <StackPanel>
+                                <TextBlock Text="Appearance" FontSize="22" FontWeight="SemiBold"/>
+                                <TextBlock Text="Pick one dark and one light theme. The mode decides which is showing." Style="{StaticResource MutedText}" Margin="0,6,0,0"/>
+                            </StackPanel>
+                        </DockPanel>
+
+                        <TextBlock Text="DARK THEMES" Style="{StaticResource Label}" Margin="0,20,0,8"/>
+                        <ItemsControl x:Name="DarkThemeList" ItemTemplate="{StaticResource ThemeCard}">
+                            <ItemsControl.ItemsPanel>
+                                <ItemsPanelTemplate><UniformGrid Columns="5"/></ItemsPanelTemplate>
+                            </ItemsControl.ItemsPanel>
+                        </ItemsControl>
+                        <TextBlock Text="LIGHT THEMES" Style="{StaticResource Label}" Margin="0,18,0,8"/>
+                        <ItemsControl x:Name="LightThemeList" ItemTemplate="{StaticResource ThemeCard}">
+                            <ItemsControl.ItemsPanel>
+                                <ItemsPanelTemplate><UniformGrid Columns="5"/></ItemsPanelTemplate>
+                            </ItemsControl.ItemsPanel>
+                        </ItemsControl>
+
+                        <Border Style="{StaticResource Card}" Margin="0,24,0,0">
+                            <StackPanel>
+                                <TextBlock Text="UPDATES" Style="{StaticResource Label}"/>
+                                <TextBlock x:Name="VersionText" FontFamily="{StaticResource Mono}" FontSize="14" Margin="0,8,0,0"/>
+                                <TextBlock x:Name="UpdateStatusText" Style="{StaticResource MutedText}" TextWrapping="Wrap" Margin="0,6,0,0"/>
+                                <TextBlock x:Name="UpdateSourceText" Style="{StaticResource MutedText}" TextWrapping="Wrap" Margin="0,6,0,0"/>
+                                <CheckBox x:Name="AutoUpdateCheck" Content="Install updates automatically" Foreground="{DynamicResource Fg}" HorizontalAlignment="Left" Margin="0,12,0,0" Checked="AutoUpdate_Changed" Unchecked="AutoUpdate_Changed"/>
+                                <WrapPanel Margin="0,12,0,0">
+                                    <Button x:Name="UpdateCheckButton" Content="Check for updates" Style="{StaticResource BtnOutline}" Click="UpdateCheck_Click" Margin="0,0,8,0"/>
+                                    <Button x:Name="UpdateRestartButton" Content="Restart to update" Style="{StaticResource Btn}" Click="UpdateRestart_Click" Visibility="Collapsed"/>
+                                </WrapPanel>
+                            </StackPanel>
+                        </Border>
+
+                        <Border x:Name="ThisPcCard" Style="{StaticResource Card}" Visibility="Collapsed">
+                            <StackPanel>
+                                <TextBlock Text="THIS PC" Style="{StaticResource Label}"/>
+                                <TextBlock x:Name="ThisPcText" FontFamily="{StaticResource Mono}" TextWrapping="Wrap" Margin="0,8,0,0"/>
+                                <TextBlock Text="Forgetting removes the saved enrollment and operator access from this PC so you can enroll again. It does not revoke the device on the bus; use Admin for that while you still can." Style="{StaticResource MutedText}" TextWrapping="Wrap" Margin="0,8,0,0"/>
+                                <Button Content="Forget this PC" Style="{StaticResource BtnOutline}" Click="ForgetDevice_Click" HorizontalAlignment="Left" Margin="0,12,0,0"/>
+                            </StackPanel>
+                        </Border>
+                    </StackPanel>
+                </ScrollViewer>
+
+                    <Grid x:Name="SettingsLogsPanel" Visibility="Collapsed" Margin="28,16,28,22">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="2*" MinWidth="280"/>
+                            <ColumnDefinition Width="16"/>
+                            <ColumnDefinition Width="3*"/>
+                        </Grid.ColumnDefinitions>
+
+                        <!-- What this app saw: outages, reconnects, restarts -->
+                        <Border Style="{StaticResource Card}" Margin="0" Padding="0">
+                            <DockPanel>
+                                <StackPanel DockPanel.Dock="Top" Margin="20,18,20,12">
+                                    <DockPanel>
+                                        <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+                                            <Button Content="Copy" Style="{StaticResource BtnGhost}" Click="ConnectionLogCopy_Click" Margin="0,-4,6,-4"/>
+                                            <Button Content="Clear" Style="{StaticResource BtnGhost}" Click="ConnectionLogClear_Click" Margin="0,-4,0,-4"/>
+                                        </StackPanel>
+                                        <TextBlock Text="THIS APP'S CONNECTION" Style="{StaticResource Label}"/>
+                                    </DockPanel>
+                                    <TextBlock Text="When this PC lost the bus and when it got it back. Reconnecting is automatic." Style="{StaticResource MutedText}" TextWrapping="Wrap" Margin="0,8,0,0"/>
+                                </StackPanel>
+                                <Grid>
+                                    <ListBox x:Name="ConnectionLogList" ItemContainerStyle="{StaticResource FeedItem}">
+                                        <ListBox.ItemTemplate>
+                                            <DataTemplate>
+                                                <DockPanel Margin="20,9">
+                                                    <Ellipse Width="8" Height="8" VerticalAlignment="Top" Margin="0,5,10,0">
+                                                    <Ellipse.Style>
+                                                        <Style TargetType="Ellipse">
+                                                            <Setter Property="Fill" Value="{DynamicResource Muted}"/>
+                                                            <Style.Triggers>
+                                                                <DataTrigger Binding="{Binding Tone}" Value="Ok"><Setter Property="Fill" Value="{DynamicResource Ok}"/></DataTrigger>
+                                                                <DataTrigger Binding="{Binding Tone}" Value="Warn"><Setter Property="Fill" Value="{DynamicResource Warn}"/></DataTrigger>
+                                                                <DataTrigger Binding="{Binding Tone}" Value="Bad"><Setter Property="Fill" Value="{DynamicResource Bad}"/></DataTrigger>
+                                                            </Style.Triggers>
+                                                        </Style>
+                                                    </Ellipse.Style>
+                                                </Ellipse>
+                                                    <StackPanel>
+                                                        <TextBlock Text="{Binding TimeLabel}" Style="{StaticResource MutedMono}" FontSize="11"/>
+                                                        <TextBlock Text="{Binding Text}" TextWrapping="Wrap" Margin="0,2,0,0"/>
+                                                    </StackPanel>
+                                                </DockPanel>
+                                            </DataTemplate>
+                                        </ListBox.ItemTemplate>
+                                    </ListBox>
+                                    <TextBlock x:Name="ConnectionLogEmpty" Text="Nothing logged yet." Style="{StaticResource MutedText}" HorizontalAlignment="Center" VerticalAlignment="Center" IsHitTestVisible="False"/>
+                                </Grid>
+                            </DockPanel>
+                        </Border>
+
+                        <!-- What the bus itself logged -->
+                        <Border Grid.Column="2" Style="{StaticResource Card}" Margin="0" Padding="0">
+                            <DockPanel>
+                                <StackPanel DockPanel.Dock="Top" Margin="20,18,20,12">
+                                    <DockPanel>
+                                        <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+                                            <Button Content="Copy" Style="{StaticResource BtnGhost}" Click="BusLogCopy_Click" Margin="0,-4,6,-4"/>
+                                            <Button Content="Refresh" Style="{StaticResource BtnGhost}" Click="BusLogRefresh_Click" Margin="0,-4,0,-4"/>
+                                        </StackPanel>
+                                        <TextBlock Text="BUS LOG" Style="{StaticResource Label}"/>
+                                    </DockPanel>
+                                    <TextBlock x:Name="BusLogStatus" Style="{StaticResource MutedText}" TextWrapping="Wrap" Margin="0,8,0,0"/>
+                                    <DockPanel Margin="0,12,0,0">
+                                        <StackPanel DockPanel.Dock="Left" Orientation="Horizontal" Margin="0,0,10,0">
+                                            <RadioButton x:Name="BusLogAll" GroupName="BusLogKind" Content="All" IsChecked="True" Style="{StaticResource SegItem}" Checked="BusLogFilter_Changed"/>
+                                            <RadioButton x:Name="BusLogProblems" GroupName="BusLogKind" Content="Problems" Style="{StaticResource SegItem}" Margin="-1,0,0,0" Checked="BusLogFilter_Changed"/>
+                                        </StackPanel>
+                                        <TextBox x:Name="BusLogFilter" Tag="Filter by event, agent, address…" TextChanged="BusLogFilter_Changed"/>
+                                    </DockPanel>
+                                </StackPanel>
+                                <Grid>
+                                    <ListBox x:Name="BusLogList" ItemContainerStyle="{StaticResource FeedItem}">
+                                        <ListBox.ItemTemplate>
+                                            <DataTemplate>
+                                                <DockPanel Margin="20,8">
+                                                    <Ellipse Width="8" Height="8" VerticalAlignment="Top" Margin="0,5,10,0">
+                                                    <Ellipse.Style>
+                                                        <Style TargetType="Ellipse">
+                                                            <Setter Property="Fill" Value="{DynamicResource Muted}"/>
+                                                            <Style.Triggers>
+                                                                <DataTrigger Binding="{Binding Tone}" Value="Ok"><Setter Property="Fill" Value="{DynamicResource Ok}"/></DataTrigger>
+                                                                <DataTrigger Binding="{Binding Tone}" Value="Warn"><Setter Property="Fill" Value="{DynamicResource Warn}"/></DataTrigger>
+                                                                <DataTrigger Binding="{Binding Tone}" Value="Bad"><Setter Property="Fill" Value="{DynamicResource Bad}"/></DataTrigger>
+                                                            </Style.Triggers>
+                                                        </Style>
+                                                    </Ellipse.Style>
+                                                </Ellipse>
+                                                    <StackPanel>
+                                                        <StackPanel Orientation="Horizontal">
+                                                            <TextBlock Text="{Binding TimeLabel}" Style="{StaticResource MutedMono}" FontSize="11" VerticalAlignment="Center"/>
+                                                            <Border Style="{StaticResource KindBadge}" Margin="10,0,0,0"><TextBlock Text="{Binding SourceLabel}" Style="{StaticResource MutedMono}" FontSize="11"/></Border>
+                                                        </StackPanel>
+                                                        <TextBlock Text="{Binding Event}" FontFamily="{StaticResource Mono}" FontSize="13" TextWrapping="Wrap" Margin="0,3,0,0"/>
+                                                        <TextBlock Text="{Binding Summary}" Style="{StaticResource MutedText}" TextWrapping="Wrap" Margin="0,2,0,0"/>
+                                                    </StackPanel>
+                                                </DockPanel>
+                                            </DataTemplate>
+                                        </ListBox.ItemTemplate>
+                                    </ListBox>
+                                    <TextBlock x:Name="BusLogEmpty" Style="{StaticResource MutedText}" HorizontalAlignment="Center" VerticalAlignment="Center" IsHitTestVisible="False"/>
+                                </Grid>
+                            </DockPanel>
+                        </Border>
+                    </Grid>
+                    </Grid>
+                </DockPanel>
+            </Grid>
+        </Grid>
+
+        <!-- Notice bar: non-modal errors and status -->
+        <Border x:Name="NoticeBar" Grid.Row="2" Background="{DynamicResource S1}" BorderBrush="{DynamicResource Warn}" BorderThickness="0,2,0,0" Padding="16,10" Visibility="Collapsed">
+            <DockPanel>
+                <Button DockPanel.Dock="Right" Content="Dismiss" Style="{StaticResource BtnGhost}" Click="NoticeDismiss_Click" Margin="12,0,0,0" VerticalAlignment="Top"/>
+                <Button x:Name="NoticeActionButton" DockPanel.Dock="Right" Style="{StaticResource BtnOutline}" Padding="12,4" Margin="12,0,0,0" VerticalAlignment="Top" Visibility="Collapsed" Click="NoticeAction_Click"/>
+                <TextBlock x:Name="NoticeText" TextWrapping="Wrap" VerticalAlignment="Center"/>
+            </DockPanel>
+        </Border>
+
+        <!-- Quick find overlay -->
+        <Grid x:Name="QuickFindOverlay" Grid.Row="0" Grid.RowSpan="3" Visibility="Collapsed">
+            <Border Background="{DynamicResource Scrim}" MouseLeftButtonDown="QuickFindScrim_MouseDown"/>
+            <Border Width="720" HorizontalAlignment="Center" VerticalAlignment="Top" Margin="0,92,0,0" Background="{DynamicResource S1}" BorderBrush="{DynamicResource Line}" BorderThickness="1" CornerRadius="8">
+                <StackPanel>
+                    <TextBox x:Name="QuickFindBox" Style="{StaticResource BareTextBox}" FontSize="18" Padding="18,14" Tag="Find an agent or a message" TextChanged="QuickFindBox_TextChanged" PreviewKeyDown="QuickFindBox_PreviewKeyDown"/>
+                    <Border Height="1" Background="{DynamicResource Line}"/>
+                    <DockPanel Margin="18,10,18,6">
+                        <TextBlock DockPanel.Dock="Right" Text="Narrow with from:name or in:#channel" Style="{StaticResource MutedText}" VerticalAlignment="Center"/>
+                        <StackPanel Orientation="Horizontal">
+                            <RadioButton x:Name="FindScopeAll" GroupName="FindScope" Content="All" IsChecked="True" Style="{StaticResource SegItem}" Checked="FindScope_Checked"/>
+                            <RadioButton x:Name="FindScopeAgents" GroupName="FindScope" Content="Agents" Style="{StaticResource SegItem}" Margin="-1,0,0,0" Checked="FindScope_Checked"/>
+                            <RadioButton x:Name="FindScopeMessages" GroupName="FindScope" Content="Messages" Style="{StaticResource SegItem}" Margin="-1,0,0,0" Checked="FindScope_Checked"/>
+                        </StackPanel>
+                    </DockPanel>
+                    <ListBox x:Name="QuickFindList" ItemContainerStyle="{StaticResource RowItem}" MaxHeight="430" Focusable="False" ScrollViewer.CanContentScroll="False" PreviewMouseLeftButtonDown="QuickFindList_PreviewMouseLeftButtonDown">
+                        <ListBox.ItemTemplate>
+                            <DataTemplate>
+                                <Grid Margin="14,9,16,9">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="112"/>
+                                        <ColumnDefinition Width="*"/>
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Text="{Binding Lead}" Style="{StaticResource MutedMono}" VerticalAlignment="Top" Margin="0,1,0,0"/>
+                                    <StackPanel Grid.Column="1">
+                                        <TextBlock local:RichText.Text="{Binding Title}" local:RichText.Highlight="{Binding Highlight}" FontFamily="{StaticResource Mono}" FontWeight="Bold" Foreground="{DynamicResource AccentText}"/>
+                                        <TextBlock local:RichText.Text="{Binding Detail}" local:RichText.Highlight="{Binding Highlight}" TextTrimming="CharacterEllipsis" MaxHeight="40" TextWrapping="Wrap" Margin="0,3,0,0"/>
+                                    </StackPanel>
+                                </Grid>
+                            </DataTemplate>
+                        </ListBox.ItemTemplate>
+                    </ListBox>
+                    <TextBlock x:Name="QuickFindEmpty" Style="{StaticResource MutedText}" Margin="18,14" TextWrapping="Wrap"/>
+                    <Border Background="{DynamicResource Bg}" BorderBrush="{DynamicResource Line}" BorderThickness="0,1,0,0" CornerRadius="0,0,8,8" Padding="18,10">
+                        <TextBlock Text="Up and Down move.  Enter opens.  Tab changes scope.  Esc closes." Style="{StaticResource MutedText}"/>
+                    </Border>
+                </StackPanel>
+            </Border>
+        </Grid>
+    </Grid>
+</Window>

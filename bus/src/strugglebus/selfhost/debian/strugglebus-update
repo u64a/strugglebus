@@ -1,0 +1,171 @@
+#!/bin/bash
+# Keeps this Strugglebus up to date from the public release page.
+#
+#   strugglebus-update status   show the setting and the result of the last check
+#   strugglebus-update on       turn automatic updates on
+#   strugglebus-update off      turn automatic updates off
+#   strugglebus-update now      check and install now, whatever the setting
+#   strugglebus-update check    what the daily timer runs: installs only when on
+#
+# The same on/off setting is the button in the console under
+# Administration > Updates.
+set -euo pipefail
+umask 022
+
+# Everything is inside main so the whole file is read before any of it runs:
+# an update replaces this file while it is running.
+main() {
+  local command="${1:-status}"
+  local state=/var/lib/strugglebus-update
+  local switch=/var/lib/strugglebus/selfhost/auto-update
+  local status=/var/lib/strugglebus/selfhost/update-status.json
+  local fetcher=/usr/local/lib/strugglebus/fetch_release.py
+  local program=/opt/strugglebus/venv/bin/strugglebus
+  local -a source_options=()
+
+  say() { echo "strugglebus-update: $*"; }
+  fail() { echo "strugglebus-update: ERROR: $*" >&2; exit 1; }
+
+  [ "$(id -u)" = "0" ] || fail "run this as root (sudo strugglebus-update $command)."
+  # Optional, root-owned: RELEASE_API and RELEASE_DOWNLOAD_PREFIX for a mirror.
+  if [ -r /etc/strugglebus/update.conf ]; then
+    # shellcheck disable=SC1091
+    . /etc/strugglebus/update.conf
+    [ -z "${RELEASE_API:-}" ] || source_options+=(--api "$RELEASE_API")
+    [ -z "${RELEASE_DOWNLOAD_PREFIX:-}" ] || source_options+=(--download-prefix "$RELEASE_DOWNLOAD_PREFIX")
+  fi
+
+  setting() {
+    # The console writes this file as the service account: treat it as data.
+    local value=""
+    if [ -f "$switch" ] && [ ! -L "$switch" ]; then
+      value="$(head -c 8 "$switch" 2>/dev/null | tr -d '[:space:]')"
+    fi
+    if [ "$value" = "off" ]; then echo off; else echo on; fi
+  }
+
+  set_switch() {
+    runuser -u strugglebus -- /bin/sh -c '
+      umask 077
+      mkdir -p "$(dirname "$1")" && printf "%s\n" "$2" > "$1.new" && mv "$1.new" "$1"
+    ' sh "$switch" "$1" || fail "could not save the setting in $switch."
+  }
+
+  record() {
+    # record <result> <installed> <latest> <detail>; the console shows it.
+    # Written as the service account, which owns that folder.
+    runuser -u strugglebus -- python3 - "$status" "$(setting)" "$@" <<'PY' || true
+import json, os, sys, time
+path, setting, result, installed, latest, detail = sys.argv[1:7]
+record = {
+    "checked_at": int(time.time()), "auto_update": setting, "result": result,
+    "installed_version": installed, "latest_version": latest, "detail": detail[:500],
+}
+with open(path + ".new", "w", encoding="utf-8") as stream:
+    json.dump(record, stream, indent=2)
+    stream.write("\n")
+os.replace(path + ".new", path)
+PY
+  }
+
+  installed_version() {
+    "$program" --version 2>/dev/null | awk '{print $NF}'
+  }
+
+  show() {
+    echo "Automatic updates : $(setting)"
+    echo "Installed version : $(installed_version || echo unknown)"
+    if [ -s "$status" ] && [ ! -L "$status" ]; then
+      python3 - "$status" <<'PY' || echo "Last check        : unreadable"
+import json, sys, time
+record = json.loads(open(sys.argv[1], "rb").read(16384))
+when = time.strftime("%Y-%m-%d %H:%M %Z", time.localtime(record.get("checked_at", 0)))
+print(f"Last check        : {when} - {record.get('result', 'unknown')}")
+if record.get("latest_version"):
+    print(f"Newest release    : {record['latest_version']}")
+if record.get("detail"):
+    print(f"Detail            : {record['detail']}")
+PY
+    else
+      echo "Last check        : never"
+    fi
+    echo "Next check        : $(systemctl show strugglebus-update.timer --property=NextElapseUSecRealtime --value 2>/dev/null || echo unknown)"
+  }
+
+  update() {
+    local mode="$1" installed work answer code word latest
+    install -d -m 0755 "$state"
+    exec 9>"$state/lock"
+    flock -n 9 || fail "another update is already running."
+
+    installed="$(installed_version)" || true
+    [ -n "$installed" ] || fail "Strugglebus is not installed in /opt/strugglebus. Run the installer first."
+    if [ "$mode" = "check" ] && [ "$(setting)" = "off" ]; then
+      record off "$installed" "" "Automatic updates are turned off."
+      say "automatic updates are turned off; nothing was checked. 'strugglebus-update now' updates once."
+      return 0
+    fi
+
+    work="$state/release.new"
+    rm -rf "$work"
+    set +e
+    answer="$(python3 "$fetcher" --installed "$installed" --into "$work" "${source_options[@]}" 2>"$state/fetch.err")"
+    code=$?
+    set -e
+    if [ "$code" != "0" ]; then
+      rm -rf "$work"
+      if [ "$code" = "3" ]; then
+        record unreachable "$installed" "" "The release page could not be reached. This will be tried again at the next check."
+      else
+        record invalid "$installed" "" "$(tail -n 1 "$state/fetch.err")"
+      fi
+      cat "$state/fetch.err" >&2
+      fail "could not get the newest release; nothing was changed."
+    fi
+    read -r word latest <<<"$answer"
+    if [ "$word" = "current" ]; then
+      record current "$installed" "$latest" "This is the newest release."
+      say "version $installed is the newest release."
+      return 0
+    fi
+    if [ "$mode" = "check" ] && [ "$(cat "$state/failed-version" 2>/dev/null)" = "$latest" ]; then
+      rm -rf "$work"
+      record failed "$installed" "$latest" "Version $latest did not install last time and is not retried automatically. Run 'strugglebus-update now' on the bus machine to try again."
+      say "version $latest did not install last time; not retrying automatically. Run 'strugglebus-update now' to try again."
+      return 0
+    fi
+
+    say "installing version $latest (currently $installed)"
+    (umask 077 && : > "$state/last-install.log")
+    if bash "$work/_wheel/strugglebus/selfhost/debian/install.sh" --release-dir "$work" \
+        >>"$state/last-install.log" 2>&1; then
+      rm -f "$state/failed-version"
+      rm -rf "$state/release"
+      mv "$work" "$state/release"
+      record updated "$latest" "$latest" "Updated from $installed to $latest."
+      say "updated from $installed to $latest."
+      return 0
+    fi
+    echo "$latest" > "$state/failed-version"
+    rm -rf "$work"
+    record failed "$(installed_version || echo "$installed")" "$latest" \
+      "$(grep 'ERROR:' "$state/last-install.log" | tail -n 1 | sed -e 's/^strugglebus-install: ERROR: //' -e 's/ The lines above.*$//')"
+    tail -n 25 "$state/last-install.log" >&2
+    fail "version $latest could not be installed. The full log is $state/last-install.log"
+  }
+
+  case "$command" in
+    status) show ;;
+    on|off)
+      set_switch "$command"
+      say "automatic updates are now $command."
+      [ "$command" = "off" ] || say "the bus checks for a new release once a day; 'strugglebus-update now' checks immediately."
+      ;;
+    check|now) update "$command" ;;
+    -h|--help|help) sed -n '2,11p' "$0" | sed 's/^# \{0,1\}//' ;;
+    *) fail "unknown command '$command'. Use: status, on, off, now." ;;
+  esac
+}
+
+main "$@"
+exit 0

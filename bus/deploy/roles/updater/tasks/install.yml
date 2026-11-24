@@ -1,0 +1,204 @@
+---
+- name: Inspect worker-only installation ancestry and the reserved exact version
+  ansible.builtin.stat:
+    path: "{{ item }}"
+    follow: false
+  loop:
+    - /opt
+    - /opt/strugglebus-updater
+    - /opt/strugglebus-updater/releases
+    - "{{ updater_release_root }}"
+  register: updater_code_directories
+
+- name: Refuse unsafe existing worker installation directories
+  ansible.builtin.assert:
+    that:
+      - >-
+        not item.stat.exists or (
+          (item.stat.isdir | default(false))
+          and not (item.stat.islnk | default(true))
+          and item.stat.uid | default(-1) == 0
+          and not (item.stat.wgrp | default(true))
+          and not (item.stat.woth | default(true))
+        )
+  loop: "{{ updater_code_directories.results }}"
+
+- name: Bind exact worker-only installation provenance
+  ansible.builtin.set_fact:
+    updater_install_identity: >-
+      {{ {'version': 1, 'package_version': strugglebus_updater_bootstrap_version,
+          'source_commit': strugglebus_updater_source_commit,
+          'source_tree': strugglebus_updater_source_tree,
+          'manifest_sha256': strugglebus_updater_manifest_sha256,
+          'wheel_sha256': strugglebus_wheel_sha256,
+          'requirements_lock_sha256': strugglebus_requirements_lock_sha256} | to_json }}
+
+- name: Inspect existing isolated worker provenance
+  ansible.builtin.stat:
+    path: "{{ updater_release_root }}/.installed"
+    follow: false
+    checksum_algorithm: sha256
+  register: updater_installed_marker
+
+- name: Refuse partial or differently pinned worker installations rather than overwriting them
+  ansible.builtin.assert:
+    that:
+      - updater_installed_marker.stat.isreg | default(false)
+      - not (updater_installed_marker.stat.islnk | default(true))
+      - updater_installed_marker.stat.uid | default(-1) == 0
+      - updater_installed_marker.stat.nlink | default(0) == 1
+      - updater_installed_marker.stat.mode | default('') == '0644'
+      - updater_installed_marker.stat.checksum == updater_install_identity | hash('sha256')
+    fail_msg: Existing worker code must be complete and match the exact approved provenance; recover it separately.
+  when: updater_code_directories.results[3].stat.exists
+
+- name: Inspect the already installed qualified Python and uv tools
+  ansible.builtin.stat:
+    path: "{{ item }}"
+    follow: false
+    checksum_algorithm: sha256
+  loop: [/usr/bin/python3.13, /usr/local/bin/uv]
+  register: updater_install_tools
+
+- name: Require immutable qualified installation tools without fetching replacements
+  ansible.builtin.assert:
+    that:
+      - item.stat.isreg | default(false)
+      - not (item.stat.islnk | default(true))
+      - item.stat.uid | default(-1) == 0
+      - item.stat.nlink | default(0) == 1
+      - not (item.stat.wgrp | default(true))
+      - not (item.stat.woth | default(true))
+      - item.stat.executable | default(false)
+  loop: "{{ updater_install_tools.results }}"
+
+- name: Bind uv to the existing deployment tool provenance
+  ansible.builtin.assert:
+    that:
+      - strugglebus_uv_sha256 is match('^[0-9a-f]{64}$')
+      - updater_install_tools.results[1].stat.checksum == strugglebus_uv_sha256
+
+- name: Create only the missing protected worker release parents
+  ansible.builtin.file:
+    path: "{{ item.item }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+    follow: false
+  loop: "{{ updater_code_directories.results }}"
+  when: not item.stat.exists
+
+- name: Copy approved worker assets without importing a checkout or candidate helper
+  ansible.builtin.copy:
+    src: "{{ item.source }}"
+    dest: "{{ updater_release_root }}/{{ item.name }}"
+    owner: root
+    group: root
+    mode: "0644"
+  loop:
+    - {source: "{{ strugglebus_wheel_src }}", name: "{{ strugglebus_wheel_src | basename }}"}
+    - {source: "{{ strugglebus_requirements_lock_src }}", name: requirements.lock}
+  when: not updater_installed_marker.stat.exists
+
+- name: Inspect isolated worker artifact hashes even on an idempotent rerun
+  ansible.builtin.stat:
+    path: "{{ updater_release_root }}/{{ item.name }}"
+    follow: false
+    checksum_algorithm: sha256
+  loop:
+    - {name: "{{ strugglebus_wheel_src | basename }}", sha256: "{{ strugglebus_wheel_sha256 }}"}
+    - {name: requirements.lock, sha256: "{{ strugglebus_requirements_lock_sha256 }}"}
+  register: updater_uploaded_assets
+
+- name: Refuse any indirect or changed installation artifact before execution
+  ansible.builtin.assert:
+    that:
+      - item.stat.isreg | default(false)
+      - not (item.stat.islnk | default(true))
+      - item.stat.uid | default(-1) == 0
+      - item.stat.nlink | default(0) == 1
+      - item.stat.mode | default('') == '0644'
+      - item.stat.checksum == item.item.sha256
+  loop: "{{ updater_uploaded_assets.results }}"
+
+- name: Create the dedicated versioned worker virtual environment from trusted Python
+  ansible.builtin.command:
+    argv: [/usr/bin/python3.13, -I, -m, venv, --copies, "{{ updater_release_root }}/venv"]
+  when: not updater_installed_marker.stat.exists
+  timeout: 120
+  changed_when: true
+
+- name: Install only hash-locked binary dependencies without source builds
+  ansible.builtin.command:
+    argv:
+      - /usr/local/bin/uv
+      - --no-config
+      - pip
+      - sync
+      - --python
+      - "{{ updater_release_root }}/venv/bin/python"
+      - --require-hashes
+      - --only-binary
+      - ":all:"
+      - "{{ updater_release_root }}/requirements.lock"
+  environment:
+    UV_NO_CACHE: "1"
+    UV_PYTHON_DOWNLOADS: never
+    UV_LINK_MODE: copy
+  when: not updater_installed_marker.stat.exists
+  timeout: 600
+  changed_when: true
+
+- name: Install only the approved worker wheel without dependency resolution
+  ansible.builtin.command:
+    argv:
+      - /usr/local/bin/uv
+      - --no-config
+      - pip
+      - install
+      - --python
+      - "{{ updater_release_root }}/venv/bin/python"
+      - --no-deps
+      - --no-index
+      - --no-build
+      - "{{ updater_release_root }}/{{ strugglebus_wheel_src | basename }}"
+  environment:
+    UV_NO_CACHE: "1"
+    UV_PYTHON_DOWNLOADS: never
+    UV_LINK_MODE: copy
+  when: not updater_installed_marker.stat.exists
+  timeout: 120
+  changed_when: true
+
+- name: Set readable immutable permissions only on this newly installed worker environment
+  ansible.builtin.file:
+    path: "{{ updater_release_root }}/venv"
+    state: directory
+    recurse: true
+    follow: false
+    owner: root
+    group: root
+    mode: "u=rwX,go=rX"
+  when: not updater_installed_marker.stat.exists
+
+- name: Verify complete installed code ownership before running any worker command
+  ansible.builtin.command:
+    argv:
+      - /usr/bin/python3.13
+      - -I
+      - /usr/local/libexec/strugglebus-updater-preflight
+      - code
+      - --release-root
+      - "{{ updater_release_root }}"
+  changed_when: false
+  timeout: 30
+
+- name: Record successful immutable worker-only installation
+  ansible.builtin.copy:
+    content: "{{ updater_install_identity }}"
+    dest: "{{ updater_release_root }}/.installed"
+    owner: root
+    group: root
+    mode: "0644"
+  when: not updater_installed_marker.stat.exists

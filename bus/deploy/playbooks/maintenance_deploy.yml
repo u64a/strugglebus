@@ -1,0 +1,43 @@
+---
+# Single-command maintenance-window upgrade.
+#
+#   ansible-playbook -i "$PROTECTED_INVENTORY" deploy/playbooks/maintenance_deploy.yml \
+#     --check --diff -e @/protected/maintenance-inputs.json
+#
+# The protected JSON inputs contain the exact version/artifact paths/digests,
+# deploy-<version> approval and the operator's truthful typed backup decision.
+# See docs/DEPLOYMENT.md; never assert external backup existence without proof.
+#
+# Rerun without --check to perform the window. Check mode validates the approval,
+# release identity, digests and immutable state without stopping the service,
+# taking a backup, or switching releases. Candidate configuration/runtime
+# validation and snapshot capacity are deferred until the actual maintenance run.
+- name: Upgrade Strugglebus in a planned maintenance window
+  hosts: strugglebus_guests
+  become: true
+  gather_facts: false
+  pre_tasks:
+    - name: Require exact maintenance bindings
+      ansible.builtin.assert:
+        that:
+          - strugglebus_release_version is defined
+          - strugglebus_maintenance_approval is defined
+          - >-
+            strugglebus_maintenance_approval
+            == 'deploy-' + strugglebus_release_version
+          - strugglebus_caddy_ca_path is defined
+          - strugglebus_caddy_ca_path | length > 0
+          - strugglebus_domain is defined
+          - strugglebus_domain | length > 0
+          - >-
+            strugglebus_health_url
+            == 'https://' + strugglebus_effective_domain + '/healthz'
+          - strugglebus_bind_host in ['127.0.0.1', '::1']
+        fail_msg: >-
+          A maintenance upgrade requires the exact candidate version, a typed
+          approval matching that version, the TLS-verified canonical HTTPS
+          endpoint, and a loopback-only application bind.
+  roles:
+    - role: release
+      vars:
+        strugglebus_release_action: maintenance

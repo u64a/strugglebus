@@ -1,0 +1,587 @@
+---
+- name: Render and exercise deployment templates offline
+  hosts: localhost
+  gather_facts: false
+  vars_files:
+    - ../inventory/example/group_vars/all.yml
+  vars:
+    systemd_expected_environment_common:
+      - STRUGGLEBUS_ADMIN_CREDENTIAL_PATH=%d/admin-token
+      - "STRUGGLEBUS_DATA_DIR={{ strugglebus_data_dir }}"
+      - "STRUGGLEBUS_RUNTIME_DIR={{ strugglebus_runtime_dir }}"
+      - "STRUGGLEBUS_BACKUP_DIR={{ strugglebus_backup_dir }}"
+      - "STRUGGLEBUS_DATABASE_PATH={{ strugglebus_database_path }}"
+      - "STRUGGLEBUS_BIND_HOST={{ strugglebus_bind_host }}"
+      - "STRUGGLEBUS_BIND_PORT={{ strugglebus_bind_port }}"
+      - "STRUGGLEBUS_MAX_MESSAGE_BYTES={{ strugglebus_max_message_bytes }}"
+      - "STRUGGLEBUS_MAX_REQUEST_BODY_BYTES={{ strugglebus_max_request_body_bytes }}"
+      - "STRUGGLEBUS_MAX_METADATA_BYTES={{ strugglebus_max_metadata_bytes }}"
+      - "STRUGGLEBUS_MAX_REST_REQUEST_BODY_BYTES={{ strugglebus_max_rest_request_body_bytes }}"
+      - "STRUGGLEBUS_AUTHENTICATED_REQUESTS_PER_MINUTE={{ strugglebus_authenticated_requests_per_minute }}"
+      - "STRUGGLEBUS_UNAUTHENTICATED_REQUESTS_PER_MINUTE={{ strugglebus_unauthenticated_requests_per_minute }}"
+      - "STRUGGLEBUS_SQLITE_BUSY_TIMEOUT_MS={{ strugglebus_sqlite_busy_timeout_ms }}"
+      - "STRUGGLEBUS_MAX_CHANNELS={{ strugglebus_max_channels }}"
+      - "STRUGGLEBUS_SSE_BATCH_SIZE={{ strugglebus_sse_batch_size }}"
+      - "STRUGGLEBUS_SSE_POLL_INTERVAL_MS={{ strugglebus_sse_poll_interval_ms }}"
+      - "STRUGGLEBUS_SSE_HEARTBEAT_SECONDS={{ strugglebus_sse_heartbeat_seconds }}"
+      - "STRUGGLEBUS_SSE_CONNECTION_SECONDS={{ strugglebus_sse_connection_seconds }}"
+      - "STRUGGLEBUS_SSE_MAX_CONNECTIONS_PER_AGENT={{ strugglebus_sse_max_connections_per_agent }}"
+      - "STRUGGLEBUS_HUMAN_ACTIVITY_LIMIT={{ strugglebus_human_activity_limit }}"
+      - "STRUGGLEBUS_TRUSTED_PROXY_SOURCES={{ strugglebus_trusted_proxy_sources }}"
+      - STRUGGLEBUS_ROE_ENFORCEMENT_MODE=observe
+      - STRUGGLEBUS_MAX_ACTIVE_CREDENTIALS_PER_AGENT=2
+      - STRUGGLEBUS_MAX_PENDING_CREDENTIALS_PER_AGENT=1
+      - STRUGGLEBUS_CREDENTIAL_PENDING_SECONDS=900
+      - STRUGGLEBUS_SELF_ROTATIONS_PER_WINDOW=2
+      - STRUGGLEBUS_SELF_ROTATION_WINDOW_SECONDS=86400
+      - STRUGGLEBUS_ENROLLMENT_TTL_SECONDS=900
+      - STRUGGLEBUS_MAX_ENROLLMENT_USES=1
+  tasks:
+    - name: Create a temporary validation directory
+      ansible.builtin.tempfile:
+        state: directory
+        prefix: strugglebus-deploy-
+      register: validation_dir
+
+    - name: Inspect a synthetic controller-provided step artifact
+      ansible.builtin.stat:
+        path: "{{ playbook_dir }}/fixtures/lan-ca/strugglebus-server.tpl"
+        checksum_algorithm: sha256
+      register: synthetic_step_source
+
+    - name: Copy the synthetic step artifact without SHA-1 misuse
+      ansible.builtin.copy:
+        src: fixtures/lan-ca/strugglebus-server.tpl
+        dest: "{{ validation_dir.path }}/step"
+        mode: "0755"
+
+    - name: Inspect the copied synthetic step artifact
+      ansible.builtin.stat:
+        path: "{{ validation_dir.path }}/step"
+        checksum_algorithm: sha256
+      register: synthetic_step_installed
+
+    - name: Re-copy the synthetic step artifact idempotently
+      ansible.builtin.copy:
+        src: fixtures/lan-ca/strugglebus-server.tpl
+        dest: "{{ validation_dir.path }}/step"
+        mode: "0755"
+      register: idempotent_step_copy
+
+    - name: Require exact and stable synthetic step installation
+      ansible.builtin.assert:
+        that:
+          - synthetic_step_source.stat.checksum == synthetic_step_installed.stat.checksum
+          - not idempotent_step_copy.changed
+
+    - name: Render deployment templates
+      ansible.builtin.template:
+        src: "{{ item.src }}"
+        dest: "{{ validation_dir.path }}/{{ item.dest }}"
+        mode: "{{ item.mode }}"
+      loop:
+        - src: ../roles/caddy/templates/Caddyfile.j2
+          dest: Caddyfile
+          mode: "0600"
+        - src: ../roles/caddy/templates/strugglebus-runtime.conf.j2
+          dest: strugglebus-runtime.conf
+          mode: "0600"
+        - src: ../roles/systemd/templates/strugglebus.service.j2
+          dest: strugglebus.service
+          mode: "0600"
+        - src: ../roles/systemd/templates/strugglebus-backup.service.j2
+          dest: strugglebus-backup.service
+          mode: "0600"
+        - src: ../roles/systemd/templates/strugglebus-backup.timer.j2
+          dest: strugglebus-backup.timer
+          mode: "0600"
+        - src: ../roles/systemd/templates/sqlite_backup.py.j2
+          dest: sqlite_backup.py
+          mode: "0700"
+        - src: ../roles/systemd/templates/strugglebus-operator.py.j2
+          dest: strugglebus-operator.py
+          mode: "0700"
+        - src: ../roles/lan_ca/templates/strugglebus-renew.env.j2
+          dest: strugglebus-renew.env
+          mode: "0600"
+        - src: ../roles/lan_ca/templates/strugglebus-cert-renew.service.j2
+          dest: strugglebus-cert-renew.service
+          mode: "0600"
+        - src: ../roles/lan_ca/templates/strugglebus-cert-renew.timer.j2
+          dest: strugglebus-cert-renew.timer
+          mode: "0600"
+        - src: ../roles/lan_ca/templates/strugglebus-cert-expiry.service.j2
+          dest: strugglebus-cert-expiry.service
+          mode: "0600"
+        - src: ../roles/lan_ca/templates/strugglebus-cert-expiry.timer.j2
+          dest: strugglebus-cert-expiry.timer
+          mode: "0600"
+
+    - name: Render the external dual-host Caddy configuration
+      ansible.builtin.template:
+        src: ../roles/caddy/templates/Caddyfile.j2
+        dest: "{{ validation_dir.path }}/Caddyfile.external"
+        mode: "0600"
+      vars:
+        strugglebus_tls_mode: external
+
+    - name: Render the dedicated external-CA-only Caddy configuration
+      ansible.builtin.template:
+        src: ../roles/caddy/templates/Caddyfile.j2
+        dest: "{{ validation_dir.path }}/Caddyfile.external-only"
+        mode: "0600"
+      vars:
+        strugglebus_tls_mode: external
+        strugglebus_external_tls_legacy_compatibility_site: false
+
+    - name: Render the external application service
+      ansible.builtin.template:
+        src: ../roles/systemd/templates/strugglebus.service.j2
+        dest: "{{ validation_dir.path }}/strugglebus.external.service"
+        mode: "0600"
+      vars:
+        strugglebus_tls_mode: external
+        strugglebus_effective_domain: "{{ strugglebus_external_domain }}"
+
+    - name: Render the dedicated external-CA-only application service
+      ansible.builtin.template:
+        src: ../roles/systemd/templates/strugglebus.service.j2
+        dest: "{{ validation_dir.path }}/strugglebus.external-only.service"
+        mode: "0600"
+      vars:
+        strugglebus_tls_mode: external
+        strugglebus_effective_domain: "{{ strugglebus_external_domain }}"
+        strugglebus_external_tls_legacy_compatibility_site: false
+
+    - name: Render explicitly requested candidate-only settings
+      ansible.builtin.template:
+        src: ../roles/systemd/templates/strugglebus.service.j2
+        dest: "{{ validation_dir.path }}/strugglebus.candidate.service"
+        mode: "0600"
+      vars:
+        strugglebus_orientation_count_cap: 500
+        strugglebus_orientation_channel_cap: 50
+        strugglebus_orientation_candidate_limit: 4096
+        strugglebus_catch_up_candidate_limit: 4096
+        strugglebus_catch_up_drain_ttl_seconds: 300
+        strugglebus_catch_up_max_drains: 256
+        strugglebus_catch_up_max_drains_per_agent: 16
+        strugglebus_liveness_refresh_seconds: 60
+        strugglebus_shutdown_grace_seconds: 12
+        strugglebus_mobile_confirmation_seconds: 90
+        strugglebus_mobile_grant_device_per_minute: 2
+        strugglebus_mobile_grant_global_per_minute: 8
+        strugglebus_spn_package_ttl_seconds: 240
+        strugglebus_spn_max_outstanding_packages: 24
+        strugglebus_spn_issues_per_minute: 9
+        strugglebus_updater_socket_path: /run/strugglebus-updater/worker.sock
+        strugglebus_maintenance_socket_path: /run/strugglebus-maintenance/control.sock
+        strugglebus_updater_confirm_session_per_minute: 3
+        strugglebus_updater_confirm_global_per_minute: 6
+        strugglebus_updater_review_seconds: 300
+        strugglebus_updater_review_tickets: 8
+        strugglebus_satellite_hostname: sb-gw.example.cloudapp.azure.com
+        strugglebus_satellite_port: 8443
+        strugglebus_satellite_gateway_wg_address: 10.99.0.1
+        strugglebus_satellite_ca_cert_path: /etc/strugglebus-satellite/ca.crt
+        strugglebus_satellite_cert_days: 14
+
+    - name: Render explicitly requested operator authority and bounds
+      ansible.builtin.template:
+        src: ../roles/systemd/templates/strugglebus.service.j2
+        dest: "{{ validation_dir.path }}/strugglebus.operator.service"
+        mode: "0600"
+      vars:
+        strugglebus_operator_password_source: /synthetic/credentials/operator-password
+        strugglebus_operator_session_seconds: 900
+        strugglebus_operator_session_idle_seconds: 600
+        strugglebus_operator_max_sessions: 16
+        strugglebus_operator_login_source_per_minute: 5
+        strugglebus_operator_login_global_per_minute: 20
+        strugglebus_operator_password_workers: 2
+        strugglebus_operator_form_bytes: 8192
+        strugglebus_operator_form_timeout_seconds: 10
+        strugglebus_reconnect_grant_seconds: 900
+        strugglebus_reconnect_max_grants: 256
+        strugglebus_reconnect_issue_session_per_minute: 5
+        strugglebus_reconnect_issue_global_per_minute: 20
+        strugglebus_reconnect_redeem_source_per_minute: 10
+        strugglebus_reconnect_redeem_global_per_minute: 60
+        strugglebus_mobile_enrollment_seconds: 180
+        strugglebus_mobile_enroll_session_per_minute: 5
+        strugglebus_mobile_enroll_global_per_minute: 20
+
+    - name: Inspect the rendered emergency command without starting a service
+      ansible.builtin.command:
+        argv:
+          - "{{ ansible_playbook_python }}"
+          - -I
+          - -c
+          - >-
+            import runpy, sys;
+            namespace = runpy.run_path(sys.argv[1], run_name="operator_fixture");
+            command = namespace["command"]("/synthetic/operator-lease");
+            valid = command[0] == "/usr/bin/systemd-run"
+            and command[-2:] == ["operator", "emergency"]
+            and "--property=User=strugglebus" in command
+            and "--property=RestrictAddressFamilies=AF_UNIX" in command
+            and any(value.startswith("--property=RuntimeDirectory=") for value in command);
+            sys.exit(0 if valid else "invalid rendered operator command")
+          - "{{ validation_dir.path }}/strugglebus-operator.py"
+      changed_when: false
+
+    - name: Validate rendered application service environments
+      ansible.builtin.command:
+        argv: >-
+          {{
+            [
+              ansible_playbook_python,
+              playbook_dir ~ '/systemd_render_unit.py',
+              item.path
+            ]
+            + systemd_expected_environment_common
+            + item.expected
+          }}
+      loop:
+        - path: "{{ validation_dir.path }}/strugglebus.operator.service"
+          expected:
+            - STRUGGLEBUS_SATELLITE_HOSTNAME=
+            - STRUGGLEBUS_SATELLITE_GATEWAY_WG_ADDRESS=
+            - "STRUGGLEBUS_PUBLIC_BASE_URL=https://{{ strugglebus_domain }}"
+            - "STRUGGLEBUS_ALLOWED_HOSTS={{ strugglebus_domain }},{{ strugglebus_domain }}:*,127.0.0.1:*,localhost:*,[::1]:*"
+            - "STRUGGLEBUS_ALLOWED_ORIGINS=https://{{ strugglebus_domain }}"
+            - STRUGGLEBUS_CA_BUNDLE_PATH=
+            - STRUGGLEBUS_CA_ROOT_SHA256=
+            - STRUGGLEBUS_OPERATOR_CREDENTIAL_PATH=%d/operator-password
+            - STRUGGLEBUS_OPERATOR_SESSION_SECONDS=900
+            - STRUGGLEBUS_OPERATOR_SESSION_IDLE_SECONDS=600
+            - STRUGGLEBUS_OPERATOR_MAX_SESSIONS=16
+            - STRUGGLEBUS_OPERATOR_LOGIN_SOURCE_PER_MINUTE=5
+            - STRUGGLEBUS_OPERATOR_LOGIN_GLOBAL_PER_MINUTE=20
+            - STRUGGLEBUS_OPERATOR_PASSWORD_WORKERS=2
+            - STRUGGLEBUS_OPERATOR_FORM_BYTES=8192
+            - STRUGGLEBUS_OPERATOR_FORM_TIMEOUT_SECONDS=10
+            - STRUGGLEBUS_RECONNECT_GRANT_SECONDS=900
+            - STRUGGLEBUS_RECONNECT_MAX_GRANTS=256
+            - STRUGGLEBUS_RECONNECT_ISSUE_SESSION_PER_MINUTE=5
+            - STRUGGLEBUS_RECONNECT_ISSUE_GLOBAL_PER_MINUTE=20
+            - STRUGGLEBUS_RECONNECT_REDEEM_SOURCE_PER_MINUTE=10
+            - STRUGGLEBUS_RECONNECT_REDEEM_GLOBAL_PER_MINUTE=60
+            - STRUGGLEBUS_MOBILE_ENROLLMENT_SECONDS=180
+            - STRUGGLEBUS_MOBILE_ENROLL_SESSION_PER_MINUTE=5
+            - STRUGGLEBUS_MOBILE_ENROLL_GLOBAL_PER_MINUTE=20
+        - path: "{{ validation_dir.path }}/strugglebus.candidate.service"
+          expected:
+            - "STRUGGLEBUS_PUBLIC_BASE_URL=https://{{ strugglebus_domain }}"
+            - "STRUGGLEBUS_ALLOWED_HOSTS={{ strugglebus_domain }},{{ strugglebus_domain }}:*,127.0.0.1:*,localhost:*,[::1]:*"
+            - "STRUGGLEBUS_ALLOWED_ORIGINS=https://{{ strugglebus_domain }}"
+            - STRUGGLEBUS_CA_BUNDLE_PATH=
+            - STRUGGLEBUS_CA_ROOT_SHA256=
+            - STRUGGLEBUS_ORIENTATION_COUNT_CAP=500
+            - STRUGGLEBUS_ORIENTATION_CHANNEL_CAP=50
+            - STRUGGLEBUS_ORIENTATION_CANDIDATE_LIMIT=4096
+            - STRUGGLEBUS_CATCH_UP_CANDIDATE_LIMIT=4096
+            - STRUGGLEBUS_CATCH_UP_DRAIN_TTL_SECONDS=300
+            - STRUGGLEBUS_CATCH_UP_MAX_DRAINS=256
+            - STRUGGLEBUS_CATCH_UP_MAX_DRAINS_PER_AGENT=16
+            - STRUGGLEBUS_LIVENESS_REFRESH_SECONDS=60
+            - STRUGGLEBUS_SHUTDOWN_GRACE_SECONDS=12
+            - STRUGGLEBUS_MOBILE_CONFIRMATION_SECONDS=90
+            - STRUGGLEBUS_MOBILE_GRANT_DEVICE_PER_MINUTE=2
+            - STRUGGLEBUS_MOBILE_GRANT_GLOBAL_PER_MINUTE=8
+            - STRUGGLEBUS_SPN_PACKAGE_TTL_SECONDS=240
+            - STRUGGLEBUS_SPN_MAX_OUTSTANDING_PACKAGES=24
+            - STRUGGLEBUS_SPN_ISSUES_PER_MINUTE=9
+            - STRUGGLEBUS_UPDATER_SOCKET_PATH=/run/strugglebus-updater/worker.sock
+            - STRUGGLEBUS_MAINTENANCE_SOCKET_PATH=/run/strugglebus-maintenance/control.sock
+            - STRUGGLEBUS_UPDATER_CONFIRM_SESSION_PER_MINUTE=3
+            - STRUGGLEBUS_UPDATER_CONFIRM_GLOBAL_PER_MINUTE=6
+            - STRUGGLEBUS_UPDATER_REVIEW_SECONDS=300
+            - STRUGGLEBUS_UPDATER_REVIEW_TICKETS=8
+            - STRUGGLEBUS_SATELLITE_HOSTNAME=sb-gw.example.cloudapp.azure.com
+            - STRUGGLEBUS_SATELLITE_GATEWAY_WG_ADDRESS=10.99.0.1
+            - STRUGGLEBUS_SATELLITE_CA_KEY_PATH=%d/satellite-ca-key
+            - STRUGGLEBUS_SATELLITE_PORT=8443
+            - STRUGGLEBUS_SATELLITE_CA_CERT_PATH=/etc/strugglebus-satellite/ca.crt
+            - STRUGGLEBUS_SATELLITE_CERT_DAYS=14
+        - path: "{{ validation_dir.path }}/strugglebus.service"
+          expected:
+            - STRUGGLEBUS_SATELLITE_HOSTNAME=
+            - STRUGGLEBUS_SATELLITE_GATEWAY_WG_ADDRESS=
+            - "STRUGGLEBUS_PUBLIC_BASE_URL=https://{{ strugglebus_domain }}"
+            - "STRUGGLEBUS_ALLOWED_HOSTS={{ strugglebus_domain }},{{ strugglebus_domain }}:*,127.0.0.1:*,localhost:*,[::1]:*"
+            - "STRUGGLEBUS_ALLOWED_ORIGINS=https://{{ strugglebus_domain }}"
+            - STRUGGLEBUS_CA_BUNDLE_PATH=
+            - STRUGGLEBUS_CA_ROOT_SHA256=
+        - path: "{{ validation_dir.path }}/strugglebus.external.service"
+          expected:
+            - STRUGGLEBUS_SATELLITE_HOSTNAME=
+            - STRUGGLEBUS_SATELLITE_GATEWAY_WG_ADDRESS=
+            - "STRUGGLEBUS_PUBLIC_BASE_URL=https://{{ strugglebus_external_domain }}"
+            - "STRUGGLEBUS_ALLOWED_HOSTS={{ strugglebus_domain }},{{ strugglebus_domain }}:*,{{ strugglebus_external_domain }},{{ strugglebus_external_domain }}:*,127.0.0.1:*,localhost:*,[::1]:*"
+            - "STRUGGLEBUS_ALLOWED_ORIGINS=https://{{ strugglebus_domain }},https://{{ strugglebus_external_domain }}"
+            - "STRUGGLEBUS_CA_BUNDLE_PATH={{ strugglebus_lan_ca_published_root_path }}"
+            - "STRUGGLEBUS_CA_ROOT_SHA256={{ strugglebus_lan_ca_root_sha256 }}"
+        - path: "{{ validation_dir.path }}/strugglebus.external-only.service"
+          expected:
+            - STRUGGLEBUS_SATELLITE_HOSTNAME=
+            - STRUGGLEBUS_SATELLITE_GATEWAY_WG_ADDRESS=
+            - "STRUGGLEBUS_PUBLIC_BASE_URL=https://{{ strugglebus_external_domain }}"
+            - "STRUGGLEBUS_ALLOWED_HOSTS={{ strugglebus_external_domain }},{{ strugglebus_external_domain }}:*,127.0.0.1:*,localhost:*,[::1]:*"
+            - "STRUGGLEBUS_ALLOWED_ORIGINS=https://{{ strugglebus_external_domain }}"
+            - "STRUGGLEBUS_CA_BUNDLE_PATH={{ strugglebus_lan_ca_published_root_path }}"
+            - "STRUGGLEBUS_CA_ROOT_SHA256={{ strugglebus_lan_ca_root_sha256 }}"
+      loop_control:
+        label: "{{ item.path | basename }}"
+      changed_when: false
+
+    - name: Re-render the deployment templates idempotently
+      ansible.builtin.template:
+        src: "{{ item.src }}"
+        dest: "{{ validation_dir.path }}/{{ item.dest }}"
+        mode: "{{ item.mode }}"
+      loop:
+        - src: ../roles/caddy/templates/Caddyfile.j2
+          dest: Caddyfile
+          mode: "0600"
+        - src: ../roles/systemd/templates/strugglebus.service.j2
+          dest: strugglebus.service
+          mode: "0600"
+        - src: ../roles/systemd/templates/strugglebus-operator.py.j2
+          dest: strugglebus-operator.py
+          mode: "0700"
+        - src: ../roles/lan_ca/templates/strugglebus-renew.env.j2
+          dest: strugglebus-renew.env
+          mode: "0600"
+        - src: ../roles/lan_ca/templates/strugglebus-cert-renew.service.j2
+          dest: strugglebus-cert-renew.service
+          mode: "0600"
+        - src: ../roles/lan_ca/templates/strugglebus-cert-renew.timer.j2
+          dest: strugglebus-cert-renew.timer
+          mode: "0600"
+        - src: ../roles/lan_ca/templates/strugglebus-cert-expiry.service.j2
+          dest: strugglebus-cert-expiry.service
+          mode: "0600"
+        - src: ../roles/lan_ca/templates/strugglebus-cert-expiry.timer.j2
+          dest: strugglebus-cert-expiry.timer
+          mode: "0600"
+      register: idempotent_templates
+
+    - name: Require stable deployment template rendering
+      ansible.builtin.assert:
+        that:
+          - >-
+            idempotent_templates.results
+            | selectattr('changed', 'equalto', true)
+            | list
+            | length == 0
+
+    - name: Read rendered Caddy TLS modes
+      ansible.builtin.slurp:
+        src: "{{ item }}"
+      loop:
+        - "{{ validation_dir.path }}/Caddyfile"
+        - "{{ validation_dir.path }}/Caddyfile.external"
+        - "{{ validation_dir.path }}/Caddyfile.external-only"
+      register: rendered_caddy_modes
+
+    - name: Preserve explicit upstream form policy in every rendered TLS mode
+      ansible.builtin.assert:
+        that:
+          - >-
+            (item.content | b64decode
+             | regex_findall('(?m)^\s*(\S*Referrer-Policy)\s+"([^"]+)"'))
+            == [('?Referrer-Policy', 'no-referrer')]
+      loop: "{{ rendered_caddy_modes.results }}"
+      loop_control:
+        label: "{{ item.source | basename }}"
+
+    - name: Strip any client-sent satellite site header on the LAN site
+      ansible.builtin.assert:
+        that:
+          - >-
+            (item.content | b64decode)
+            is search('header_up -X-Strugglebus-Satellite-Cert')
+      loop: "{{ rendered_caddy_modes.results }}"
+      loop_control:
+        label: "{{ item.source | basename }}"
+
+    - name: Require inert internal and explicit external TLS topology
+      ansible.builtin.assert:
+        that:
+          - >-
+            'https://bus.u64.lan'
+            not in (rendered_caddy_modes.results[0].content | b64decode)
+          - >-
+            (rendered_caddy_modes.results[0].content | b64decode)
+            is search('https://bus.lan')
+          - >-
+            (rendered_caddy_modes.results[1].content | b64decode)
+            is search('https://bus.u64.lan')
+          - >-
+            (rendered_caddy_modes.results[1].content | b64decode)
+            is search('https://bus.lan')
+          - >-
+            (rendered_caddy_modes.results[1].content | b64decode)
+            is search('/etc/strugglebus-tls/current/cert.pem')
+          - >-
+            'https://bus.lan'
+            not in (rendered_caddy_modes.results[2].content | b64decode)
+          - >-
+            (rendered_caddy_modes.results[2].content | b64decode)
+            is search('https://bus.u64.lan')
+          - >-
+            (rendered_caddy_modes.results[2].content | b64decode)
+            is search('/etc/strugglebus-tls/current/cert.pem')
+          - >-
+            'tls internal'
+            not in (rendered_caddy_modes.results[2].content | b64decode)
+          - >-
+            (
+              rendered_caddy_modes.results[2].content
+              | b64decode
+              | regex_findall('https://')
+              | length
+            ) == 1
+
+    - name: Create a test SQLite database
+      ansible.builtin.command:
+        argv:
+          - "{{ ansible_playbook_python }}"
+          - -c
+          - >-
+            import sqlite3;
+            db=sqlite3.connect(r'{{ validation_dir.path }}/source.db');
+            db.execute('create table sample(value text)');
+            db.execute('insert into sample values (?)', ('safe',));
+            db.commit()
+      changed_when: true
+
+    - name: Exercise the rendered online backup program
+      ansible.builtin.command:
+        argv:
+          - "{{ ansible_playbook_python }}"
+          - "{{ validation_dir.path }}/sqlite_backup.py"
+          - "{{ validation_dir.path }}/source.db"
+          - "{{ validation_dir.path }}"
+          - "1"
+      changed_when: true
+
+    - name: Find the validated backup
+      ansible.builtin.find:
+        paths: "{{ validation_dir.path }}"
+        patterns: strugglebus-*.db
+        file_type: file
+      register: validated_backups
+
+    - name: Require one integrity-checked backup
+      ansible.builtin.assert:
+        that:
+          - validated_backups.matched == 1
+
+    - name: Exercise restoration from the validated backup
+      ansible.builtin.command:
+        argv:
+          - "{{ ansible_playbook_python }}"
+          - -c
+          - >-
+            import sqlite3;
+            db=sqlite3.connect(r'{{ validated_backups.files[0].path }}');
+            assert db.execute('select value from sample').fetchone() == ('safe',)
+      changed_when: false
+
+    - name: Exercise bounded timestamped backup retention
+      ansible.builtin.command:
+        argv:
+          - "{{ ansible_playbook_python }}"
+          - "{{ validation_dir.path }}/sqlite_backup.py"
+          - "{{ validation_dir.path }}/source.db"
+          - "{{ validation_dir.path }}"
+          - "3"
+      loop: "{{ range(5) | list }}"
+      changed_when: true
+
+    - name: Find retained timestamped backups
+      ansible.builtin.find:
+        paths: "{{ validation_dir.path }}"
+        patterns: strugglebus-*.db
+        file_type: file
+      register: retained_backups
+
+    - name: Require exactly three retained backups
+      ansible.builtin.assert:
+        that:
+          - retained_backups.matched == 3
+
+    - name: Exercise restoration from every retained backup
+      ansible.builtin.command:
+        argv:
+          - "{{ ansible_playbook_python }}"
+          - -c
+          - >-
+            import sqlite3;
+            db=sqlite3.connect(r'{{ item.path }}');
+            assert db.execute('pragma integrity_check').fetchone() == ('ok',);
+            assert db.execute('select value from sample').fetchone() == ('safe',)
+      loop: "{{ retained_backups.files }}"
+      changed_when: false
+
+    - name: Render the satellite path templates
+      ansible.builtin.template:
+        src: "../roles/satellite/templates/{{ item }}.j2"
+        dest: "{{ validation_dir.path }}/{{ item }}"
+        mode: "0600"
+      loop:
+        - Caddyfile.satellite
+        - sbsat0.conf
+        - strugglebus-satellite.nft
+        - strugglebus-satellite-proxy.service
+        - strugglebus-satellite-renew.service
+      vars:
+        strugglebus_satellite_hostname: sb-gw.example.cloudapp.azure.com
+        strugglebus_satellite_wg_address: 10.99.0.2/30
+        strugglebus_satellite_gateway_wg_address: 10.99.0.1
+        strugglebus_satellite_gateway_endpoint: sb-gw.example.cloudapp.azure.com:51820
+        strugglebus_satellite_gateway_public_key: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+
+    - name: Read the rendered satellite path
+      ansible.builtin.slurp:
+        src: "{{ validation_dir.path }}/{{ item }}"
+      loop: [Caddyfile.satellite, sbsat0.conf, strugglebus-satellite.nft]
+      register: rendered_satellite
+
+    - name: Require the satellite proxy to be the only, client-certificate site on the tunnel
+      vars:
+        caddy: "{{ rendered_satellite.results[0].content | b64decode }}"
+        tunnel: "{{ rendered_satellite.results[1].content | b64decode }}"
+        firewall: "{{ rendered_satellite.results[2].content | b64decode }}"
+      ansible.builtin.assert:
+        that:
+          - caddy is search('(?m)^:8443 \{$')
+          - caddy is search('(?m)^\s+bind 10\.99\.0\.2$')
+          - caddy is search('strict_sni_host insecure_off')
+          - caddy is search('mode require_and_verify')
+          - caddy is search('trusted_ca_cert_file /etc/strugglebus-satellite/ca.crt')
+          - "'trust_pool' not in caddy"
+          - caddy is search('@agent path /api/\* /mcp /mcp/\*')
+          - caddy is search('header_up Host ' ~ strugglebus_effective_domain)
+          - caddy is search('header_up X-Strugglebus-Satellite-Cert \{http\.request\.tls\.client\.fingerprint\}')
+          - caddy is search('respond 404')
+          - "'https://' not in caddy"
+          - tunnel is search('AllowedIPs = 10\.99\.0\.1/32')
+          - tunnel is search('PersistentKeepalive = 25')
+          - "'PrivateKey' not in tunnel"
+          - firewall is search('iifname "sbsat0" ip saddr 10\.99\.0\.1 tcp dport 8443 accept')
+          - firewall is not search('dport 443 ')
+          - firewall is search('iifname "sbsat0" drop')
+          - firewall is search('table inet strugglebus_satellite')
+          - firewall is search('(?s)chain forward \{\s*type filter hook forward priority filter - 10; policy accept;\s*iifname "sbsat0" drop\s*oifname "sbsat0" drop\s*\}')
+          - caddy is search('(?s)timeouts \{\s*read_header 10s\s*idle 2m\s*\}')
+          - caddy is not search('(?m)^\s+(read_body|write)\s')
+          - caddy is search('(?s)log \{\s*output stderr\s*format filter \{\s*request>headers delete\s*resp_headers delete')
+        fail_msg: The satellite path must admit only client-certificate agent traffic from the gateway.
+
+    - name: Remove the temporary validation directory
+      ansible.builtin.file:
+        path: "{{ validation_dir.path }}"
+        state: absent

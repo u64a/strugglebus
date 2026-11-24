@@ -1,0 +1,28 @@
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.metrics/
+
+# Local runtime state (database, admin token)
+var/
+*.db
+*.db-wal
+*.db-shm
+.env
+
+# Host-specific deployment inventory, credentials, and generated state
+deploy/inventory/*
+!deploy/inventory/example/
+!deploy/inventory/example/**
+deploy/**/*.vault
+deploy/**/*.vault.*
+deploy/artifacts/
+deploy/.ansible/
+deploy/.ansible-venv/
+deploy/*.retry

@@ -1,0 +1,13 @@
+# Managed by the satellite role. The bus dials the gateway; nothing waits for
+# an inbound handshake here. The private key never leaves this guest.
+[Interface]
+Address = {{ strugglebus_satellite_wg_address }}
+PreUp = nft -f /etc/wireguard/strugglebus-satellite.nft
+PostUp = wg set %i private-key /etc/wireguard/strugglebus-satellite.key
+PostDown = nft delete table inet strugglebus_satellite
+
+[Peer]
+PublicKey = {{ strugglebus_satellite_gateway_public_key }}
+Endpoint = {{ strugglebus_satellite_gateway_endpoint }}
+AllowedIPs = {{ strugglebus_satellite_gateway_wg_address }}/32
+PersistentKeepalive = 25

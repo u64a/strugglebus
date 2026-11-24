@@ -1,0 +1,70 @@
+---
+- name: Exercise state-driven Caddy activation planning
+  hosts: localhost
+  gather_facts: false
+  vars:
+    caddy_expected_test_dropin: >-
+      /etc/systemd/system/caddy.service.d/strugglebus-runtime.conf
+    caddy_activation_cases:
+      - name: fresh-install
+        runtime_changed: true
+        config_changed: true
+        marker: missing
+        state: |
+          ActiveState=inactive
+          SubState=dead
+          UnitFileState=disabled
+          DropInPaths=
+        activation_required: true
+        enable_required: true
+      - name: exact-partial-recovery
+        runtime_changed: false
+        config_changed: false
+        marker: missing
+        state: |
+          ActiveState=failed
+          SubState=failed
+          UnitFileState=enabled
+          DropInPaths=
+        activation_required: true
+        enable_required: false
+      - name: changed-config
+        runtime_changed: false
+        config_changed: true
+        marker: stale
+        state: |
+          ActiveState=active
+          SubState=running
+          UnitFileState=enabled
+          DropInPaths={{ caddy_expected_test_dropin }}
+        activation_required: true
+        enable_required: false
+      - name: unapplied-config
+        runtime_changed: false
+        config_changed: false
+        marker: stale
+        state: |
+          ActiveState=active
+          SubState=running
+          UnitFileState=enabled
+          DropInPaths={{ caddy_expected_test_dropin }}
+        activation_required: true
+        enable_required: false
+      - name: healthy-unchanged
+        runtime_changed: false
+        config_changed: false
+        marker: matching
+        state: |
+          ActiveState=active
+          SubState=running
+          UnitFileState=enabled
+          DropInPaths={{ caddy_expected_test_dropin }}
+        activation_required: false
+        enable_required: false
+  tasks:
+    - name: Evaluate each production Caddy activation plan
+      ansible.builtin.include_tasks: tasks/caddy_activation_plan_case.yml
+      loop: "{{ caddy_activation_cases }}"
+      loop_control:
+        loop_var: caddy_activation_case
+        label: "{{ caddy_activation_case.name }}"

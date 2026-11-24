@@ -1,0 +1,12 @@
+[Unit]
+Description=Evaluate the Strugglebus automatic maintenance window
+
+[Timer]
+OnCalendar=*-*-* *:*:00
+AccuracySec=1s
+Persistent=true
+RandomizedDelaySec=0
+Unit=strugglebus-maintenance-run.service
+
+[Install]
+WantedBy=timers.target

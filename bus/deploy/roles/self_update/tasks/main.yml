@@ -1,0 +1,257 @@
+---
+- name: Inspect protected self-update ancestry and selected worker release
+  ansible.builtin.stat:
+    path: "{{ item }}"
+    follow: false
+  loop:
+    - /opt/strugglebus-updater
+    - /opt/strugglebus-updater/releases
+    - "/opt/strugglebus-updater/releases/{{ strugglebus_self_update_version }}"
+    - /var/lib/strugglebus-maintenance
+  register: self_update_paths
+
+- name: Require an installed immutable worker release and safe existing ancestry
+  ansible.builtin.assert:
+    that:
+      - self_update_paths.results[0].stat.isdir | default(false)
+      - self_update_paths.results[1].stat.isdir | default(false)
+      - self_update_paths.results[2].stat.isdir | default(false)
+      - self_update_paths.results[2].stat.uid | default(-1) == 0
+      - not (self_update_paths.results[2].stat.wgrp | default(true))
+      - not (self_update_paths.results[2].stat.woth | default(true))
+      - >-
+        not self_update_paths.results[3].stat.exists or (
+          self_update_paths.results[3].stat.isdir | default(false)
+          and not (self_update_paths.results[3].stat.islnk | default(true))
+          and self_update_paths.results[3].stat.uid | default(-1) == 0
+          and self_update_paths.results[3].stat.mode | default('') == '0700'
+        )
+
+- name: Inspect the selected worker provenance and executable
+  ansible.builtin.stat:
+    path: "{{ item }}"
+    follow: false
+  loop:
+    - "/opt/strugglebus-updater/releases/{{ strugglebus_self_update_version }}/.installed"
+    - "/opt/strugglebus-updater/releases/{{ strugglebus_self_update_version }}/venv/bin/python"
+  register: self_update_release_files
+
+- name: Require a complete immutable worker environment
+  ansible.builtin.assert:
+    that:
+      - self_update_release_files.results[0].stat.isreg | default(false)
+      - not (self_update_release_files.results[0].stat.islnk | default(true))
+      - self_update_release_files.results[0].stat.uid | default(-1) == 0
+      - self_update_release_files.results[0].stat.mode | default('') == '0644'
+      - self_update_release_files.results[1].stat.isreg | default(false)
+      - not (self_update_release_files.results[1].stat.islnk | default(true))
+      - self_update_release_files.results[1].stat.uid | default(-1) == 0
+      - self_update_release_files.results[1].stat.executable | default(false)
+
+- name: Inspect the updater worker configuration before adoption
+  ansible.builtin.stat:
+    path: /etc/strugglebus-updater/worker.json
+    follow: false
+  register: self_update_worker_config
+
+- name: Read the updater worker configuration before adoption
+  ansible.builtin.slurp:
+    src: /etc/strugglebus-updater/worker.json
+  register: self_update_worker_config_bytes
+
+- name: Require the credential-free public-source worker configuration
+  ansible.builtin.assert:
+    that:
+      - self_update_worker_config.stat.isreg | default(false)
+      - not (self_update_worker_config.stat.islnk | default(true))
+      - self_update_worker_config.stat.uid | default(-1) == 0
+      - self_update_worker_config.stat.nlink | default(0) == 1
+      - self_update_worker_config.stat.mode | default('') == '0640'
+      - (self_update_worker_config_bytes.content | b64decode | from_json).version == 2
+      - (self_update_worker_config_bytes.content | b64decode | from_json).release_repository == 'NZCypher819/strugglebus-releases'
+      - (self_update_worker_config_bytes.content | b64decode | from_json).source_repository == 'NZCypher819/strugglebus'
+    fail_msg: >-
+      Self-update adoption requires a preflighted version-2 anonymous public-source
+      worker configuration before changing the active updater release.
+
+- name: Inspect unresolved maintenance recovery ownership
+  ansible.builtin.stat:
+    path: /var/lib/strugglebus-maintenance/operation.json
+    follow: false
+  register: self_update_operation
+
+- name: Read existing maintenance recovery ownership
+  ansible.builtin.slurp:
+    src: /var/lib/strugglebus-maintenance/operation.json
+  register: self_update_operation_bytes
+  when: self_update_operation.stat.exists
+
+- name: Refuse adoption while maintenance recovery is unresolved
+  ansible.builtin.assert:
+    that:
+      - not self_update_operation.stat.exists or (
+          self_update_operation.stat.isreg | default(false)
+          and not (self_update_operation.stat.islnk | default(true))
+          and self_update_operation.stat.uid | default(-1) == 0
+          and self_update_operation.stat.mode | default('') == '0600'
+          and (self_update_operation_bytes.content | b64decode | from_json).version == 1
+          and (self_update_operation_bytes.content | b64decode | from_json).phase == 'complete'
+        )
+    fail_msg: Resolve retained maintenance recovery before adopting automatic updates.
+
+- name: Measure protected filesystem capacity before adoption
+  ansible.builtin.command:
+    argv: [/usr/bin/df, --output=avail, -B1, "{{ item }}"]
+  loop:
+    - "{{ strugglebus_release_root }}"
+    - /opt/strugglebus-updater/releases
+    - "{{ strugglebus_backup_dir }}"
+  register: self_update_capacity
+  changed_when: false
+
+- name: Require capacity for candidate release predecessor cache and snapshot
+  ansible.builtin.assert:
+    that:
+      - (item.stdout_lines | last | trim | int) >= strugglebus_self_update_minimum_free_bytes
+    fail_msg: The self-update filesystem reserve is below the approved minimum.
+  loop: "{{ self_update_capacity.results }}"
+
+- name: Resolve the application service identity
+  ansible.builtin.getent:
+    database: passwd
+    key: "{{ strugglebus_service_user }}"
+  register: self_update_service_account
+
+- name: Bind the application UID for maintenance socket admission
+  ansible.builtin.set_fact:
+    strugglebus_application_uid: >-
+      {{ self_update_service_account.ansible_facts.getent_passwd[strugglebus_service_user][1] | int }}
+
+- name: Create protected self-update configuration and state directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0700"
+    follow: false
+  loop:
+    - /etc/strugglebus-maintenance
+    - /var/lib/strugglebus-maintenance
+
+- name: Create the readable content-addressed maintenance helper root
+  ansible.builtin.file:
+    path: /usr/local/libexec/strugglebus-maintenance
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+    follow: false
+
+- name: Inspect existing durable supervisor policy
+  ansible.builtin.stat:
+    path: /var/lib/strugglebus-maintenance/supervisor.json
+    follow: false
+  register: self_update_supervisor_state
+
+- name: Refuse unsafe existing durable supervisor policy
+  ansible.builtin.assert:
+    that:
+      - not self_update_supervisor_state.stat.exists or (
+          self_update_supervisor_state.stat.isreg | default(false)
+          and not (self_update_supervisor_state.stat.islnk | default(true))
+          and self_update_supervisor_state.stat.uid | default(-1) == 0
+          and self_update_supervisor_state.stat.nlink | default(0) == 1
+          and self_update_supervisor_state.stat.mode | default('') == '0600'
+          and self_update_supervisor_state.stat.size | default(16385) <= 16384
+        )
+
+- name: Publish the selected updater release through an atomic current link
+  ansible.builtin.file:
+    src: "/opt/strugglebus-updater/releases/{{ strugglebus_self_update_version }}"
+    dest: /opt/strugglebus-updater/current
+    state: link
+    owner: root
+    group: root
+    follow: false
+    force: false
+
+- name: Resolve the adopted updater release link
+  ansible.builtin.command:
+    argv:
+      - /usr/bin/readlink
+      - --canonicalize-existing
+      - /opt/strugglebus-updater/current
+  register: self_update_current_release
+  changed_when: false
+
+- name: Require the exact selected updater release link
+  ansible.builtin.assert:
+    that:
+      - self_update_current_release.stdout == '/opt/strugglebus-updater/releases/' ~ strugglebus_self_update_version
+
+- name: Install root-only maintenance configuration
+  ansible.builtin.template:
+    src: maintenance.json.j2
+    dest: /etc/strugglebus-maintenance/maintenance.json
+    owner: root
+    group: root
+    mode: "0600"
+
+- name: Initialize or validate durable maintenance policy without running an update
+  ansible.builtin.command:
+    argv:
+      - /opt/strugglebus-updater/current/venv/bin/python
+      - -I
+      - -m
+      - strugglebus.maintenance_daemon
+      - init
+      - --config
+      - /etc/strugglebus-maintenance/maintenance.json
+  changed_when: not self_update_supervisor_state.stat.exists
+  timeout: 30
+
+- name: Install self-update systemd units
+  ansible.builtin.template:
+    src: "{{ item }}.j2"
+    dest: "/etc/systemd/system/{{ item }}"
+    owner: root
+    group: root
+    mode: "0644"
+  loop:
+    - strugglebus-updater.service
+    - strugglebus-maintenance.socket
+    - strugglebus-maintenance.service
+    - strugglebus-maintenance-run.service
+    - strugglebus-maintenance.timer
+  register: self_update_units
+
+- name: Verify self-update unit syntax as one topology
+  ansible.builtin.command:
+    argv:
+      - /usr/bin/systemd-analyze
+      - verify
+      - /etc/systemd/system/strugglebus-updater.service
+      - /etc/systemd/system/strugglebus-updater.socket
+      - /etc/systemd/system/strugglebus-maintenance.socket
+      - /etc/systemd/system/strugglebus-maintenance.service
+      - /etc/systemd/system/strugglebus-maintenance-run.service
+      - /etc/systemd/system/strugglebus-maintenance.timer
+  changed_when: false
+  timeout: 30
+
+- name: Leave the socket-activated worker stopped until an approved IPC request arrives
+  ansible.builtin.systemd_service:
+    name: strugglebus-updater.service
+    state: stopped
+    daemon_reload: "{{ self_update_units.changed }}"
+
+- name: Enable root maintenance control and automatic window evaluation
+  ansible.builtin.systemd_service:
+    name: "{{ item }}"
+    enabled: true
+    state: started
+    daemon_reload: false
+  loop:
+    - strugglebus-maintenance.socket
+    - strugglebus-maintenance.timer

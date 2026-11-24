@@ -1,0 +1,30 @@
+# Strugglebus HTTPS gateway. Written by the Strugglebus installer.
+{
+	admin off
+	auto_https disable_redirects
+	skip_install_trust
+}
+
+https://__BUS_HOSTNAME__:__BUS_PORT__ {
+	tls internal
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		?Referrer-Policy "no-referrer"
+		-Powered-By
+		Server ""
+	}
+	# Private networks only. A bus that ends up reachable from the internet
+	# (a forwarded port, a public address) refuses those visitors here, before
+	# they reach the application. Loopback, the private IPv4 and IPv6 ranges,
+	# link-local and the carrier-grade range overlay networks use are allowed.
+	@outside not remote_ip private_ranges 100.64.0.0/10 169.254.0.0/16 fe80::/10 __BUS_ALLOWED_CLIENTS__
+	respond @outside "This Strugglebus only serves private networks. See 'Clients on other address ranges' in the install guide." 403
+	reverse_proxy 127.0.0.1:8080 {
+		# The bus compares the whole address, port included, with its own.
+		header_up Host {hostport}
+		header_up -X-Strugglebus-Satellite-Cert
+		flush_interval -1
+	}
+}

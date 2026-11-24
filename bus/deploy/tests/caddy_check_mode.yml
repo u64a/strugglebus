@@ -1,0 +1,43 @@
+---
+- name: Exercise stopped Caddy configuration in check mode
+  hosts: localhost
+  gather_facts: false
+  vars_files:
+    - ../inventory/example/group_vars/all.yml
+  vars:
+    caddy_manage_package: false
+    caddy_systemd_override_dir: /tmp/strugglebus-caddy-check-systemd
+    caddy_config_path: /tmp/strugglebus-caddy-check-Caddyfile
+  pre_tasks:
+    - name: Remove prior Caddy check-mode fixtures
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - "{{ caddy_systemd_override_dir }}"
+        - "{{ caddy_config_path }}"
+      check_mode: false
+
+  roles:
+    - role: deployment_identity
+    - role: caddy
+
+  post_tasks:
+    - name: Inspect Caddy check-mode destinations
+      ansible.builtin.stat:
+        path: "{{ item }}"
+        follow: false
+      loop:
+        - "{{ caddy_systemd_override_dir }}"
+        - "{{ caddy_config_path }}"
+      register: caddy_check_mode_destinations
+
+    - name: Require zero Caddy check-mode mutation
+      ansible.builtin.assert:
+        that:
+          - >-
+            caddy_check_mode_destinations.results
+            | map(attribute='stat.exists')
+            | select('equalto', true)
+            | list
+            | length == 0

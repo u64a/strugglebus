@@ -1,0 +1,62 @@
+---
+- name: Export the Caddy internal CA root
+  hosts: strugglebus_guests
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Require an explicit absolute caller-provided export destination
+      ansible.builtin.assert:
+        that:
+          - strugglebus_ca_export_dir is defined
+          - strugglebus_ca_export_dir is string
+          - strugglebus_ca_export_dir | length > 0
+        fail_msg: Set strugglebus_ca_export_dir to a protected absolute directory outside the repository.
+
+    - name: Read the Caddy internal CA root
+      ansible.builtin.slurp:
+        src: /var/lib/caddy/.local/share/caddy/pki/authorities/local/root.crt
+      register: caddy_root_ca
+      no_log: true
+
+    - name: Atomically export the public root and fingerprint instructions
+      ansible.builtin.command:
+        argv:
+          - "{{ ansible_playbook_python }}"
+          - -I
+          - "{{ playbook_dir }}/../files/export_caddy_ca.py"
+        stdin: >-
+          {{
+            {
+              'certificate_base64': caddy_root_ca.content,
+              'destination': strugglebus_ca_export_dir
+            }
+            | to_json
+          }}
+        stdin_add_newline: true
+      delegate_to: localhost
+      become: false
+      register: strugglebus_ca_export
+      changed_when: strugglebus_ca_export.rc == 0
+      failed_when: false
+      no_log: true
+
+    - name: Decode the sanitized CA export result
+      ansible.builtin.set_fact:
+        strugglebus_ca_export_result: >-
+          {{
+            strugglebus_ca_export.stdout
+            | default('{"exported":false,"error_code":"export_refused"}', true)
+            | from_json
+          }}
+
+    - name: Report only the sanitized CA export result
+      ansible.builtin.debug:
+        var: strugglebus_ca_export_result
+
+    - name: Require the public CA export to complete
+      ansible.builtin.assert:
+        that:
+          - strugglebus_ca_export.rc == 0
+          - strugglebus_ca_export_result.exported is true
+          - strugglebus_ca_export_result.error_code == "none"
+        fail_msg: The sanitized result above identifies a refused CA export.

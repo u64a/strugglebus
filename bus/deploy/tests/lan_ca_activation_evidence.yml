@@ -1,0 +1,102 @@
+---
+- name: Validate exact machine-readable LAN CA activation evidence
+  hosts: localhost
+  gather_facts: false
+  vars_files:
+    - ../inventory/example/group_vars/all.yml
+  vars:
+    lan_ca_evidence_root: /tmp/strugglebus-lan-ca-evidence
+  pre_tasks:
+    - name: Reset the isolated activation evidence fixture
+      ansible.builtin.file:
+        path: "{{ lan_ca_evidence_root }}"
+        state: absent
+      check_mode: false
+
+    - name: Create the isolated versioned generation fixture
+      ansible.builtin.file:
+        path: "{{ lan_ca_evidence_root }}/generations/20260901T000000Z-123"
+        state: directory
+        mode: "0700"
+      check_mode: false
+
+    - name: Create the isolated current generation link
+      ansible.builtin.file:
+        src: generations/20260901T000000Z-123
+        dest: "{{ lan_ca_evidence_root }}/current"
+        state: link
+      check_mode: false
+
+    - name: Write synthetic exact activation evidence
+      ansible.builtin.copy:
+        dest: "{{ lan_ca_evidence_root }}/activation.json"
+        mode: "0600"
+        content: |
+          {
+            "schema": "strugglebus-lan-ca-activation-v1",
+            "service_dns": "bus.u64.lan",
+            "legacy_dns": "bus.lan",
+            "ca_url": "https://ca.u64.lan",
+            "root_sha256": "{{ strugglebus_lan_ca_root_sha256 }}",
+            "intermediate_sha256": "{{ strugglebus_lan_ca_intermediate_sha256 }}",
+            "human_approval": {
+              "approved": true,
+              "approved_at": "2026-09-01T00:00:00Z",
+              "approved_by": "test-operator"
+            },
+            "lan_dns": {
+              "verified": true,
+              "service_dns": "bus.u64.lan"
+            },
+            "client_dual_root": {
+              "verified": true,
+              "legacy_root_retained": true
+            },
+            "server_policy": {
+              "verified": true,
+              "dns_sans": ["bus.u64.lan"],
+              "extended_key_usage": ["serverAuth"]
+            },
+            "ca_custody": {
+              "verified": true,
+              "root_offline": true,
+              "intermediate_only": true
+            },
+            "off_machine_restore": {
+              "verified": true,
+              "isolated": true
+            }
+          }
+      check_mode: false
+
+    - name: Inspect synthetic activation evidence
+      ansible.builtin.stat:
+        path: "{{ lan_ca_evidence_root }}/activation.json"
+        checksum_algorithm: sha256
+      register: lan_ca_evidence_fixture
+      check_mode: false
+
+    - name: Select the isolated external-mode fixture
+      ansible.builtin.set_fact:
+        strugglebus_tls_mode: external
+        strugglebus_effective_domain: bus.u64.lan
+        strugglebus_health_url: https://bus.u64.lan/healthz
+        strugglebus_lan_ca_stage: true
+        strugglebus_lan_ca_renewal_enabled: true
+        strugglebus_caddy_ca_path: /etc/lan-ca/ca-bundle.pem
+        strugglebus_tls_root: "{{ lan_ca_evidence_root }}"
+        strugglebus_lan_ca_activation_evidence_src: >-
+          {{ lan_ca_evidence_root }}/activation.json
+        strugglebus_lan_ca_activation_evidence_sha256: >-
+          {{ lan_ca_evidence_fixture.stat.checksum }}
+
+  roles:
+    - role: deployment_identity
+    - role: lan_ca
+
+  post_tasks:
+    - name: Remove the isolated activation evidence fixture
+      ansible.builtin.file:
+        path: "{{ lan_ca_evidence_root }}"
+        state: absent
+      check_mode: false

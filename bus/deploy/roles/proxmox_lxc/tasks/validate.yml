@@ -1,0 +1,67 @@
+---
+- name: Validate the API-token backend inputs
+  ansible.builtin.assert:
+    that:
+      - proxmox_api_host not in ["", "CHANGE_ME"]
+      - proxmox_api_user not in ["", "CHANGE_ME"]
+      - proxmox_api_token_id not in ["", "CHANGE_ME"]
+      - proxmox_api_token_secret | default("") | length > 0
+      - proxmox_api_validate_certs | bool
+      - strugglebus_template not in ["", "CHANGE_ME"]
+      - strugglebus_vmid | int > 0
+      - strugglebus_vmid | int != 150
+      - strugglebus_cores | int > 0
+      - strugglebus_memory_mb | int >= 512
+      - strugglebus_disk_gb | int >= 8
+      - strugglebus_bridge | length > 0
+      - strugglebus_storage | length > 0
+    fail_msg: Replace every API placeholder in ignored live inventory.
+  no_log: true
+
+- name: Require exactly one SSH public key source
+  ansible.builtin.assert:
+    that:
+      - ssh_public_key_is_inline != ssh_public_key_is_file
+    fail_msg: >-
+      Configure exactly one of strugglebus_ssh_public_key or
+      strugglebus_ssh_public_key_path in ignored live inventory.
+  vars:
+    ssh_public_key_is_inline: >-
+      {{ strugglebus_ssh_public_key | default('') | length > 0 }}
+    ssh_public_key_is_file: >-
+      {{
+        strugglebus_ssh_public_key_path | default('')
+        not in ['', 'CHANGE_ME']
+      }}
+  no_log: true
+
+- name: Resolve the SSH public key on the controller
+  ansible.builtin.set_fact:
+    strugglebus_effective_ssh_public_key: >-
+      {{
+        strugglebus_ssh_public_key
+        if strugglebus_ssh_public_key | default('') | length > 0
+        else lookup('ansible.builtin.file', strugglebus_ssh_public_key_path)
+      }}
+  no_log: true
+
+- name: Validate the OpenSSH public key prefix
+  ansible.builtin.assert:
+    that:
+      - >-
+        strugglebus_effective_ssh_public_key is match(
+          '^(ssh-ed25519|ssh-rsa|ecdsa-sha2-nistp(256|384|521)|sk-ssh-ed25519@openssh.com) [A-Za-z0-9+/]+={0,3}( .*)?$'
+        )
+    fail_msg: The configured provisioning key is not an OpenSSH public key.
+  no_log: true
+
+- name: Validate the complete OpenSSH public key wire format
+  ansible.builtin.assert:
+    that:
+      - >-
+        strugglebus_effective_ssh_public_key
+        | strugglebus_public_key_errors
+        | length == 0
+    fail_msg: >-
+      The provisioning key is not a complete allowed OpenSSH public key.
+  no_log: true

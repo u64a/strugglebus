@@ -1,0 +1,17 @@
+name: strugglebus
+services:
+  bus:
+    build: .
+    image: strugglebus-selfhost
+    environment:
+      BUS_HOSTNAME: ${BUS_HOSTNAME:?Set BUS_HOSTNAME in the .env file, for example BUS_HOSTNAME=bus.home.arpa}
+      BUS_PORT: ${BUS_PORT:-443}
+      BUS_ALLOWED_CLIENTS: ${BUS_ALLOWED_CLIENTS:-}
+    ports:
+      - "${BUS_PORT:-443}:8443"
+    volumes:
+      - data:/data
+    restart: unless-stopped
+    stop_grace_period: 30s
+volumes:
+  data:

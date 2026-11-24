@@ -1,0 +1,6 @@
+# Generated Ansible dependencies are not source. No Bandit test is skipped.
+exclude_dirs:
+  - deploy/.ansible
+  - deploy/.ansible-venv
+  - deploy\.ansible
+  - deploy\.ansible-venv

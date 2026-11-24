@@ -1,0 +1,121 @@
+---
+- name: Renew the release locks before artifact mutation
+  ansible.builtin.include_tasks: renew_lock.yml
+
+- name: Create the immutable release directory
+  ansible.builtin.file:
+    path: "{{ strugglebus_release_root }}/{{ strugglebus_release_version }}"
+    state: directory
+    owner: root
+    group: "{{ strugglebus_service_group }}"
+    mode: "0750"
+
+- name: Upload checksummed release artifacts
+  ansible.builtin.copy:
+    src: "{{ item.src }}"
+    dest: "{{ strugglebus_release_root }}/{{ strugglebus_release_version }}/{{ item.dest }}"
+    owner: root
+    group: "{{ strugglebus_service_group }}"
+    mode: "0640"
+  loop:
+    - src: "{{ strugglebus_wheel_src }}"
+      dest: "{{ strugglebus_wheel_src | basename }}"
+    - src: "{{ strugglebus_requirements_lock_src }}"
+      dest: requirements.lock
+
+- name: Record the immutable runtime release identifier
+  ansible.builtin.copy:
+    content: "{{ strugglebus_release_identity_content }}"
+    dest: "{{ strugglebus_release_root }}/{{ strugglebus_release_version }}/release.env"
+    owner: root
+    group: "{{ strugglebus_service_group }}"
+    mode: "0640"
+
+- name: Verify uploaded release artifact checksums
+  ansible.builtin.stat:
+    path: "{{ strugglebus_release_root }}/{{ strugglebus_release_version }}/{{ item.path }}"
+    checksum_algorithm: sha256
+    follow: false
+  loop:
+    - path: "{{ strugglebus_wheel_src | basename }}"
+      checksum: "{{ strugglebus_wheel_sha256 }}"
+    - path: requirements.lock
+      checksum: "{{ strugglebus_requirements_lock_sha256 }}"
+    - path: release.env
+      checksum: "{{ strugglebus_release_identity_content | hash('sha256') }}"
+  register: strugglebus_materialized_release_artifacts
+
+- name: Require exact uploaded release artifacts
+  ansible.builtin.assert:
+    that:
+      - item.stat.isreg | default(false)
+      - not item.stat.islnk | default(true)
+      - item.stat.checksum == item.item.checksum
+    fail_msg: "Uploaded artifact failed SHA-256 verification: {{ item.item.path }}"
+  loop: "{{ strugglebus_materialized_release_artifacts.results }}"
+
+- name: Create the versioned virtual environment
+  ansible.builtin.command:
+    argv:
+      - python3.13
+      - -m
+      - venv
+      - "{{ strugglebus_release_root }}/{{ strugglebus_release_version }}/venv"
+    creates: "{{ strugglebus_release_root }}/{{ strugglebus_release_version }}/venv/bin/python"
+
+- name: Renew the release locks before dependency installation
+  ansible.builtin.include_tasks: renew_lock.yml
+
+- name: Synchronize hash-locked dependencies
+  ansible.builtin.command:
+    argv:
+      - uv
+      - pip
+      - sync
+      - --python
+      - "{{ strugglebus_release_root }}/{{ strugglebus_release_version }}/venv/bin/python"
+      - --require-hashes
+      - "{{ strugglebus_release_root }}/{{ strugglebus_release_version }}/requirements.lock"
+  environment:
+    UV_NO_CACHE: "1"
+  register: dependency_sync
+  changed_when: "'Audited' not in dependency_sync.stdout"
+  args:
+    creates: "{{ strugglebus_release_root }}/{{ strugglebus_release_version }}/.installed"
+  async: "{{ (strugglebus_release_lock_lease_seconds | default(7200)) - 60 }}"
+  poll: 5
+
+- name: Renew the release locks before application installation
+  ansible.builtin.include_tasks: renew_lock.yml
+
+- name: Install the application wheel without dependency resolution
+  ansible.builtin.command:
+    argv:
+      - uv
+      - pip
+      - install
+      - --python
+      - "{{ strugglebus_release_root }}/{{ strugglebus_release_version }}/venv/bin/python"
+      - --no-deps
+      - --reinstall
+      - >-
+        {{ strugglebus_release_root }}/{{ strugglebus_release_version
+        }}/{{ strugglebus_wheel_src | basename }}
+  environment:
+    UV_NO_CACHE: "1"
+  changed_when: true
+  args:
+    creates: "{{ strugglebus_release_root }}/{{ strugglebus_release_version }}/.installed"
+  async: "{{ (strugglebus_release_lock_lease_seconds | default(7200)) - 60 }}"
+  poll: 5
+
+- name: Renew the release locks before recording installed metadata
+  ansible.builtin.include_tasks: renew_lock.yml
+
+- name: Mark the immutable release installed
+  ansible.builtin.copy:
+    content: "{{ strugglebus_expected_installed_marker }}"
+    dest: "{{ strugglebus_release_root }}/{{ strugglebus_release_version }}/.installed"
+    owner: root
+    group: "{{ strugglebus_service_group }}"
+    mode: "0640"

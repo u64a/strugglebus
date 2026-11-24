@@ -1,0 +1,16 @@
+---
+- name: Parse every dynamically selected release task file
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: Parse optional verified release resolution tasks
+      ansible.builtin.import_tasks: ../roles/release/tasks/resolve_release_assets.yml
+
+    - name: Parse maintenance-window upgrade tasks
+      ansible.builtin.import_tasks: ../roles/release/tasks/maintenance.yml
+
+    - name: Parse maintenance configuration staging
+      ansible.builtin.import_tasks: ../roles/release/tasks/maintenance_configuration.yml
+
+    - name: Parse maintenance ownership guard
+      ansible.builtin.import_tasks: ../roles/release/tasks/maintenance_pending.yml

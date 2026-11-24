@@ -1,0 +1,180 @@
+---
+- name: Reject ambiguous verified-directory release inputs
+  ansible.builtin.assert:
+    that:
+      - strugglebus_verified_release_dir is string
+      - strugglebus_verified_release_dir is match('^/[^\\x00\\r\\n]{0,1023}$')
+      - strugglebus_release_version is defined
+      - strugglebus_release_version is match('^[0-9]+\\.[0-9]+\\.[0-9]+$')
+      - strugglebus_wheel_src is not defined
+      - strugglebus_wheel_sha256 is not defined
+      - strugglebus_requirements_lock_src is not defined
+      - strugglebus_requirements_lock_sha256 is not defined
+      - strugglebus_release_version not in ['0.2.5', '0.2.6', '0.2.28', '0.2.31', '0.2.32', '0.2.33', '0.2.34', '0.2.35', '0.2.36', '0.2.37']
+      - >-
+        strugglebus_assert_authenticated_github_acquisition
+        | default(false) | bool
+      - strugglebus_assert_immutable_github_release | default(false) | bool
+    fail_msg: >-
+      The optional verified release directory must be an absolute controller
+      path, must not be combined with legacy artifact inputs, and requires
+      explicit assertions that it was acquired through authenticated GitHub
+      access from the immutable canonical release. Versions 0.2.5, 0.2.6,
+      0.2.28, 0.2.31, 0.2.32, 0.2.33, 0.2.34, 0.2.35, 0.2.36, and 0.2.37 are permanently disqualified for production deployment.
+  when:
+    - >-
+      strugglebus_release_action
+      in ["initial_install", "maintenance", "prestage", "deploy"]
+    - strugglebus_verified_release_dir is defined
+
+- name: Inspect the optional verified release directory
+  ansible.builtin.stat:
+    path: "{{ strugglebus_verified_release_dir }}"
+    follow: false
+  delegate_to: localhost
+  become: false
+  register: strugglebus_verified_release_directory
+  when:
+    - >-
+      strugglebus_release_action
+      in ["initial_install", "maintenance", "prestage", "deploy"]
+    - strugglebus_verified_release_dir is defined
+
+- name: Require a canonical controller release directory
+  ansible.builtin.assert:
+    that:
+      - strugglebus_verified_release_directory.stat.isdir | default(false)
+      - not (strugglebus_verified_release_directory.stat.islnk | default(true))
+    fail_msg: The verified release input is not a canonical local directory.
+  when:
+    - >-
+      strugglebus_release_action
+      in ["initial_install", "maintenance", "prestage", "deploy"]
+    - strugglebus_verified_release_dir is defined
+
+- name: Validate the optional release directory fully offline
+  ansible.builtin.command:
+    argv:
+      - "{{ ansible_playbook_python }}"
+      - "{{ playbook_dir }}/../../scripts/release_bundle.py"
+      - validate
+      - "{{ strugglebus_verified_release_dir }}"
+      - --expected-repository
+      - NZCypher819/strugglebus
+      - --expected-current-schema
+      - "24"
+      - --required-protocol
+      - "1"
+      - --required-capability
+      - agent-access-freeze:global-v1
+      - --minimum-package-version
+      - "{{ strugglebus_release_version }}"
+      - --format
+      - ansible
+  environment:
+    HTTP_PROXY: ""
+    HTTPS_PROXY: ""
+    ALL_PROXY: ""
+    NO_PROXY: "*"
+  delegate_to: localhost
+  become: false
+  changed_when: false
+  check_mode: false
+  register: strugglebus_verified_release_validation
+  when:
+    - >-
+      strugglebus_release_action
+      in ["initial_install", "maintenance", "prestage", "deploy"]
+    - strugglebus_verified_release_dir is defined
+
+- name: Require bounded verified release facts
+  ansible.builtin.assert:
+    that:
+      - strugglebus_verified_release_validation.stdout | length <= 4096
+      - >-
+        (strugglebus_verified_release_validation.stdout | from_json).integrity
+        == "sha256-verified"
+      - >-
+        (strugglebus_verified_release_validation.stdout | from_json).authenticity
+        == "authenticated-github-acquisition-required"
+      - >-
+        (strugglebus_verified_release_validation.stdout | from_json).release_version
+        is match('^v[0-9]+\\.[0-9]+\\.[0-9]+$')
+      - >-
+        (strugglebus_verified_release_validation.stdout | from_json).package_version
+        == strugglebus_release_version
+      - >-
+        (strugglebus_verified_release_validation.stdout | from_json).release_version
+        == 'v' + strugglebus_release_version
+      - >-
+        (strugglebus_verified_release_validation.stdout | from_json).tag
+        == 'v' + strugglebus_release_version
+      - >-
+        (strugglebus_verified_release_validation.stdout | from_json).source_commit
+        is match('^[0-9a-f]{40}$')
+      - >-
+        (strugglebus_verified_release_validation.stdout | from_json).source_tree
+        is match('^[0-9a-f]{40}$')
+      - >-
+        (strugglebus_verified_release_validation.stdout | from_json).release_assets
+        | length == 5
+      - >-
+        (strugglebus_verified_release_validation.stdout | from_json).wheel_sha256
+        is match('^[0-9a-f]{64}$')
+      - >-
+        (
+          strugglebus_verified_release_validation.stdout
+          | from_json
+        ).requirements_lock_sha256 is match('^[0-9a-f]{64}$')
+    fail_msg: The offline release validator did not return exact sanitized facts.
+  when:
+    - >-
+      strugglebus_release_action
+      in ["initial_install", "maintenance", "prestage", "deploy"]
+    - strugglebus_verified_release_dir is defined
+
+- name: Derive existing release inputs from the verified directory
+  ansible.builtin.set_fact:
+    strugglebus_release_tag: >-
+      {{ (strugglebus_verified_release_validation.stdout | from_json).tag }}
+    strugglebus_release_source_commit: >-
+      {{ (strugglebus_verified_release_validation.stdout | from_json).source_commit }}
+    strugglebus_release_source_tree: >-
+      {{ (strugglebus_verified_release_validation.stdout | from_json).source_tree }}
+    strugglebus_release_assets: >-
+      {{ (strugglebus_verified_release_validation.stdout | from_json).release_assets }}
+    strugglebus_release_manifest_sha256: >-
+      {{
+        (
+          (strugglebus_verified_release_validation.stdout | from_json).release_assets
+          | selectattr(
+              'name',
+              'equalto',
+              'strugglebus-release-manifest-v1.json'
+            )
+          | first
+        ).sha256
+      }}
+    strugglebus_wheel_src: >-
+      {{ (strugglebus_verified_release_validation.stdout | from_json).wheel_src }}
+    strugglebus_wheel_sha256: >-
+      {{ (strugglebus_verified_release_validation.stdout | from_json).wheel_sha256 }}
+    strugglebus_requirements_lock_src: >-
+      {{
+        (
+          strugglebus_verified_release_validation.stdout
+          | from_json
+        ).requirements_lock_src
+      }}
+    strugglebus_requirements_lock_sha256: >-
+      {{
+        (
+          strugglebus_verified_release_validation.stdout
+          | from_json
+        ).requirements_lock_sha256
+      }}
+  when:
+    - >-
+      strugglebus_release_action
+      in ["initial_install", "maintenance", "prestage", "deploy"]
+    - strugglebus_verified_release_dir is defined

@@ -1,0 +1,7 @@
+[Unit]
+Description=Renew the Strugglebus satellite proxy certificate when due
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/libexec/strugglebus-satellite-pki {{ strugglebus_config_dir }}/credentials/satellite-ca-key {{ strugglebus_satellite_ca_cert_path | default('/etc/strugglebus-satellite/ca.crt') }} /etc/strugglebus-satellite {{ strugglebus_satellite_hostname }} caddy
+ExecStartPost=/usr/bin/systemctl try-restart strugglebus-satellite-proxy.service

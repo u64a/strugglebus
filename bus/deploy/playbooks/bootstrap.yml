@@ -1,0 +1,32 @@
+---
+- name: Configure and first-install the provisioned Strugglebus guest
+  hosts: strugglebus_guests
+  become: true
+  gather_facts: false
+  pre_tasks:
+    - name: Wait for key-only guest SSH
+      ansible.builtin.wait_for_connection:
+        connect_timeout: 5
+        sleep: 5
+        timeout: 300
+
+    - name: Gather guest platform facts
+      ansible.builtin.setup:
+
+    - name: Require the supported production platform
+      ansible.builtin.assert:
+        that:
+          - ansible_facts.distribution == "Debian"
+          - ansible_facts.distribution_major_version == "13"
+          - ansible_facts.python.version.major == 3
+          - ansible_facts.python.version.minor == 13
+        fail_msg: Deployment requires Debian 13 and Python 3.13.
+  roles:
+    - role: deployment_identity
+    - role: guest_base
+    - role: lan_ca
+    - role: caddy
+    - role: systemd
+    - role: release
+      vars:
+        strugglebus_release_action: initial_install

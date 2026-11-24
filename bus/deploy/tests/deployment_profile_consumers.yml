@@ -1,0 +1,21 @@
+---
+# Prove that the roles consuming the validated profile accept the single-name
+# development identity while remaining inert in check mode.
+- name: Exercise deployment profile consumers in development mode
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars_files:
+    - ../inventory/example/group_vars/all.yml
+  vars:
+    strugglebus_deployment_profile: development
+    strugglebus_domain: dev-bus.u64.lan
+    strugglebus_external_domain: dev-bus.u64.lan
+    strugglebus_effective_domain: dev-bus.u64.lan
+    strugglebus_tls_mode: internal
+    strugglebus_lan_ca_stage: false
+    strugglebus_lan_ca_renewal_enabled: false
+
+  roles:
+    - role: deployment_identity
+    - role: lan_ca

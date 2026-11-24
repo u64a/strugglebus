@@ -1,0 +1,316 @@
+---
+- name: Inspect existing protected maintenance state
+  ansible.builtin.stat:
+    path: /var/lib/strugglebus-maintenance
+    follow: false
+  register: strugglebus_maintenance_directory
+
+- name: Require safe existing maintenance state ownership
+  ansible.builtin.assert:
+    that:
+      - not (strugglebus_maintenance_directory.stat.exists | bool) or (
+          strugglebus_maintenance_directory.stat.isdir | default(false)
+          and not (strugglebus_maintenance_directory.stat.islnk | default(true))
+          and strugglebus_maintenance_directory.stat.pw_name | default('') == 'root'
+          and strugglebus_maintenance_directory.stat.mode | default('') == '0700')
+
+- name: Create durable maintenance and readable helper directories
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "{{ item.mode }}"
+  loop:
+    - path: /var/lib/strugglebus-maintenance
+      mode: "0700"
+    - path: /usr/local/libexec/strugglebus-maintenance
+      mode: "0755"
+
+- name: Inspect the durable maintenance record before changing helpers
+  ansible.builtin.stat:
+    path: /var/lib/strugglebus-maintenance/operation.json
+    follow: false
+  register: strugglebus_maintenance_record_stat
+
+- name: Require protected existing maintenance record metadata
+  ansible.builtin.assert:
+    that:
+      - strugglebus_maintenance_record_stat.stat.isreg | default(false)
+      - not (strugglebus_maintenance_record_stat.stat.islnk | default(true))
+      - strugglebus_maintenance_record_stat.stat.nlink == 1
+      - strugglebus_maintenance_record_stat.stat.pw_name == 'root'
+      - strugglebus_maintenance_record_stat.stat.mode == '0600'
+      - strugglebus_maintenance_record_stat.stat.size <= 65536
+  when: strugglebus_maintenance_record_stat.stat.exists
+
+- name: Read protected maintenance bindings
+  ansible.builtin.slurp:
+    src: /var/lib/strugglebus-maintenance/operation.json
+  register: strugglebus_maintenance_record_bytes
+  when: strugglebus_maintenance_record_stat.stat.exists
+  no_log: true
+
+- name: Classify the existing maintenance operation
+  ansible.builtin.set_fact:
+    strugglebus_maintenance_existing: >-
+      {{
+        (strugglebus_maintenance_record_bytes.content | b64decode | from_json)
+        if strugglebus_maintenance_record_stat.stat.exists else {}
+      }}
+    strugglebus_maintenance_helpers:
+      - source: "{{ role_path }}/../guest_base/files/strugglebus-maintenance.py"
+        name: strugglebus-maintenance
+        sha256: b14ff2da4f13071fa75c511b5ca4acc35159897de230d22584a8e809f65b9834
+      - source: "{{ role_path }}/../guest_base/files/strugglebus-validate-maintenance-config.py"
+        name: strugglebus-validate-maintenance-config
+        sha256: 3bda153a3b502b33452aa15d1a0ba01443592a4ee5ce0a3fd690b6b6de0fd58c
+      - source: "{{ role_path }}/../guest_base/files/strugglebus-inspect-access-freeze.py"
+        name: strugglebus-inspect-access-freeze
+        sha256: 6dc98305ef1326235803e79ea2b629ec5a3ac180159768d194fdf53c7e2ff9d9
+      - source: "{{ role_path }}/../systemd/templates/sqlite_backup.py.j2"
+        name: strugglebus-sqlite-backup
+        sha256: 88f3d71550b147b3cdb26c201b5e60bd156d914a68687e75bb3d6cb85c4dd5b3
+  no_log: true
+
+- name: Reject a distinct candidate while maintenance is unresolved
+  ansible.builtin.assert:
+    that:
+      - >-
+        not strugglebus_maintenance_existing
+        or (
+          strugglebus_maintenance_existing.version == 1
+          and (
+            strugglebus_maintenance_existing.phase == 'complete'
+            or strugglebus_maintenance_existing.binding.candidate == strugglebus_release_version
+          )
+        )
+    fail_msg: Resolve the exact pending maintenance operation before a distinct upgrade.
+
+- name: Bind the immutable maintenance helper bundle
+  ansible.builtin.set_fact:
+    strugglebus_maintenance_helper_root: >-
+      /usr/local/libexec/strugglebus-maintenance/{{
+        strugglebus_maintenance_helpers | map(attribute='sha256') | join('') | hash('sha256')
+      }}
+
+- name: Create the content-bound maintenance helper directory
+  ansible.builtin.file:
+    path: "{{ strugglebus_maintenance_helper_root }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Preserve helper identity for an unresolved operation
+  ansible.builtin.assert:
+    that:
+      - strugglebus_maintenance_existing.binding.helper_sha256[item.name] == item.sha256
+    fail_msg: Resume using the exact reviewed helper revision recorded by this operation.
+  loop: "{{ strugglebus_maintenance_helpers }}"
+  when:
+    - strugglebus_maintenance_existing | length > 0
+    - strugglebus_maintenance_existing.phase != 'complete'
+
+- name: Validate and install the scoped maintenance runtime
+  ansible.builtin.include_tasks: ../../guest_base/tasks/validated_python_helper.yml
+  vars:
+    strugglebus_python_helper:
+      source: "{{ item.source }}"
+      destination: "{{ strugglebus_maintenance_helper_root }}/{{ item.name }}"
+      destination_python: /usr/bin/python3.13
+      sha256: "{{ item.sha256 }}"
+      owner: root
+      group: root
+      mode: "0755"
+      install_task: Install the reviewed maintenance helper
+      callables: [main]
+      contract: ""
+  loop: "{{ strugglebus_maintenance_helpers }}"
+
+- name: Require an updater socket outside application writable directories
+  ansible.builtin.assert:
+    that:
+      - updater_socket is string
+      - >-
+        updater_socket == '' or (
+          updater_socket is match('^/[A-Za-z0-9_./-]+$')
+          and updater_socket | length <= 107
+          and '..' not in updater_socket.split('/')
+          and '.' not in updater_socket.split('/')
+          and '//' not in updater_socket
+          and not updater_socket.endswith('/')
+          and updater_socket != item
+          and not updater_socket.startswith(item ~ '/')
+        )
+    fail_msg: Updater IPC must use a protected absolute socket path outside application storage.
+  vars:
+    updater_socket: "{{ strugglebus_updater_socket_path | default('') }}"
+  loop:
+    - "{{ strugglebus_data_dir }}"
+    - "{{ strugglebus_runtime_dir }}"
+    - "{{ strugglebus_backup_dir }}"
+
+- name: Validate explicitly configured updater application ceilings
+  ansible.builtin.assert:
+    that:
+      - vars['strugglebus_' ~ item.name] is integer
+      - vars['strugglebus_' ~ item.name] >= 1
+      - vars['strugglebus_' ~ item.name] <= item.maximum
+    fail_msg: Updater application limits may only narrow the approved ceilings.
+  when: ('strugglebus_' ~ item.name) in vars
+  loop:
+    - {name: updater_confirm_session_per_minute, maximum: 3}
+    - {name: updater_confirm_global_per_minute, maximum: 6}
+    - {name: updater_review_seconds, maximum: 300}
+    - {name: updater_review_tickets, maximum: 8}
+
+- name: Render the candidate service configuration without activating it
+  ansible.builtin.set_fact:
+    strugglebus_maintenance_unit_content: >-
+      {{ lookup('ansible.builtin.template', role_path + '/../systemd/templates/strugglebus.service.j2') }}
+
+- name: Bind the candidate service configuration to its exact bytes
+  ansible.builtin.set_fact:
+    strugglebus_maintenance_config_sha256: "{{ strugglebus_maintenance_unit_content | hash('sha256') }}"
+
+- name: Reject changed configuration for an unresolved operation
+  ansible.builtin.assert:
+    that:
+      - >-
+        not strugglebus_maintenance_existing
+        or strugglebus_maintenance_existing.phase == 'complete'
+        or strugglebus_maintenance_existing.binding.config_sha256
+           == strugglebus_maintenance_config_sha256
+    fail_msg: An unresolved operation requires its exact original candidate configuration.
+
+- name: Validate candidate-only settings without lifespan database or credential reads
+  ansible.builtin.command:
+    argv:
+      - /usr/bin/timeout
+      - --signal=TERM
+      - --kill-after=10s
+      - 45s
+      - /usr/sbin/runuser
+      - --user
+      - "{{ strugglebus_service_user }}"
+      - --
+      - /usr/bin/env
+      - -i
+      - PATH=/usr/bin:/bin
+      - LANG=C.UTF-8
+      - /usr/bin/python3.13
+      - -I
+      - "{{ strugglebus_maintenance_helper_root }}/strugglebus-validate-maintenance-config"
+      - --unit-stdin
+      - --candidate-python
+      - "{{ strugglebus_release_root }}/{{ strugglebus_release_version }}/venv/bin/python"
+      - --release-id
+      - "{{ strugglebus_release_version }}"
+    stdin: "{{ strugglebus_maintenance_unit_content }}"
+    stdin_add_newline: false
+  register: strugglebus_maintenance_config_probe
+  changed_when: false
+  no_log: true
+
+- name: Record the verified candidate settings
+  ansible.builtin.set_fact:
+    strugglebus_maintenance_candidate_settings: "{{ strugglebus_maintenance_config_probe.stdout | from_json }}"
+    strugglebus_maintenance_helper_hashes: >-
+      {{ dict(strugglebus_maintenance_helpers | map(attribute='name')
+              | zip(strugglebus_maintenance_helpers | map(attribute='sha256'))) }}
+
+- name: Observe the guest-only operator source under its password control fence
+  ansible.builtin.command:
+    argv:
+      - /usr/bin/timeout
+      - --signal=TERM
+      - --kill-after=5s
+      - 30s
+      - /usr/bin/python3.13
+      - -I
+      - "{{ strugglebus_maintenance_helper_root }}/strugglebus-maintenance"
+      - credential
+    stdin: "{{ {'unit_content': strugglebus_maintenance_unit_content} | to_json }}"
+    stdin_add_newline: false
+  register: strugglebus_maintenance_operator_observation
+  changed_when: false
+  failed_when: false
+  no_log: true
+
+- name: Require the human-prepared verifier before any outage or activation
+  ansible.builtin.assert:
+    that:
+      - strugglebus_maintenance_operator_observation.rc == 0
+    fail_msg: >-
+      Operator credential preflight refused. This invocation has not started
+      an outage or activation; earlier unresolved maintenance remains pending.
+      For first setup with no unresolved operation, the verified candidate is
+      already staged:
+      use that candidate's installed operator password command from the
+      protected guest root terminal, then rerun these exact deployment inputs.
+      Resolve invalid source permissions or an invalid verifier locally; do
+      not provide passwords through Ansible.
+
+- name: Install the protected human emergency entry point for this candidate
+  ansible.builtin.include_tasks: ../../systemd/tasks/operator_controls.yml
+
+- name: Bind the complete maintenance request
+  ansible.builtin.set_fact:
+    strugglebus_maintenance_request:
+      release_root: "{{ strugglebus_release_root }}"
+      state_dir: /var/lib/strugglebus-maintenance
+      backup_dir: "{{ strugglebus_backup_dir }}"
+      database: "{{ strugglebus_database_path }}"
+      unit: /etc/systemd/system/strugglebus.service
+      current: "{{ strugglebus_current_link }}"
+      candidate_config: "/var/lib/strugglebus-maintenance/candidate-{{ strugglebus_maintenance_config_sha256 }}.service"
+      helper_root: "{{ strugglebus_maintenance_helper_root }}"
+      helper_sha256: "{{ strugglebus_maintenance_helper_hashes }}"
+      candidate: "{{ strugglebus_release_version }}"
+      candidate_schema: "{{ strugglebus_maintenance_candidate_settings.candidate_schema }}"
+      config_sha256: "{{ strugglebus_maintenance_config_sha256 }}"
+      marker:
+        wheel_filename: "{{ strugglebus_wheel_src | basename }}"
+        wheel_sha256: "{{ strugglebus_wheel_sha256 }}"
+        requirements_lock_sha256: "{{ strugglebus_requirements_lock_sha256 }}"
+        agent_access_freeze: global-v1
+      environment: "{{ strugglebus_maintenance_candidate_settings.environment }}"
+      service_user: "{{ strugglebus_service_user }}"
+      app_module: "{{ strugglebus_app_target.split(':')[0] }}"
+      bind_port: "{{ strugglebus_bind_port }}"
+      health_url: "{{ strugglebus_health_url }}"
+      ca_path: "{{ strugglebus_caddy_ca_path }}"
+      operator_credential: >-
+        {{ (strugglebus_maintenance_operator_observation.stdout | from_json).operator_credential }}
+
+- name: Stage and verify exact unit bytes under the ownership fence
+  ansible.builtin.command:
+    argv:
+      - /usr/bin/timeout
+      - --signal=TERM
+      - --kill-after=10s
+      - 90s
+      - /usr/bin/python3.13
+      - -I
+      - "{{ strugglebus_maintenance_helper_root }}/strugglebus-maintenance"
+      - stage
+    stdin: >-
+      {{
+        {
+          'request': strugglebus_maintenance_request,
+          'unit_content': strugglebus_maintenance_unit_content,
+          'locks': [
+            {
+              'metadata': '/run/lock/strugglebus/release.json',
+              'token': strugglebus_release_lock_metadata.token
+            },
+            {
+              'metadata': strugglebus_data_dir + '/.access-freeze-lock/release.json',
+              'token': strugglebus_access_freeze_lock_metadata.token
+            }
+          ]
+        } | to_json
+      }}
+  changed_when: true
+  no_log: true

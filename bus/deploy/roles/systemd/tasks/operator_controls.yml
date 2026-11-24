@@ -1,0 +1,98 @@
+---
+- name: Require the fixed unprivileged operator execution identity
+  ansible.builtin.assert:
+    that:
+      - strugglebus_service_user == 'strugglebus'
+      - strugglebus_service_group == 'strugglebus'
+
+- name: Validate literal operator helper paths before rendering code
+  ansible.builtin.assert:
+    that:
+      - item is string
+      - item is match('^/[A-Za-z0-9_./-]+$')
+      - "'..' not in item.split('/')"
+      - "'//' not in item"
+      - "'/./' not in item"
+      - not item.endswith('/')
+  loop:
+    - "{{ strugglebus_config_dir }}"
+    - "{{ strugglebus_current_link }}"
+    - "{{ strugglebus_data_dir }}"
+    - "{{ strugglebus_database_path }}"
+    - "{{ strugglebus_backup_dir }}"
+
+- name: Inspect the reviewed operator helper template
+  ansible.builtin.stat:
+    path: "{{ role_path }}/../systemd/templates/strugglebus-operator.py.j2"
+    checksum_algorithm: sha256
+    follow: false
+  delegate_to: localhost
+  become: false
+  check_mode: false
+  register: strugglebus_operator_template
+
+- name: Require the exact reviewed operator template
+  ansible.builtin.assert:
+    that:
+      - strugglebus_operator_template.stat.isreg | default(false)
+      - not (strugglebus_operator_template.stat.islnk | default(true))
+      - strugglebus_operator_template.stat.nlink == 1
+      - >-
+        strugglebus_operator_template.stat.checksum
+        == '89464088a6326054844b1dbc89de16a7f315b0cff8df0f670392c5beeb1df527'
+  delegate_to: localhost
+  become: false
+
+- name: Reserve a private controller file for the rendered operator helper
+  ansible.builtin.tempfile:
+    state: file
+    prefix: strugglebus-operator-
+    suffix: .py
+  delegate_to: localhost
+  become: false
+  check_mode: false
+  register: strugglebus_operator_rendered
+
+- name: Validate and install the rendered root-only operator entry point
+  block:
+    - name: Render only validated non-secret helper parameters
+      ansible.builtin.template:
+        src: "{{ role_path }}/../systemd/templates/strugglebus-operator.py.j2"
+        dest: "{{ strugglebus_operator_rendered.path }}"
+        mode: "0600"
+      delegate_to: localhost
+      become: false
+      check_mode: false
+
+    - name: Bind the rendered helper to its exact bytes
+      ansible.builtin.stat:
+        path: "{{ strugglebus_operator_rendered.path }}"
+        checksum_algorithm: sha256
+        follow: false
+      delegate_to: localhost
+      become: false
+      check_mode: false
+      register: strugglebus_operator_rendered_identity
+
+    - name: Validate and install the concrete operator program
+      ansible.builtin.include_tasks: ../../guest_base/tasks/validated_python_helper.yml
+      vars:
+        strugglebus_python_helper:
+          source: "{{ strugglebus_operator_rendered.path }}"
+          destination: /usr/local/sbin/strugglebus-operator
+          destination_python: /usr/bin/python3.13
+          sha256: "{{ strugglebus_operator_rendered_identity.stat.checksum }}"
+          owner: root
+          group: root
+          mode: "0755"
+          install_task: Install the reviewed local operator entry point
+          callables: [main, command]
+          contract: ""
+  always:
+    - name: Remove only this invocation's private rendered helper
+      ansible.builtin.file:
+        path: "{{ strugglebus_operator_rendered.path }}"
+        state: absent
+      delegate_to: localhost
+      become: false
+      check_mode: false

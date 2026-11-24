@@ -1,0 +1,209 @@
+#!/usr/bin/python3.13
+"""Root-owned fixed entry point for the existing human SSH authority."""
+
+from contextlib import contextmanager
+import json
+import os
+from pathlib import Path
+import re
+import subprocess
+import sys
+import tempfile
+import uuid
+
+RELEASE_LOCK_HELPER = "/usr/local/libexec/strugglebus-release-lock"
+RELEASE_LOCK_PATH = "/run/lock/strugglebus/release.lock"
+RELEASE_METADATA_PATH = "/run/lock/strugglebus/release.json"
+RELEASE_CONTROL_PATH = "/run/lock/strugglebus/control.lock"
+RELEASE_LEASE_SECONDS = 7200
+
+
+class OperatorControlError(RuntimeError):
+    pass
+
+
+def lease_command(action):
+    return ["/usr/bin/python3.13", "-I", RELEASE_LOCK_HELPER, action]
+
+
+def checked(command, environment, *, timeout, allowed=(0,), input_bytes=None):
+    result = subprocess.run(
+        command, check=False, capture_output=True, timeout=timeout, env=environment,
+        input=input_bytes,
+    )
+    if result.returncode not in allowed or len(result.stdout) > 4096:
+        raise OperatorControlError("protected operator coordination failed")
+    return result.stdout
+
+
+def acquire_release(environment):
+    raw = checked(
+        lease_command("acquire") + [
+            "--lock-path", RELEASE_LOCK_PATH,
+            "--metadata-path", RELEASE_METADATA_PATH,
+            "--wait-seconds", "30", "--lease-seconds", str(RELEASE_LEASE_SECONDS),
+        ],
+        environment, timeout=40,
+    )
+    def unique(pairs):
+        value = {}
+        for key, item in pairs:
+            if key in value:
+                raise OperatorControlError("ambiguous release ownership response")
+            value[key] = item
+        return value
+
+    value = json.loads(raw, object_pairs_hook=unique)
+    if (
+        not isinstance(value, dict)
+        or set(value) != {
+            "version", "pid", "start_ticks", "token", "lease_seconds", "heartbeat_ns",
+        }
+        or type(value["version"]) is not int or value["version"] != 1
+        or any(type(value[field]) is not int or value[field] < 1 for field in (
+            "pid", "start_ticks", "lease_seconds", "heartbeat_ns",
+        ))
+        or value["pid"] < 2
+        or value["lease_seconds"] != RELEASE_LEASE_SECONDS
+        or not isinstance(value["token"], str)
+        or re.fullmatch(r"[0-9a-f]{64}", value["token"]) is None
+    ):
+        raise OperatorControlError("protected release ownership could not be established")
+    return value
+
+
+def require_open_file_support(environment):
+    raw = checked(
+        ["/usr/bin/systemd-run", "--version"], environment, timeout=10,
+    )
+    version = re.match(rb"systemd ([0-9]+)(?:\s|$)", raw)
+    if version is None or int(version[1]) < 253:
+        raise OperatorControlError("systemd OpenFile support is required")
+
+
+def release_owned(token, environment):
+    # Reuse the existing helper without putting the ownership token in argv.
+    checked(
+        ["/usr/bin/python3.13", "-I", "-c",
+         "import json,runpy,sys; from pathlib import Path; "
+         "runpy.run_path(sys.argv[1])['release'](Path(sys.argv[2]),json.load(sys.stdin)['token'])",
+         RELEASE_LOCK_HELPER, RELEASE_METADATA_PATH],
+        environment, timeout=15,
+        input_bytes=json.dumps({"token": token}, separators=(",", ":")).encode("ascii"),
+    )
+
+
+@contextmanager
+def private_binding(owner):
+    with tempfile.TemporaryDirectory(
+        prefix=".operator-", dir=Path(RELEASE_METADATA_PATH).parent,
+    ) as directory:
+        path = Path(directory) / "lease"
+        descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+        with os.fdopen(descriptor, "wb") as target:
+            target.write(json.dumps(owner, sort_keys=True, separators=(",", ":")).encode("ascii"))
+            target.flush()
+            os.fsync(target.fileno())
+        yield path
+
+
+def stop_and_verify(unit, environment):
+    checked(
+        ["/usr/bin/systemctl", "--no-ask-password", "stop", unit],
+        environment, timeout=45, allowed=(0, 4, 5),
+    )
+    raw = checked(
+        ["/usr/bin/systemctl", "--no-ask-password", "show", unit,
+         "--property=LoadState", "--property=ActiveState"],
+        environment, timeout=15,
+    ).decode("ascii")
+    pairs = [line.split("=", 1) for line in raw.splitlines()]
+    if (
+        len(pairs) != 2 or any(len(pair) != 2 for pair in pairs)
+        or dict(pairs).get("LoadState") not in {"loaded", "not-found"}
+        or dict(pairs).get("ActiveState") not in {"inactive", "failed"}
+    ):
+        raise OperatorControlError("operator unit quiescence could not be established")
+
+
+def command(binding_path):
+    unit = "strugglebus-operator-" + uuid.uuid4().hex
+    return [
+        "/usr/bin/systemd-run", "--quiet", "--wait", "--collect", "--pty",
+        "--service-type=exec", "--unit=" + unit,
+        "--property=User=" + {{ strugglebus_service_user | to_json }},
+        "--property=Group=" + {{ strugglebus_service_group | to_json }},
+        "--property=WorkingDirectory=" + {{ strugglebus_data_dir | to_json }},
+        "--property=RuntimeDirectory=" + unit,
+        "--property=RuntimeDirectoryMode=0700",
+        "--property=LoadCredential=admin-token:" + {{ (strugglebus_config_dir ~ '/credentials/admin-token') | to_json }},
+        "--property=LoadCredential=operator-lease:" + str(binding_path),
+        "--property=OpenFile=" + RELEASE_CONTROL_PATH + ":operator-control:read-only",
+        "--property=OpenFile=" + RELEASE_METADATA_PATH + ":operator-metadata:read-only",
+        "--property=UMask=0077",
+        "--property=NoNewPrivileges=yes", "--property=ProtectSystem=strict",
+        "--property=ProtectHome=yes", "--property=PrivateTmp=yes",
+        "--property=ProtectKernelTunables=yes", "--property=ProtectKernelModules=yes",
+        "--property=ProtectControlGroups=yes", "--property=RestrictSUIDSGID=yes",
+        "--property=RestrictAddressFamilies=AF_UNIX", "--property=RuntimeMaxSec=3600",
+        "--property=TimeoutStartSec=60", "--property=TimeoutStopSec=30",
+        "--property=ReadWritePaths=" + {{ (strugglebus_data_dir ~ ' ' ~ strugglebus_backup_dir) | to_json }},
+        "--setenv=STRUGGLEBUS_ADMIN_CREDENTIAL_PATH=/run/credentials/" + unit + ".service/admin-token",
+        "--setenv=STRUGGLEBUS_DATA_DIR=" + {{ strugglebus_data_dir | to_json }},
+        "--setenv=STRUGGLEBUS_DATABASE_PATH=" + {{ strugglebus_database_path | to_json }},
+        "--setenv=STRUGGLEBUS_BACKUP_DIR=" + {{ strugglebus_backup_dir | to_json }},
+        "--setenv=STRUGGLEBUS_RUNTIME_DIR=/run/" + unit,
+        "--", {{ (strugglebus_current_link ~ '/venv/bin/strugglebus') | to_json }},
+        "operator", "emergency",
+    ]
+
+
+def main():
+    if len(sys.argv) != 1 or os.geteuid() != 0 or not sys.stdin.isatty():
+        sys.stderr.write("Use the already-authorized local human root terminal.\n")
+        return 2
+    terminal = os.environ.get("TERM", "dumb")
+    if re.fullmatch(r"[A-Za-z0-9_.+-]{1,64}", terminal) is None:
+        terminal = "dumb"
+    environment = {"PATH": "/usr/sbin:/usr/bin:/sbin:/bin", "LANG": "C.UTF-8", "TERM": terminal}
+    unit = None
+    token = None
+    settled = False
+    try:
+        require_open_file_support(environment)
+        owner = acquire_release(environment)
+        token = owner["token"]
+        with private_binding(owner) as binding_path:
+            arguments = command(binding_path)
+            unit = next(value.removeprefix("--unit=") for value in arguments if value.startswith("--unit="))
+            # The actual mutator takes delegated control.lock before any database
+            # work; losing this runner does not release that process-held fence.
+            result = subprocess.run(
+                arguments, check=False, env=environment, timeout=3700,
+            )
+        settled = result.returncode >= 0
+        stop_and_verify(unit + ".service", environment)
+        if not settled:
+            raise OperatorControlError("operator runner termination was ambiguous")
+        release_owned(token, environment)
+        token = None
+        return result.returncode
+    except (
+        OSError, ValueError, RecursionError, OperatorControlError,
+        subprocess.TimeoutExpired, KeyboardInterrupt,
+    ):
+        if token is not None:
+            if unit is not None:
+                try:
+                    stop_and_verify(unit + ".service", environment)
+                except (OSError, ValueError, OperatorControlError, subprocess.TimeoutExpired):
+                    sys.stderr.write("Operator unit cleanup is unresolved. ")
+            sys.stderr.write(
+                "Do not bypass release ownership or the process-held control fence. "
+            )
+        sys.stderr.write("The protected operator menu did not complete; use the local recovery runbook.\n")
+        return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -1,0 +1,21 @@
+---
+# Role vars rather than defaults, deliberately. Inventory group_vars and
+# host_vars must not be able to widen this guard by redefining the reserved
+# identities, the accepted profile set or the hostname shape. Defaults would
+# lose to inventory; role vars do not.
+strugglebus_profile: >-
+  {{ strugglebus_deployment_profile | default('production') }}
+
+# Identities that only a production deployment may ever carry. A development
+# deployment is refused if it names any of them, so a rehearsal host cannot
+# quietly answer for, or request a certificate as, the real service.
+strugglebus_reserved_domains:
+  - bus.lan
+  - bus.u64.lan
+  - ca.u64.lan
+
+# A conservative LAN hostname shape: lowercase labels, no leading or trailing
+# hyphen, no empty label. This is about catching a mistyped or injected value
+# before it reaches a certificate request or a Caddy site address.
+strugglebus_hostname_pattern: >-
+  ^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)*$

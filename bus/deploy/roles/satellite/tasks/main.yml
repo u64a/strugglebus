@@ -1,0 +1,152 @@
+---
+# Satellite path on the bus guest: the site CA, the satellite proxy and the
+# tunnel to the gateway. A separate Caddy process and WireGuard interface, so
+# the LAN site and its activation contract are untouched. Inert unless
+# strugglebus_satellite_hostname is set.
+- name: Require complete satellite settings
+  ansible.builtin.assert:
+    that:
+      - strugglebus_satellite_hostname | default('') is match('^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$')
+      - strugglebus_satellite_wg_address | default('') is match('^([0-9]{1,3}\.){3}[0-9]{1,3}/(2[4-9]|3[0-2])$')
+      - strugglebus_satellite_gateway_wg_address | default('') is match('^([0-9]{1,3}\.){3}[0-9]{1,3}$')
+      - strugglebus_satellite_gateway_endpoint | default('') is match('^[A-Za-z0-9.-]+:[0-9]{1,5}$')
+      - strugglebus_satellite_gateway_public_key | default('') is match('^[A-Za-z0-9+/]{42}[AEIMQUYcgkosw048]=$')
+      - strugglebus_bind_host in ['127.0.0.1', '::1']
+    fail_msg: >-
+      Satellites need the gateway's public hostname, this guest's tunnel
+      address (CIDR), the gateway's tunnel address, its host:port endpoint and
+      its WireGuard public key. The application must stay on loopback.
+
+- name: Install the tunnel tools
+  ansible.builtin.apt:
+    name: [wireguard-tools, nftables, openssl]
+    state: present
+
+# Debian's nftables.service flushes every table whenever it starts or an
+# upgrade restarts it. Here that would drop the tunnel's firewall while the
+# tunnel stays up, exposing this guest's 22 and 443 to the gateway. This role
+# does not use /etc/nftables.conf, which is Debian's empty default here.
+- name: Keep Debian's nftables.service from ever starting
+  ansible.builtin.systemd:
+    name: nftables.service
+    masked: true
+
+- name: Create the satellite directory readable by Caddy
+  ansible.builtin.file:
+    path: /etc/strugglebus-satellite
+    state: directory
+    owner: root
+    group: caddy
+    mode: "0755"
+
+- name: Install the satellite certificate helper
+  ansible.builtin.copy:
+    src: strugglebus-satellite-pki.sh
+    dest: /usr/local/libexec/strugglebus-satellite-pki
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Ensure the site CA and the satellite proxy certificate
+  ansible.builtin.command:
+    argv:
+      - /usr/local/libexec/strugglebus-satellite-pki
+      - "{{ strugglebus_config_dir }}/credentials/satellite-ca-key"
+      - "{{ strugglebus_satellite_ca_cert_path | default('/etc/strugglebus-satellite/ca.crt') }}"
+      - /etc/strugglebus-satellite
+      - "{{ strugglebus_satellite_hostname }}"
+      - caddy
+  register: satellite_pki
+  changed_when: "'created' in satellite_pki.stdout or 'issued' in satellite_pki.stdout"
+  when: not ansible_check_mode
+
+- name: Generate the guest tunnel key once, on the guest
+  ansible.builtin.shell:
+    cmd: umask 077 && wg genkey > /etc/wireguard/strugglebus-satellite.key
+    creates: /etc/wireguard/strugglebus-satellite.key
+  no_log: true
+  when: not ansible_check_mode
+
+- name: Install the tunnel firewall and interface
+  ansible.builtin.template:
+    src: "{{ item.src }}"
+    dest: "/etc/wireguard/{{ item.dest }}"
+    owner: root
+    group: root
+    mode: "0600"
+  loop:
+    - src: strugglebus-satellite.nft.j2
+      dest: strugglebus-satellite.nft
+    - src: sbsat0.conf.j2
+      dest: sbsat0.conf
+  register: satellite_tunnel_files
+
+- name: Bring the tunnel up with its firewall
+  ansible.builtin.systemd_service:
+    name: wg-quick@sbsat0
+    enabled: true
+    state: "{{ 'restarted' if satellite_tunnel_files is changed else 'started' }}"
+  when: not ansible_check_mode
+
+- name: Install the satellite proxy configuration
+  ansible.builtin.template:
+    src: Caddyfile.satellite.j2
+    dest: /etc/strugglebus-satellite/Caddyfile
+    owner: root
+    group: caddy
+    mode: "0640"
+    validate: >-
+      {{ omit if ansible_check_mode else '/usr/bin/caddy validate --adapter caddyfile --config %s' }}
+  register: satellite_proxy_config
+
+- name: Install the satellite proxy and renewal units
+  ansible.builtin.template:
+    src: "{{ item }}.j2"
+    dest: "/etc/systemd/system/{{ item }}"
+    owner: root
+    group: root
+    mode: "0644"
+  loop:
+    - strugglebus-satellite-proxy.service
+    - strugglebus-satellite-renew.service
+    - strugglebus-satellite-renew.timer
+  register: satellite_units
+
+- name: Reload systemd for changed satellite units
+  ansible.builtin.systemd_service:
+    daemon_reload: true
+  when:
+    - not ansible_check_mode
+    - satellite_units is changed
+
+- name: Run the satellite proxy
+  ansible.builtin.systemd_service:
+    name: strugglebus-satellite-proxy
+    enabled: true
+    state: >-
+      {{
+        'restarted'
+        if (satellite_proxy_config is changed or satellite_units is changed
+            or satellite_tunnel_files is changed or satellite_pki is changed)
+        else 'started'
+      }}
+  when: not ansible_check_mode
+
+- name: Schedule the satellite certificate renewal check
+  ansible.builtin.systemd_service:
+    name: strugglebus-satellite-renew.timer
+    enabled: true
+    state: started
+  when: not ansible_check_mode
+
+- name: Read the guest tunnel public key
+  ansible.builtin.shell:
+    cmd: wg pubkey < /etc/wireguard/strugglebus-satellite.key
+  register: satellite_guest_public_key
+  changed_when: false
+  when: not ansible_check_mode
+
+- name: Report the guest tunnel public key for the gateway peer
+  ansible.builtin.debug:
+    msg: "Gateway peer public key for this guest: {{ satellite_guest_public_key.stdout }}"
+  when: not ansible_check_mode

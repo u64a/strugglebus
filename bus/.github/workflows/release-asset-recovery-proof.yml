@@ -1,0 +1,62 @@
+name: Prove release asset recovery
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: immutable-release-publication
+  cancel-in-progress: false
+
+jobs:
+  prove-read-only-recovery:
+    name: Prove exact read-only v0.2.3 asset recovery
+    if: >-
+      github.repository == 'NZCypher819/strugglebus' &&
+      github.actor == 'NZCypher819' &&
+      github.event_name == 'workflow_dispatch' &&
+      github.ref == 'refs/heads/main' &&
+      github.sha == github.workflow_sha
+    runs-on: [self-hosted, prox-runner]
+    timeout-minutes: 5
+    steps:
+      - name: Check out exact trusted main workflow commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          ref: ${{ github.workflow_sha }}
+
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version: "0.12.7"
+          checksum: "788f18abea7c5f55d6216e4f5613fd89d4d59b631efeec117b2b07fe72f1da21"
+          python-version: "3.13"
+          enable-cache: false
+
+      - name: Require the repository-scoped non-root runner
+        run: test "$(id -u)" -ne 0
+
+      - name: Mint repository-scoped recovery App token
+        id: recovery-app-token
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          app-id: ${{ secrets.STRUGGLEBUS_RELEASE_APP_ID }}
+          private-key: ${{ secrets.STRUGGLEBUS_RELEASE_APP_PRIVATE_KEY }}
+          owner: NZCypher819
+          repositories: strugglebus
+          permission-administration: read
+          permission-contents: write
+          skip-token-revoke: false
+
+      - name: Prove exact partial asset recovery without mutation
+        env:
+          RECOVERY_ACTOR: ${{ github.actor }}
+          RECOVERY_EVENT_NAME: ${{ github.event_name }}
+          RECOVERY_EVENT_SHA: ${{ github.sha }}
+          RECOVERY_PROBE_TOKEN: ${{ steps.recovery-app-token.outputs.token }}
+          RECOVERY_REF: ${{ github.ref }}
+          RECOVERY_REPOSITORY: ${{ github.repository }}
+          RECOVERY_WORKFLOW_SHA: ${{ github.workflow_sha }}
+        run: python scripts/probe_release_asset_recovery.py

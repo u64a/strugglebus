@@ -1,0 +1,129 @@
+---
+- name: Inspect the reviewed Python helper source
+  ansible.builtin.stat:
+    path: "{{ strugglebus_python_helper.source }}"
+    checksum_algorithm: sha256
+    follow: false
+  delegate_to: localhost
+  become: false
+  check_mode: false
+  register: strugglebus_python_helper_source
+
+- name: Require the exact reviewed Python helper source
+  ansible.builtin.assert:
+    that:
+      - strugglebus_python_helper_source.stat.isreg | default(false)
+      - not (strugglebus_python_helper_source.stat.islnk | default(true))
+      - strugglebus_python_helper_source.stat.nlink | default(0) == 1
+      - >-
+        strugglebus_python_helper_source.stat.checksum
+        == strugglebus_python_helper.sha256
+    fail_msg: >-
+      The reviewed Python helper source is missing, unsafe, or has the wrong
+      SHA-256 checksum.
+  delegate_to: localhost
+  become: false
+
+- name: Import and verify the reviewed Python helper contract
+  ansible.builtin.command:
+    argv:
+      - "{{ ansible_playbook_python }}"
+      - -I
+      - -c
+      - >-
+        import runpy, sys;
+        namespace = runpy.run_path(
+          sys.argv[1], run_name="strugglebus_configure_source_probe"
+        );
+        missing = [
+          name for name in sys.argv[2].split(",")
+          if name and not callable(namespace.get(name))
+        ];
+        sys.exit("missing helper contract: " + ",".join(missing))
+        if missing else None
+      - "{{ strugglebus_python_helper.source }}"
+      - "{{ strugglebus_python_helper.callables | join(',') }}"
+  delegate_to: localhost
+  become: false
+  changed_when: false
+  check_mode: false
+
+- name: Verify the reviewed access-freeze inspector behavior
+  ansible.builtin.command:
+    argv:
+      - "{{ ansible_playbook_python }}"
+      - -I
+      - "{{ strugglebus_python_helper.contract }}"
+      - "{{ strugglebus_python_helper.source }}"
+      - "{{ ansible_playbook_python }}"
+  delegate_to: localhost
+  become: false
+  changed_when: false
+  check_mode: false
+  when: strugglebus_python_helper.contract | default("") | length > 0
+
+- name: "{{ strugglebus_python_helper.install_task }}"
+  ansible.builtin.copy:
+    src: "{{ strugglebus_python_helper.source }}"
+    dest: "{{ strugglebus_python_helper.destination }}"
+    owner: "{{ strugglebus_python_helper.owner }}"
+    group: "{{ strugglebus_python_helper.group }}"
+    mode: "{{ strugglebus_python_helper.mode }}"
+  register: strugglebus_python_helper_copy
+
+- name: Inspect the installed Python helper
+  ansible.builtin.stat:
+    path: "{{ strugglebus_python_helper.destination }}"
+    checksum_algorithm: sha256
+    follow: false
+  check_mode: false
+  register: strugglebus_python_helper_destination
+  when: >-
+    not ansible_check_mode
+    or not (strugglebus_python_helper_copy.changed | default(false))
+
+- name: Require the exact installed Python helper
+  ansible.builtin.assert:
+    that:
+      - strugglebus_python_helper_destination.stat.isreg | default(false)
+      - not (strugglebus_python_helper_destination.stat.islnk | default(true))
+      - strugglebus_python_helper_destination.stat.nlink | default(0) == 1
+      - strugglebus_python_helper_destination.stat.executable | default(false)
+      - >-
+        strugglebus_python_helper_destination.stat.pw_name
+        | default("") == strugglebus_python_helper.owner
+      - >-
+        strugglebus_python_helper_destination.stat.gr_name
+        | default("") == strugglebus_python_helper.group
+      - >-
+        strugglebus_python_helper_destination.stat.mode
+        | default("") == strugglebus_python_helper.mode
+      - >-
+        strugglebus_python_helper_destination.stat.checksum
+        == strugglebus_python_helper.sha256
+    fail_msg: >-
+      The installed Python helper does not match the exact reviewed source,
+      ownership, or mode.
+  when: >-
+    not ansible_check_mode
+    or not (strugglebus_python_helper_copy.changed | default(false))
+
+- name: Import the installed Python helper in isolated mode
+  ansible.builtin.command:
+    argv: >-
+      {{
+        (strugglebus_python_helper.destination_command_prefix | default([]))
+        + [
+          strugglebus_python_helper.destination_python,
+          '-I',
+          '-c',
+          'import runpy, sys; runpy.run_path('
+          ~ 'sys.argv[1], run_name="strugglebus_configure_probe")',
+          strugglebus_python_helper.destination
+        ]
+      }}
+  changed_when: false
+  check_mode: false
+  when: >-
+    not ansible_check_mode
+    or not (strugglebus_python_helper_copy.changed | default(false))

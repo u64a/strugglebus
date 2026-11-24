@@ -1,0 +1,45 @@
+name: Windows app
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'app/windows/**'
+      - '.github/workflows/windows.yml'
+  pull_request:
+    paths:
+      - 'app/windows/**'
+      - '.github/workflows/windows.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Test Windows app
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Setup .NET SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Run Windows tests
+        shell: pwsh
+        run: dotnet test .\app\windows\StruggleBusMonitor.Tests\StruggleBusMonitor.Tests.csproj -c Release --collect:"XPlat Code Coverage" --results-directory .\app\windows\.metrics
+
+      # Every hand-written method under CRAP 10 and line coverage of at least 85%.
+      - name: Check complexity and coverage
+        shell: pwsh
+        run: .\app\windows\quality-gate.ps1 -Results .\app\windows\.metrics

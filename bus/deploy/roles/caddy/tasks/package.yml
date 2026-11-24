@@ -1,0 +1,86 @@
+---
+# Caddy comes from its own signed repository, not Debian's 2.6.2, whose reload
+# panicked and forced certificate renewals to restart the proxy. The key is the
+# reviewed public signing key; deploy/tests/contract.py pins its fingerprint.
+- name: Install the Caddy package signing key
+  ansible.builtin.copy:
+    src: caddy-stable.asc
+    dest: /etc/apt/keyrings/caddy-stable.asc
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Add the Caddy stable package repository
+  ansible.builtin.deb822_repository:
+    name: caddy-stable
+    types: deb
+    uris: https://dl.cloudsmith.io/public/caddy/stable/deb/debian
+    suites: any-version
+    components: main
+    signed_by: /etc/apt/keyrings/caddy-stable.asc
+
+# policy_rc_d keeps the package from restarting Caddy itself; the caller
+# validates the configuration with the new binary and then activates it.
+- name: Install the latest Caddy from its repository
+  ansible.builtin.apt:
+    name: caddy
+    state: latest
+    update_cache: true
+    policy_rc_d: 101
+  register: caddy_package_result
+
+# Keep Caddy and Debian security fixes current between deployments. Only those
+# two origins are enabled. Caddy's package restarts Caddy when it upgrades, so
+# this runs in the nightly window; a patched library reaches a running service
+# when that service next restarts.
+- name: Install unattended upgrades
+  ansible.builtin.apt:
+    name: unattended-upgrades
+    state: present
+
+- name: Limit unattended upgrades to Caddy and Debian security
+  ansible.builtin.copy:
+    dest: /etc/apt/apt.conf.d/52strugglebus-unattended-upgrades
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      // Managed by Strugglebus. Upgrade only Caddy and Debian security fixes.
+      #clear Unattended-Upgrade::Origins-Pattern;
+      Unattended-Upgrade::Origins-Pattern {
+        "origin=cloudsmith/caddy/stable";
+        "origin=Debian,codename=${distro_codename}-security,label=Debian-Security";
+      };
+      // Guests are containers on the host's kernel; a kernel image is never used.
+      Unattended-Upgrade::Package-Blacklist { "linux-image-"; };
+      APT::Periodic::Update-Package-Lists "1";
+      APT::Periodic::Unattended-Upgrade "1";
+
+- name: Create the unattended upgrade timer override directory
+  ansible.builtin.file:
+    path: /etc/systemd/system/apt-daily-upgrade.timer.d
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Run unattended upgrades in the nightly window
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/apt-daily-upgrade.timer.d/strugglebus.conf
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      [Timer]
+      OnCalendar=
+      OnCalendar=*-*-* {{ caddy_upgrade_time | default('16:30') }} UTC
+      RandomizedDelaySec=0
+  register: caddy_upgrade_timer_result
+
+- name: Load the unattended upgrade schedule
+  ansible.builtin.systemd_service:
+    name: apt-daily-upgrade.timer
+    daemon_reload: true
+    enabled: true
+    state: started
+  when: not ansible_check_mode

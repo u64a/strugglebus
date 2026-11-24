@@ -1,0 +1,26 @@
+name: Fork policy
+
+on:
+  pull_request_target: # zizmor: ignore[dangerous-triggers] base-only static policy; no head code
+    types: [opened, reopened, synchronize]
+
+permissions: {}
+
+jobs:
+  fork-policy:
+    name: Fork policy
+    runs-on: [self-hosted, prox-runner]
+    timeout-minutes: 1
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Reject fork-originated pull requests
+        if: github.event.pull_request.head.repo.full_name != github.repository
+        run: |
+          echo "::error::Fork-originated pull requests cannot run repository CI."
+          exit 1
+
+      - name: Accept same-repository pull requests
+        if: github.event.pull_request.head.repo.full_name == github.repository
+        run: echo "Same-repository pull request is eligible for protected CI."

@@ -1,0 +1,53 @@
+[Unit]
+Description=Strugglebus root maintenance control supervisor
+Requires=strugglebus-maintenance.socket
+After=strugglebus-maintenance.socket
+ConditionPathIsDirectory=/opt/strugglebus-updater/current/venv
+
+[Service]
+Type=simple
+User=root
+Group=root
+Sockets=strugglebus-maintenance.socket
+WorkingDirectory=/var/lib/strugglebus-maintenance
+ExecStart=/opt/strugglebus-updater/current/venv/bin/python -I -m strugglebus.maintenance_daemon serve --config /etc/strugglebus-maintenance/maintenance.json
+Environment=PYTHONDONTWRITEBYTECODE=1
+UMask=0077
+Restart=no
+TimeoutStartSec=30s
+TimeoutStopSec=10s
+KillMode=mixed
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+ProtectProc=invisible
+ProcSubset=pid
+RestrictSUIDSGID=true
+RestrictRealtime=true
+RestrictNamespaces=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+RemoveIPC=true
+RestrictAddressFamilies=AF_UNIX
+SocketBindDeny=any
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+ReadOnlyPaths=/opt/strugglebus-updater /etc/strugglebus-maintenance
+ReadWritePaths=/var/lib/strugglebus-maintenance
+InaccessiblePaths=/tmp /var/tmp /etc/strugglebus/credentials /run/credentials
+MemoryMax=128M
+MemorySwapMax=0
+TasksMax=8
+LimitNOFILE=64
+LimitCORE=0
+StandardOutput=null
+StandardError=null

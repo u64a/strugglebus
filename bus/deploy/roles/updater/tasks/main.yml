@@ -1,0 +1,223 @@
+---
+- name: Inspect the existing protected helper installation ancestry
+  ansible.builtin.stat:
+    path: "{{ item }}"
+    follow: false
+  loop: [/, /usr, /usr/local, /usr/local/libexec]
+  register: updater_helper_parents
+
+- name: Require existing root-managed helper parents without repair
+  ansible.builtin.assert:
+    that:
+      - item.stat.isdir | default(false)
+      - not (item.stat.islnk | default(true))
+      - item.stat.uid | default(-1) == 0
+      - not (item.stat.wgrp | default(true))
+      - not (item.stat.woth | default(true))
+  loop: "{{ updater_helper_parents.results }}"
+
+- name: Install only the reviewed read-only host preflight
+  ansible.builtin.include_tasks: ../../guest_base/tasks/validated_python_helper.yml
+  vars:
+    strugglebus_python_helper:
+      source: "{{ role_path }}/../../files/strugglebus_updater_preflight.py"
+      destination: /usr/local/libexec/strugglebus-updater-preflight
+      destination_python: /usr/bin/python3.13
+      sha256: "{{ updater_helper_sha256 }}"
+      owner: root
+      group: root
+      mode: "0755"
+      install_task: Install the isolated updater preflight
+      callables: [main]
+      contract: ""
+
+- name: Verify existing identities configuration and persistent bounded storage without mutation
+  ansible.builtin.command:
+    argv:
+      - /usr/bin/python3.13
+      - -I
+      - /usr/local/libexec/strugglebus-updater-preflight
+      - host
+      - --config
+      - /etc/strugglebus-updater/worker.json
+      - --application-user
+      - "{{ strugglebus_service_user }}"
+      - --application-group
+      - "{{ strugglebus_service_group }}"
+      - --application-data-dir
+      - "{{ strugglebus_data_dir }}"
+  changed_when: false
+  check_mode: false
+  when: not ansible_check_mode
+  timeout: 30
+
+- name: Refuse to treat check mode as host qualification
+  ansible.builtin.assert:
+    that: not ansible_check_mode
+    fail_msg: >-
+      Check mode cannot qualify missing installed helpers, identity isolation or
+      persistent storage. Use the offline deployment contracts, then separately
+      approve and qualify this profile on real Debian before adoption.
+
+- name: Create the dedicated fixed updater group without sharing bus access
+  ansible.builtin.group:
+    name: strugglebus-updater
+    gid: 975
+    system: true
+
+- name: Create the dedicated non-login worker without supplementary groups
+  ansible.builtin.user:
+    name: strugglebus-updater
+    uid: 975
+    group: strugglebus-updater
+    groups: ""
+    append: false
+    system: true
+    create_home: false
+    home: /nonexistent
+    shell: /usr/sbin/nologin
+    password_lock: true
+
+- name: Materialize only the isolated checksummed worker environment
+  ansible.builtin.import_tasks: install.yml
+
+- name: Inspect existing updater unit identities without changing running services
+  ansible.builtin.stat:
+    path: "/etc/systemd/system/{{ item }}"
+    follow: false
+    checksum_algorithm: sha256
+  loop: [strugglebus-updater.service, strugglebus-updater.socket]
+  register: updater_existing_units
+
+- name: Refuse implicit upgrades or repairs of an existing updater service
+  ansible.builtin.assert:
+    that:
+      - >-
+        not item.stat.exists or (
+          (item.stat.isreg | default(false))
+          and not (item.stat.islnk | default(true))
+          and item.stat.uid | default(-1) == 0
+          and item.stat.nlink | default(0) == 1
+          and item.stat.mode | default('') == '0644'
+          and item.stat.checksum == (
+            lookup('ansible.builtin.template', role_path + '/templates/' + item.item + '.j2')
+            | hash('sha256')
+          )
+        )
+    fail_msg: Existing updater units must match exactly; bootstrap is not a worker upgrade or restart path.
+  loop: "{{ updater_existing_units.results }}"
+
+- name: Allow only the worker group to read the operator-provided public-source config
+  ansible.builtin.file:
+    path: /etc/strugglebus-updater/worker.json
+    owner: root
+    group: strugglebus-updater
+    mode: "0640"
+    follow: false
+
+- name: Create the private child of the pre-provisioned root-owned cache mount
+  ansible.builtin.file:
+    path: /var/lib/strugglebus-updater-cache/state
+    state: directory
+    owner: strugglebus-updater
+    group: strugglebus-updater
+    mode: "0700"
+    follow: false
+
+- name: Observe only whether this exact previously bootstrapped worker is active
+  ansible.builtin.command:
+    argv: [/usr/bin/systemctl, is-active, --quiet, strugglebus-updater.service]
+  register: updater_active
+  changed_when: false
+  failed_when: updater_active.rc not in [0, 3, 4]
+  timeout: 10
+
+- name: Inspect only the exact journal metadata for a dormant worker
+  ansible.builtin.stat:
+    path: /var/lib/strugglebus-updater-cache/state/updater-journal.json
+    follow: false
+    get_checksum: false
+    get_mime: false
+  register: updater_journal
+  when: updater_active.rc != 0
+
+- name: Refuse missing history for any previously published updater unit
+  ansible.builtin.assert:
+    that:
+      - >-
+        updater_journal.stat.exists or (
+          updater_existing_units.results | selectattr('stat.exists') | list | length == 0
+        )
+    fail_msg: >-
+      Protected updater units are published only after history initialization.
+      Missing history from a previous bootstrap requires separate recovery,
+      never automatic reinitialization.
+  when: updater_active.rc != 0
+
+- name: Refuse unsafe existing journal metadata without repairing or resetting history
+  ansible.builtin.assert:
+    that:
+      - updater_journal.stat.isreg | default(false)
+      - not (updater_journal.stat.islnk | default(true))
+      - updater_journal.stat.uid | default(-1) == 975
+      - updater_journal.stat.gid | default(-1) == 975
+      - updater_journal.stat.nlink | default(0) == 1
+      - updater_journal.stat.mode | default('') == '0600'
+      - updater_journal.stat.size | default(0) > 0
+      - updater_journal.stat.size | default(4194305) <= 4194304
+  when:
+    - updater_active.rc != 0
+    - updater_journal.stat.exists
+
+- name: Initialize pristine storage or validate existing dormant history without credentials or network
+  ansible.builtin.command:
+    argv:
+      - /usr/sbin/runuser
+      - --user
+      - strugglebus-updater
+      - --
+      - /usr/bin/env
+      - -i
+      - PATH=/usr/bin:/bin
+      - "{{ updater_release_root }}/venv/bin/python"
+      - -I
+      - -m
+      - strugglebus.update_worker
+      - "{{ updater_history_action }}"
+      - --config
+      - /etc/strugglebus-updater/worker.json
+  vars:
+    updater_history_action: "{{ 'status' if updater_journal.stat.exists else 'init' }}"
+  changed_when: updater_history_action == 'init'
+  when: updater_active.rc != 0
+  timeout: 30
+  no_log: true
+
+- name: Publish only updater units without bus dependencies or notifications
+  ansible.builtin.template:
+    src: "{{ item }}.j2"
+    dest: "/etc/systemd/system/{{ item }}"
+    owner: root
+    group: root
+    mode: "0644"
+  loop:
+    - strugglebus-updater.service
+    - strugglebus-updater.socket
+  register: updater_units
+
+- name: Verify installed updater unit syntax
+  ansible.builtin.command:
+    argv:
+      - /usr/bin/systemd-analyze
+      - verify
+      - /etc/systemd/system/strugglebus-updater.service
+      - /etc/systemd/system/strugglebus-updater.socket
+  changed_when: false
+  timeout: 30
+
+- name: Enable only the updater socket without starting a network job or touching the bus
+  ansible.builtin.systemd_service:
+    name: strugglebus-updater.socket
+    enabled: true
+    state: started
+    daemon_reload: "{{ updater_units.changed }}"

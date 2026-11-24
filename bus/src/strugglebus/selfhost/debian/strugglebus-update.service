@@ -1,0 +1,9 @@
+[Unit]
+Description=Strugglebus automatic update check
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/strugglebus-update check
+TimeoutStartSec=30min

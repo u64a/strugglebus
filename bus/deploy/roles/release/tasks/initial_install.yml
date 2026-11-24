@@ -1,0 +1,271 @@
+---
+- name: Validate initial-install release inputs
+  ansible.builtin.import_tasks: validate.yml
+
+- name: Initialize first-install release identity
+  ansible.builtin.set_fact:
+    strugglebus_release_identity_content: |
+      STRUGGLEBUS_RELEASE_ID={{ strugglebus_release_version }}
+    strugglebus_expected_installed_marker: |
+      wheel_filename={{ strugglebus_wheel_src | basename }}
+      wheel_sha256={{ strugglebus_wheel_sha256 }}
+      requirements_lock_sha256={{ strugglebus_requirements_lock_sha256 }}
+      agent_access_freeze=global-v1
+    strugglebus_initial_install_created_link: false
+
+- name: Inspect the selected release before first-install mutation
+  ansible.builtin.command:
+    argv: [readlink, -e, "{{ strugglebus_current_link }}"]
+  register: strugglebus_initial_current_release
+  changed_when: false
+  failed_when: strugglebus_initial_current_release.rc not in [0, 1]
+  check_mode: false
+
+- name: Inspect release-root occupants before first-install mutation
+  ansible.builtin.find:
+    paths: "{{ strugglebus_release_root }}"
+    patterns: "*"
+    file_type: any
+    recurse: false
+    hidden: true
+  register: strugglebus_initial_release_occupants
+
+- name: Inspect mutable database paths before first activation
+  ansible.builtin.stat:
+    path: "{{ strugglebus_database_path }}{{ item }}"
+    follow: false
+  loop: ["", "-wal", "-shm"]
+  register: strugglebus_initial_database_paths
+
+- name: Require a blank or exact idempotent first-install state
+  ansible.builtin.assert:
+    that:
+      - >-
+        strugglebus_initial_current_release.rc == 1
+        or strugglebus_initial_current_release.stdout
+           == strugglebus_release_root + '/' + strugglebus_release_version
+      - >-
+        strugglebus_initial_release_occupants.files
+        | rejectattr(
+            'path',
+            'equalto',
+            strugglebus_release_root + '/' + strugglebus_release_version
+          )
+        | list
+        | length == 0
+      - >-
+        strugglebus_initial_current_release.rc == 0
+        or (
+          strugglebus_initial_database_paths.results
+          | selectattr('stat.exists', 'defined')
+          | selectattr('stat.exists', 'equalto', true)
+          | list
+          | length == 0
+        )
+    fail_msg: >-
+      Initial install requires no selected release, database, or unrelated release
+      occupant; an idempotent rerun must select only this exact managed release.
+
+- name: Inspect exact controller release artifacts
+  ansible.builtin.stat:
+    path: "{{ item.path }}"
+    checksum_algorithm: sha256
+    follow: false
+  loop:
+    - path: "{{ strugglebus_wheel_src }}"
+      expected: "{{ strugglebus_wheel_sha256 }}"
+    - path: "{{ strugglebus_requirements_lock_src }}"
+      expected: "{{ strugglebus_requirements_lock_sha256 }}"
+  delegate_to: localhost
+  become: false
+  register: strugglebus_initial_local_artifacts
+
+- name: Require exact controller release artifact checksums
+  ansible.builtin.assert:
+    that:
+      - item.stat.isreg | default(false)
+      - not item.stat.islnk | default(true)
+      - item.stat.checksum == item.item.expected
+    fail_msg: "Missing or mismatched first-install artifact: {{ item.item.path }}"
+  loop: "{{ strugglebus_initial_local_artifacts.results }}"
+
+- name: Validate the first-install hash-locked dependency artifact
+  ansible.builtin.command:
+    argv:
+      - "{{ ansible_playbook_python }}"
+      - "{{ role_path }}/../../../scripts/validate_requirements_lock.py"
+      - "{{ strugglebus_requirements_lock_src }}"
+  delegate_to: localhost
+  become: false
+  changed_when: false
+  check_mode: false
+
+- name: Verify immutable first-install release state
+  ansible.builtin.include_tasks: immutable_preflight.yml
+
+- name: Check first-install release filesystem capacity
+  ansible.builtin.command:
+    argv: [df, --output=avail, -B1, "{{ strugglebus_release_root }}"]
+  register: strugglebus_initial_install_capacity
+  changed_when: false
+  check_mode: false
+
+- name: Require bounded first-install filesystem headroom
+  ansible.builtin.assert:
+    that:
+      - strugglebus_initial_install_capacity.stdout_lines | length == 2
+      - >-
+        strugglebus_initial_install_capacity.stdout_lines[1]
+        | trim
+        is match('^[0-9]+$')
+      - >-
+        strugglebus_initial_install_capacity.stdout_lines[1] | trim | int
+        >= 67108864
+    fail_msg: Initial install requires at least 64 MiB free on the release filesystem.
+
+- name: Materialize the exact first immutable release
+  ansible.builtin.include_tasks: materialize_release.yml
+  when:
+    - not ansible_check_mode
+    - strugglebus_initial_current_release.rc == 1
+
+- name: Validate the complete first immutable release
+  ansible.builtin.command:
+    argv:
+      - "{{ strugglebus_release_python_interpreter_path }}"
+      - -I
+      - >-
+        {{
+          strugglebus_release_validator_helper
+          | default('/usr/local/libexec/strugglebus-validate-release')
+        }}
+      - --require-release-id
+      - "{{ strugglebus_release_root }}"
+      - "{{ strugglebus_release_version }}"
+      - "{{ strugglebus_service_user }}"
+      - "{{ strugglebus_app_target.split(':')[0] }}"
+  register: strugglebus_initial_release_validation
+  changed_when: false
+  check_mode: false
+  when:
+    - >-
+      not ansible_check_mode
+      or existing_release_directory.stat.isdir | default(false)
+
+- name: Activate and verify the first managed release
+  when: not ansible_check_mode
+  block:
+    - name: Prepare the atomic first-release symlink
+      ansible.builtin.command:
+        argv:
+          - ln
+          - -s
+          - "{{ strugglebus_release_root }}/{{ strugglebus_release_version }}"
+          - "{{ strugglebus_release_root }}/.current-{{ strugglebus_release_version }}"
+      args:
+        creates: "{{ strugglebus_release_root }}/.current-{{ strugglebus_release_version }}"
+      when: strugglebus_initial_current_release.rc == 1
+
+    - name: Activate the first release atomically
+      ansible.builtin.command:
+        argv:
+          - mv
+          - -Tf
+          - "{{ strugglebus_release_root }}/.current-{{ strugglebus_release_version }}"
+          - "{{ strugglebus_current_link }}"
+      when: strugglebus_initial_current_release.rc == 1
+
+    - name: Record first-release activation by this run
+      ansible.builtin.set_fact:
+        strugglebus_initial_install_created_link: true
+      when: strugglebus_initial_current_release.rc == 1
+
+    - name: Start the exact first managed release
+      ansible.builtin.systemd_service:
+        name: strugglebus
+        enabled: true
+        state: started
+        daemon_reload: true
+
+    - name: Require TLS-verified readiness from the first managed release
+      ansible.builtin.uri:
+        url: "{{ strugglebus_health_url }}"
+        method: GET
+        status_code: 200
+        return_content: true
+        ca_path: "{{ strugglebus_caddy_ca_path }}"
+        timeout: 3
+      register: strugglebus_initial_release_health
+      retries: 4
+      delay: 3
+      until:
+        - strugglebus_initial_release_health.status == 200
+        - >-
+          strugglebus_initial_release_health.json == {'status': 'ok'}
+        - strugglebus_initial_release_health.content | length <= 1024
+
+    - name: Start daily backups after verified first activation
+      ansible.builtin.systemd_service:
+        name: strugglebus-backup.timer
+        enabled: true
+        state: started
+
+  rescue:
+    - name: Stop an unverified first release
+      ansible.builtin.systemd_service:
+        name: strugglebus
+        state: stopped
+
+    - name: Remove the failed first-release staging link
+      ansible.builtin.file:
+        path: "{{ strugglebus_release_root }}/.current-{{ strugglebus_release_version }}"
+        state: absent
+
+    - name: Remove the failed first-release selection
+      ansible.builtin.file:
+        path: "{{ strugglebus_current_link }}"
+        state: absent
+      when: strugglebus_initial_install_created_link | bool
+
+    - name: Remove mutable state created only by the failed first start
+      ansible.builtin.file:
+        path: "{{ strugglebus_database_path }}{{ item }}"
+        state: absent
+      loop: ["", "-wal", "-shm"]
+      when: strugglebus_initial_install_created_link | bool
+
+    - name: Remove the operator setup state created by the failed first start
+      ansible.builtin.file:
+        path: "{{ strugglebus_data_dir }}/operator"
+        state: absent
+      when: strugglebus_initial_install_created_link | bool
+
+    - name: Refuse an unverified first-release activation
+      ansible.builtin.fail:
+        msg: >-
+          First-release health verification failed. The service is stopped and
+          any selection and mutable state created by this activation were removed.
+
+- name: Read the one-time operator setup code
+  ansible.builtin.slurp:
+    src: "{{ strugglebus_data_dir }}/operator/setup-code"
+  register: strugglebus_operator_setup_code
+  failed_when: false
+  when:
+    - not ansible_check_mode
+    - strugglebus_operator_password_source | default('') | length == 0
+
+- name: Show the one-time operator setup code
+  ansible.builtin.debug:
+    msg: >-
+      Open https://{{ strugglebus_effective_domain }}/setup and enter the setup code
+      {{ strugglebus_operator_setup_code.content | b64decode | trim }} to set the
+      operator password. It works once and expires 24 hours after the service started.
+  when: strugglebus_operator_setup_code.content is defined
+
+- name: Report first-install validation deferred by check mode
+  ansible.builtin.debug:
+    msg: >-
+      Check mode validated exact release assets, immutable state, blank or
+      idempotent selection, and capacity without activating a release.
+  when: ansible_check_mode

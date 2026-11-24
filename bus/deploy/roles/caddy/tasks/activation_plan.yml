@@ -1,0 +1,110 @@
+---
+- name: Validate the Caddy systemd state response
+  ansible.builtin.assert:
+    that:
+      - >-
+        caddy_unit_state_result.rc != 0
+        or (
+          caddy_unit_state_result.stdout
+          | regex_findall('(?m)^ActiveState=.*$')
+          | length
+        ) == 1
+      - >-
+        caddy_unit_state_result.rc != 0
+        or (
+          caddy_unit_state_result.stdout
+          | regex_findall('(?m)^SubState=.*$')
+          | length
+        ) == 1
+      - >-
+        caddy_unit_state_result.rc != 0
+        or (
+          caddy_unit_state_result.stdout
+          | regex_findall('(?m)^UnitFileState=.*$')
+          | length
+        ) == 1
+      - >-
+        caddy_unit_state_result.rc != 0
+        or (
+          caddy_unit_state_result.stdout
+          | regex_findall('(?m)^DropInPaths=.*$')
+          | length
+        ) == 1
+      - ansible_check_mode or caddy_unit_state_result.rc == 0
+    fail_msg: The Caddy systemd state response is incomplete or ambiguous.
+
+- name: Parse the Caddy systemd state
+  ansible.builtin.set_fact:
+    caddy_loaded_active_state: >-
+      {{
+        (
+          caddy_unit_state_result.stdout
+          | regex_findall('(?m)^ActiveState=(.*)$')
+          | first
+        )
+        | default('')
+      }}
+    caddy_loaded_sub_state: >-
+      {{
+        (
+          caddy_unit_state_result.stdout
+          | regex_findall('(?m)^SubState=(.*)$')
+          | first
+        )
+        | default('')
+      }}
+    caddy_loaded_unit_file_state: >-
+      {{
+        (
+          caddy_unit_state_result.stdout
+          | regex_findall('(?m)^UnitFileState=(.*)$')
+          | first
+        )
+        | default('')
+      }}
+    caddy_loaded_dropin_paths: >-
+      {{
+        (
+          caddy_unit_state_result.stdout
+          | regex_findall('(?m)^DropInPaths=(.*)$')
+          | first
+          | default('')
+        ).split()
+      }}
+
+- name: Record the Caddy activation requirements
+  ansible.builtin.set_fact:
+    caddy_expected_activation_marker: >-
+      {{
+        'runtime_sha256='
+        + (caddy_runtime_policy_file.stat.checksum | default(''))
+        + '\nconfig_sha256='
+        + (caddy_config_file.stat.checksum | default(''))
+      }}
+    caddy_activation_required: >-
+      {{
+        caddy_runtime_policy_result.changed | bool
+        or caddy_config_result.changed | bool
+        or caddy_loaded_active_state != 'active'
+        or caddy_loaded_sub_state != 'running'
+        or (
+          (
+            caddy_systemd_override_dir
+            | default('/etc/systemd/system/caddy.service.d')
+          ) + '/strugglebus-runtime.conf'
+        ) not in caddy_loaded_dropin_paths
+        or not caddy_activation_marker_file.stat.exists
+        or (
+          caddy_activation_marker_read.content
+          | default('')
+          | b64decode
+          | trim
+        ) != (
+          'runtime_sha256='
+          + (caddy_runtime_policy_file.stat.checksum | default(''))
+          + '\nconfig_sha256='
+          + (caddy_config_file.stat.checksum | default(''))
+        )
+      }}
+    caddy_enable_required: >-
+      {{ caddy_loaded_unit_file_state != 'enabled' }}

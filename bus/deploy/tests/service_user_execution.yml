@@ -1,0 +1,286 @@
+---
+- name: Exercise minimal-guest service-user execution
+  hosts: localhost
+  gather_facts: false
+  vars:
+    scenario: "{{ lookup('env', 'STRUGGLEBUS_SERVICE_EXECUTION_SCENARIO') }}"
+    strugglebus_service_user: >-
+      {{ lookup('env', 'STRUGGLEBUS_SERVICE_EXECUTION_USER') }}
+    strugglebus_service_group: >-
+      {{ lookup('env', 'STRUGGLEBUS_SERVICE_EXECUTION_GROUP') }}
+    expected_service_uid: >-
+      {{ lookup('env', 'STRUGGLEBUS_SERVICE_EXECUTION_UID') | int }}
+    expected_service_gid: >-
+      {{ lookup('env', 'STRUGGLEBUS_SERVICE_EXECUTION_GID') | int }}
+    strugglebus_release_lock_lease_seconds: 600
+  tasks:
+    - name: Require a supported service-user execution scenario
+      ansible.builtin.assert:
+        that:
+          - scenario in ["success", "failure", "real"]
+          - strugglebus_service_user | length > 0
+          - strugglebus_service_group | length > 0
+
+    - name: Create the isolated minimal-guest fixture
+      ansible.builtin.tempfile:
+        state: directory
+        prefix: strugglebus-service-execution-
+      register: service_execution_root
+
+    - name: Set the isolated service-user paths
+      ansible.builtin.set_fact:
+        strugglebus_data_dir: "{{ service_execution_root.path }}/data"
+        strugglebus_backup_dir: "{{ service_execution_root.path }}/backups"
+        strugglebus_database_path: "{{ service_execution_root.path }}/database.db"
+        service_execution_observation: >-
+          {{ service_execution_root.path }}/database.db.observation
+        service_execution_activation: >-
+          {{ service_execution_root.path }}/activation
+
+    - name: Make the isolated fixture traversable by the service identity
+      ansible.builtin.file:
+        path: "{{ service_execution_root.path }}"
+        state: directory
+        owner: "{{ strugglebus_service_user }}"
+        group: "{{ strugglebus_service_group }}"
+        mode: "0700"
+
+    - name: Create the isolated data directories
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        owner: "{{ strugglebus_service_user }}"
+        group: "{{ strugglebus_service_group }}"
+        mode: "0700"
+      loop:
+        - "{{ strugglebus_data_dir }}"
+        - "{{ strugglebus_backup_dir }}"
+
+    - name: Seed the isolated database input
+      ansible.builtin.copy:
+        content: database
+        dest: "{{ strugglebus_database_path }}"
+        owner: "{{ strugglebus_service_user }}"
+        group: "{{ strugglebus_service_group }}"
+        mode: "0600"
+
+    - name: Install the fake minimal-guest runuser
+      ansible.builtin.copy:
+        dest: "{{ service_execution_root.path }}/runuser"
+        mode: "0700"
+        content: |
+          #!{{ ansible_playbook_python }}
+          import os
+          import sys
+
+          expected = [
+              "--user",
+              {{ strugglebus_service_user | to_json }},
+              "--group",
+              {{ strugglebus_service_group | to_json }},
+              "--",
+          ]
+          if sys.argv[1:6] != expected:
+              raise SystemExit("unexpected runuser argv")
+          if {{ (scenario == "failure") | ternary("True", "False") }}:
+              raise SystemExit(73)
+          os.execv(sys.argv[6], sys.argv[6:])
+      when: scenario != "real"
+
+    - name: Install the service-owned backup probe
+      ansible.builtin.copy:
+        dest: "{{ service_execution_root.path }}/backup-probe"
+        owner: "{{ strugglebus_service_user }}"
+        group: "{{ strugglebus_service_group }}"
+        mode: "0700"
+        content: |
+          #!{{ ansible_playbook_python }}
+          import json
+          import os
+          from pathlib import Path
+          import sys
+
+          observation = {
+              "argv": sys.argv[1:],
+              "environment": dict(sorted(os.environ.items())),
+              "gid": os.getgid(),
+              "uid": os.getuid(),
+          }
+          Path(sys.argv[1] + ".observation").write_text(
+              json.dumps(observation, sort_keys=True),
+              encoding="ascii",
+          )
+          backup = Path(sys.argv[2]) / "verified-backup.db"
+          backup.write_text("backup", encoding="ascii")
+          print(backup)
+
+    - name: Install the production backup helper for a read-only import
+      ansible.builtin.template:
+        src: ../roles/systemd/templates/sqlite_backup.py.j2
+        dest: "{{ service_execution_root.path }}/production-backup-helper"
+        owner: "{{ strugglebus_service_user }}"
+        group: "{{ strugglebus_service_group }}"
+        mode: "0700"
+
+    - name: Import the production helper through the service-user boundary
+      ansible.builtin.command:
+        argv:
+          - /usr/bin/timeout
+          - --signal=TERM
+          - --kill-after=10s
+          - 30s
+          - >-
+           {{
+             '/usr/sbin/runuser'
+             if scenario == 'real'
+             else service_execution_root.path + '/runuser'
+           }}
+          - --user
+          - "{{ strugglebus_service_user }}"
+          - --group
+          - "{{ strugglebus_service_group }}"
+          - --
+          - /usr/bin/env
+          - -i
+          - "HOME={{ strugglebus_data_dir }}"
+          - LANG=C.UTF-8
+          - "LOGNAME={{ strugglebus_service_user }}"
+          - PATH=/usr/local/bin:/usr/bin:/bin
+          - "USER={{ strugglebus_service_user }}"
+          - "{{ ansible_playbook_python }}"
+          - -I
+          - -c
+          - >-
+           import runpy, sys;
+           runpy.run_path(
+             sys.argv[1],
+             run_name="strugglebus_minimal_guest_probe"
+           )
+          - "{{ service_execution_root.path }}/production-backup-helper"
+      changed_when: false
+      when: scenario != "failure"
+
+    - name: Run the isolated service-user backup boundary
+      block:
+        - name: Execute the exact service-user argv contract
+          ansible.builtin.command:
+            argv:
+              - /usr/bin/timeout
+              - --signal=TERM
+              - --kill-after=10s
+              - 540s
+              - >-
+                {{
+                  '/usr/sbin/runuser'
+                  if scenario == 'real'
+                  else service_execution_root.path + '/runuser'
+                }}
+              - --user
+              - "{{ strugglebus_service_user }}"
+              - --group
+              - "{{ strugglebus_service_group }}"
+              - --
+              - /usr/bin/env
+              - -i
+              - "HOME={{ strugglebus_data_dir }}"
+              - LANG=C.UTF-8
+              - "LOGNAME={{ strugglebus_service_user }}"
+              - PATH=/usr/local/bin:/usr/bin:/bin
+              - "USER={{ strugglebus_service_user }}"
+              - "{{ ansible_playbook_python }}"
+              - -I
+              - "{{ service_execution_root.path }}/backup-probe"
+              - "{{ strugglebus_database_path }}"
+              - "{{ strugglebus_backup_dir }}"
+              - "7"
+          changed_when: true
+
+        - name: Record reaching the activation boundary
+          ansible.builtin.copy:
+            content: activated
+            dest: "{{ service_execution_activation }}"
+            mode: "0600"
+      rescue:
+        - name: Require only the deliberate privilege-drop failure
+          ansible.builtin.assert:
+            that:
+              - scenario == "failure"
+
+    - name: Inspect the service-user observation
+      ansible.builtin.stat:
+        path: "{{ service_execution_observation }}"
+      register: service_execution_observation_file
+
+    - name: Read the service-user observation
+      ansible.builtin.slurp:
+        src: "{{ service_execution_observation }}"
+      register: service_execution_observation_content
+      when: service_execution_observation_file.stat.isreg | default(false)
+
+    - name: Inspect the activation boundary
+      ansible.builtin.stat:
+        path: "{{ service_execution_activation }}"
+      register: service_execution_activation_file
+
+    - name: Require the expected minimal-guest outcome
+      ansible.builtin.assert:
+        that:
+          - >-
+            service_execution_observation_file.stat.isreg | default(false)
+            == (scenario != "failure")
+          - >-
+            service_execution_activation_file.stat.isreg | default(false)
+            == (scenario != "failure")
+          - >-
+            scenario == "failure"
+            or (
+              (
+                service_execution_observation_content.content
+                | b64decode
+                | from_json
+              ).uid == expected_service_uid
+            )
+          - >-
+            scenario == "failure"
+            or (
+              (
+                service_execution_observation_content.content
+                | b64decode
+                | from_json
+              ).gid == expected_service_gid
+            )
+          - >-
+            scenario == "failure"
+            or (
+              (
+                service_execution_observation_content.content
+                | b64decode
+                | from_json
+              ).argv
+              == [
+                strugglebus_database_path,
+                strugglebus_backup_dir,
+                "7"
+              ]
+            )
+          - >-
+            scenario == "failure"
+            or (
+              (
+                service_execution_observation_content.content
+                | b64decode
+                | from_json
+              ).environment
+              == {
+                "HOME": strugglebus_data_dir,
+                "LANG": "C.UTF-8",
+                "LOGNAME": strugglebus_service_user,
+                "PATH": "/usr/local/bin:/usr/bin:/bin",
+                "USER": strugglebus_service_user
+              }
+            )
+
+    - name: Remove the isolated minimal-guest fixture
+      ansible.builtin.file:
+        path: "{{ service_execution_root.path }}"
+        state: absent

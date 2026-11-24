@@ -1,0 +1,85 @@
+---
+- name: Validate the optional guest-only operator verifier
+  ansible.builtin.include_tasks: operator_credential.yml
+
+- name: Install the protected human emergency entry point
+  ansible.builtin.include_tasks: operator_controls.yml
+
+- name: Validate the external admin credential source
+  ansible.builtin.assert:
+    that:
+      - strugglebus_admin_token_src not in ["", "CHANGE_ME"]
+    fail_msg: Set strugglebus_admin_token_src to a protected file outside Git.
+  no_log: true
+
+- name: Install the root-owned admin credential
+  ansible.builtin.copy:
+    src: "{{ strugglebus_admin_token_src }}"
+    dest: "{{ strugglebus_config_dir }}/credentials/admin-token"
+    owner: root
+    group: root
+    mode: "0600"
+  no_log: true
+  notify: Restart Strugglebus
+
+- name: Validate and install the SQLite backup helper
+  ansible.builtin.include_tasks:
+    file: ../../guest_base/tasks/validated_python_helper.yml
+  vars:
+    strugglebus_python_helper:
+      source: "{{ role_path }}/templates/sqlite_backup.py.j2"
+      destination: /usr/local/libexec/strugglebus-sqlite-backup
+      destination_python: /usr/bin/python3.13
+      destination_command_prefix:
+        - /usr/bin/timeout
+        - --signal=TERM
+        - --kill-after=10s
+        - 30s
+        - /usr/sbin/runuser
+        - --user
+        - "{{ strugglebus_service_user }}"
+        - --group
+        - "{{ strugglebus_service_group }}"
+        - --
+        - /usr/bin/env
+        - -i
+        - "HOME={{ strugglebus_data_dir }}"
+        - LANG=C.UTF-8
+        - "LOGNAME={{ strugglebus_service_user }}"
+        - PATH=/usr/local/bin:/usr/bin:/bin
+        - "USER={{ strugglebus_service_user }}"
+      sha256: 88f3d71550b147b3cdb26c201b5e60bd156d914a68687e75bb3d6cb85c4dd5b3
+      owner: root
+      group: root
+      mode: "0755"
+      install_task: Install the SQLite backup program
+      callables:
+        - main
+      contract: ""
+
+- name: Install hardened systemd units
+  ansible.builtin.template:
+    src: "{{ item.src }}"
+    dest: "/etc/systemd/system/{{ item.dest }}"
+    owner: root
+    group: root
+    mode: "0644"
+  loop:
+    - src: strugglebus.service.j2
+      dest: strugglebus.service
+    - src: strugglebus-backup.service.j2
+      dest: strugglebus-backup.service
+    - src: strugglebus-backup.timer.j2
+      dest: strugglebus-backup.timer
+  notify:
+    - Reload systemd
+    - Restart Strugglebus
+
+- name: Check whether an application release is active
+  ansible.builtin.stat:
+    path: "{{ strugglebus_current_link }}"
+    follow: true
+  register: active_release
+
+- name: Configure the daily backup timer
+  ansible.builtin.include_tasks: backup_timer.yml

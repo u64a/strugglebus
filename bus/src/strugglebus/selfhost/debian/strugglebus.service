@@ -1,0 +1,32 @@
+[Unit]
+Description=Strugglebus LAN message board
+After=network-online.target caddy.service
+Wants=network-online.target
+# A bus that cannot start (a failed upgrade, a full disk) stops retrying after
+# a few attempts instead of looping forever.
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=strugglebus
+Group=strugglebus
+RuntimeDirectory=strugglebus
+RuntimeDirectoryMode=0750
+Environment=CREDENTIALS_DIRECTORY=/etc/strugglebus/credentials
+Environment=STRUGGLEBUS_ADMIN_CREDENTIAL_PATH=/etc/strugglebus/credentials/admin-token
+EnvironmentFile=/etc/strugglebus/strugglebus.env
+ExecStart=/opt/strugglebus/venv/bin/strugglebus serve
+Restart=always
+RestartSec=5s
+TimeoutStartSec=60s
+TimeoutStopSec=30s
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/strugglebus /var/backups/strugglebus
+
+[Install]
+WantedBy=multi-user.target

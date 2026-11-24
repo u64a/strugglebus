@@ -1,0 +1,90 @@
+---
+- name: Exercise inspector contract validation in check mode
+  hosts: localhost
+  gather_facts: false
+  vars:
+    inspector_contract_test_payloads:
+      valid: >-
+        {"contract_version":3,"passed":true,"schema_6_accepted":true,
+        "schema_7_accepted":true,"schema_8_accepted":true,
+        "schema_9_accepted":true,"schema_10_accepted":true,
+        "schema_11_accepted":true,"schema_12_accepted":true,"schema_13_rejected":true,
+        "future_schema_rejected":true,"legacy_schema_unsupported":true,
+        "malformed_schema_rejected":true}
+      empty: ""
+      malformed: "{not-json"
+      nonzero: ""
+  tasks:
+    - name: Run inspector contract validation fixture
+      ansible.builtin.command:
+        argv:
+          - "{{ ansible_playbook_python }}"
+          - -I
+          - -c
+          - >-
+            import sys;
+            sys.stdout.write(sys.argv[1]);
+            raise SystemExit(7 if sys.argv[2] == "nonzero" else 0)
+          - >-
+            {{
+              inspector_contract_test_payloads[
+                inspector_contract_test_scenario
+              ]
+            }}
+          - "{{ inspector_contract_test_scenario }}"
+      register: inspector_contract_test_result
+      check_mode: "{{ inspector_contract_test_scenario == 'skipped' }}"
+      changed_when: false
+
+    - name: Require inspector contract validation fixture passes
+      ansible.builtin.assert:
+        that:
+          - inspector_contract_test_result.stdout | length <= 1024
+          - >-
+            (inspector_contract_test_result.stdout | from_json).keys() | sort
+            ==
+            [
+              'contract_version',
+              'future_schema_rejected',
+              'legacy_schema_unsupported',
+              'malformed_schema_rejected',
+              'passed',
+              'schema_10_accepted',
+              'schema_11_accepted',
+              'schema_12_accepted',
+              'schema_13_rejected',
+              'schema_6_accepted',
+              'schema_7_accepted',
+              'schema_8_accepted',
+              'schema_9_accepted'
+            ]
+          - >-
+            (inspector_contract_test_result.stdout | from_json).contract_version
+            == 3
+          - >-
+            (inspector_contract_test_result.stdout | from_json).passed
+            is boolean
+          - (inspector_contract_test_result.stdout | from_json).passed
+          - >-
+            (inspector_contract_test_result.stdout | from_json).schema_6_accepted
+            and
+            (inspector_contract_test_result.stdout | from_json).schema_7_accepted
+            and
+            (inspector_contract_test_result.stdout | from_json).schema_8_accepted
+            and
+            (inspector_contract_test_result.stdout | from_json).schema_9_accepted
+            and
+            (inspector_contract_test_result.stdout | from_json).schema_10_accepted
+            and
+            (inspector_contract_test_result.stdout | from_json).schema_11_accepted
+            and
+            (inspector_contract_test_result.stdout | from_json).schema_12_accepted
+            and
+            (inspector_contract_test_result.stdout | from_json).schema_13_rejected
+            and
+            (inspector_contract_test_result.stdout | from_json).future_schema_rejected
+            and
+            (inspector_contract_test_result.stdout | from_json).legacy_schema_unsupported
+            and
+            (inspector_contract_test_result.stdout | from_json).malformed_schema_rejected
+        fail_msg: Inspector contract validation fixture failed closed.

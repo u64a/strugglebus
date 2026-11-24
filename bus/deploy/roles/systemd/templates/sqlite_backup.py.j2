@@ -1,0 +1,595 @@
+#!/usr/bin/python3.13
+"""Create and validate a rotated daily or pinned maintenance SQLite backup."""
+
+from __future__ import annotations
+
+import errno
+import hashlib
+import json
+import os
+import re
+import sqlite3
+import stat
+import sys
+import tempfile
+import time
+from contextlib import closing, contextmanager
+from datetime import UTC, datetime
+from pathlib import Path
+from collections.abc import Iterator
+
+OPERATION_ID_PATTERN = re.compile(r"^[0-9a-f]{32}$")
+BACKUP_TEMP_NAME_PATTERN = re.compile(r"\.strugglebus-backup-[a-z0-9_]{8}\.db")
+PRODUCTION_RECEIPT_WORKSPACE_ROOT = Path("/run/strugglebus-cutover-backup")
+RECEIPT_WORKSPACE_ROOT = PRODUCTION_RECEIPT_WORKSPACE_ROOT
+
+LOCK_NAME = ".strugglebus-backup.lock"
+LOCK_TIMEOUT_SECONDS = 10.0
+
+
+def _is_reparse_point(metadata: os.stat_result) -> bool:
+    attribute = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0)
+    return bool(getattr(metadata, "st_file_attributes", 0) & attribute)
+
+
+def _validate_receipt_directory(path: Path, operation_id: str) -> None:
+    expected = RECEIPT_WORKSPACE_ROOT / operation_id
+    try:
+        metadata = path.lstat()
+        parent_metadata = path.parent.lstat()
+        resolved = path.resolve(strict=True)
+        resolved_parent = path.parent.resolve(strict=True)
+    except (OSError, RuntimeError) as error:
+        raise RuntimeError("receipt workspace is unavailable") from error
+    if (
+        not path.is_absolute()
+        or path.absolute() != expected
+        or resolved != expected
+        or resolved_parent != RECEIPT_WORKSPACE_ROOT
+        or not stat.S_ISDIR(metadata.st_mode)
+        or stat.S_ISLNK(metadata.st_mode)
+        or _is_reparse_point(metadata)
+        or not stat.S_ISDIR(parent_metadata.st_mode)
+        or stat.S_ISLNK(parent_metadata.st_mode)
+        or _is_reparse_point(parent_metadata)
+    ):
+        raise RuntimeError("receipt workspace is not canonical or operation-bound")
+    if os.name == "posix" and (
+        metadata.st_uid != os.geteuid()
+        or stat.S_IMODE(metadata.st_mode) != 0o700
+        or parent_metadata.st_uid
+        != (
+            0
+            if RECEIPT_WORKSPACE_ROOT == PRODUCTION_RECEIPT_WORKSPACE_ROOT
+            else os.geteuid()
+        )
+        or parent_metadata.st_gid not in {os.getegid(), *os.getgroups()}
+        or stat.S_IMODE(parent_metadata.st_mode) != 0o750
+    ):
+        raise RuntimeError("receipt workspace ownership or mode is unsafe")
+
+
+def _sha256_regular_file(path: Path) -> tuple[str, int]:
+    flags = (
+        os.O_RDONLY
+        | getattr(os, "O_CLOEXEC", 0)
+        | getattr(os, "O_NOFOLLOW", 0)
+    )
+    descriptor = os.open(path, flags)
+    try:
+        metadata = os.fstat(descriptor)
+        path_metadata = path.lstat()
+        if (
+            not stat.S_ISREG(metadata.st_mode)
+            or stat.S_ISLNK(path_metadata.st_mode)
+            or _is_reparse_point(path_metadata)
+            or (metadata.st_dev, metadata.st_ino)
+            != (path_metadata.st_dev, path_metadata.st_ino)
+            or metadata.st_nlink != 1
+        ):
+            raise RuntimeError("receipt evidence file is unsafe")
+        digest = hashlib.sha256()
+        with os.fdopen(descriptor, "rb", closefd=False) as stream:
+            while chunk := stream.read(1024 * 1024):
+                digest.update(chunk)
+        return digest.hexdigest(), metadata.st_size
+    finally:
+        os.close(descriptor)
+
+
+def _sync_directory(path: Path) -> None:
+    if os.name != "posix":
+        return
+    descriptor = os.open(
+        path,
+        os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_CLOEXEC", 0),
+    )
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+
+
+def _try_lock(descriptor: int) -> bool:
+    os.lseek(descriptor, 0, os.SEEK_SET)
+    try:
+        if os.name == "nt":
+            import msvcrt
+
+            msvcrt.locking(descriptor, msvcrt.LK_NBLCK, 1)
+        else:
+            import fcntl
+
+            fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        return True
+    except OSError as error:
+        if error.errno in {errno.EACCES, errno.EAGAIN, errno.EDEADLK}:
+            return False
+        raise
+
+
+def _unlock(descriptor: int) -> None:
+    os.lseek(descriptor, 0, os.SEEK_SET)
+    if os.name == "nt":
+        import msvcrt
+
+        msvcrt.locking(descriptor, msvcrt.LK_UNLCK, 1)
+    else:
+        import fcntl
+
+        fcntl.flock(descriptor, fcntl.LOCK_UN)
+
+
+@contextmanager
+def _backup_lock(backup_dir: Path) -> Iterator[None]:
+    lock_path = backup_dir / LOCK_NAME
+    flags = os.O_RDWR | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+    descriptor = None
+    try:
+        try:
+            descriptor = os.open(
+                lock_path,
+                flags | os.O_CREAT | os.O_EXCL,
+                0o600,
+            )
+            if hasattr(os, "fchmod"):
+                os.fchmod(descriptor, 0o600)
+        except FileExistsError:
+            descriptor = os.open(lock_path, flags)
+    except OSError as error:
+        if descriptor is not None:
+            os.close(descriptor)
+        raise RuntimeError("backup lock file could not be opened safely") from error
+
+    acquired = False
+    try:
+        metadata = os.fstat(descriptor)
+        path_metadata = os.lstat(lock_path)
+        if (
+            not stat.S_ISREG(metadata.st_mode)
+            or stat.S_ISLNK(path_metadata.st_mode)
+            or _is_reparse_point(path_metadata)
+            or (metadata.st_dev, metadata.st_ino)
+            != (path_metadata.st_dev, path_metadata.st_ino)
+            or (
+                os.name == "posix"
+                and (
+                    metadata.st_uid != os.geteuid()
+                    or stat.S_IMODE(metadata.st_mode) != 0o600
+                )
+            )
+        ):
+            raise RuntimeError("backup lock path is unsafe")
+        deadline = time.monotonic() + LOCK_TIMEOUT_SECONDS
+        while not acquired:
+            acquired = _try_lock(descriptor)
+            if acquired:
+                break
+            if time.monotonic() >= deadline:
+                raise RuntimeError("timed out waiting for the backup lock")
+            time.sleep(min(0.05, max(0.0, deadline - time.monotonic())))
+        yield
+    finally:
+        try:
+            if acquired:
+                _unlock(descriptor)
+        finally:
+            os.close(descriptor)
+
+
+def _destination(backup_dir: Path) -> Path:
+    timestamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%S%fZ")
+    base_name = f"strugglebus-{timestamp}"
+    counter = 0
+    while True:
+        suffix = "" if counter == 0 else f"-{counter}"
+        destination = backup_dir / f"{base_name}{suffix}.db"
+        if not os.path.lexists(destination):
+            return destination
+        counter += 1
+
+
+def _publish_maintenance_backup(temporary: Path, destination: Path) -> None:
+    with temporary.open("r+b") as stream:
+        os.fsync(stream.fileno())
+    try:
+        os.link(temporary, destination)
+    except FileExistsError as error:
+        raise RuntimeError(
+            "maintenance backup already exists for this operation"
+        ) from error
+    temporary.unlink()
+    _sync_directory(destination.parent)
+
+
+def _maintenance_file_metadata(
+    path: Path,
+    reference: os.stat_result | None = None,
+) -> os.stat_result:
+    metadata = path.lstat()
+    if (
+        not stat.S_ISREG(metadata.st_mode)
+        or stat.S_ISLNK(metadata.st_mode)
+        or _is_reparse_point(metadata)
+        or metadata.st_size == 0
+        or metadata.st_nlink not in {1, 2}
+        or (
+            os.name == "posix"
+            and (
+                metadata.st_uid != os.geteuid()
+                or stat.S_IMODE(metadata.st_mode) != 0o600
+            )
+        )
+        or (
+            reference is not None
+            and (
+                metadata.st_dev,
+                metadata.st_ino,
+                metadata.st_size,
+                metadata.st_mtime_ns,
+            )
+            != (
+                reference.st_dev,
+                reference.st_ino,
+                reference.st_size,
+                reference.st_mtime_ns,
+            )
+        )
+    ):
+        raise RuntimeError("maintenance backup evidence is unsafe or changed")
+    return metadata
+
+
+def _verify_maintenance_backup(destination: Path, database: Path) -> None:
+    metadata = _maintenance_file_metadata(destination)
+    if os.path.samefile(destination, database):
+        raise RuntimeError("maintenance backup must differ from the database")
+    temporary = None
+    if metadata.st_nlink == 2:
+        matches = []
+        for candidate in destination.parent.glob(".strugglebus-backup-*.db"):
+            candidate_metadata = candidate.lstat()
+            if (candidate_metadata.st_dev, candidate_metadata.st_ino) == (
+                metadata.st_dev, metadata.st_ino
+            ):
+                if not BACKUP_TEMP_NAME_PATTERN.fullmatch(candidate.name):
+                    raise RuntimeError("maintenance backup staging name is unsafe")
+                _maintenance_file_metadata(candidate, metadata)
+                matches.append(candidate)
+        if len(matches) != 1:
+            raise RuntimeError("maintenance backup has unrecognized hard links")
+        temporary = matches[0]
+
+    descriptor = os.open(
+        destination,
+        os.O_RDWR | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0),
+    )
+    try:
+        _maintenance_file_metadata(destination, os.fstat(descriptor))
+        _maintenance_file_metadata(destination, metadata)
+        with closing(
+            sqlite3.connect(
+                f"{destination.as_uri()}?mode=ro&immutable=1", uri=True
+            )
+        ) as connection:
+            result = connection.execute("PRAGMA integrity_check").fetchall()
+            if result != [("ok",)]:
+                raise RuntimeError("maintenance backup integrity check failed")
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+
+    # A killed publisher may leave its private staging name linked to the pin.
+    # Only finish that exact publication; never adopt or remove other files.
+    current = _maintenance_file_metadata(destination, metadata)
+    if current.st_nlink != metadata.st_nlink:
+        raise RuntimeError("maintenance backup link count changed")
+    if temporary is not None:
+        if _maintenance_file_metadata(temporary, metadata).st_nlink != 2:
+            raise RuntimeError("maintenance backup staging link changed")
+        temporary.unlink()
+    if _maintenance_file_metadata(destination, metadata).st_nlink != 1:
+        raise RuntimeError("maintenance backup still has unexpected hard links")
+    _sync_directory(destination.parent)
+
+
+def _prune(
+    backup_dir: Path,
+    database: Path,
+    destination: Path,
+    retention: int,
+) -> None:
+    backups = [destination]
+    backups.extend(
+        sorted(
+            (
+                path
+                for path in backup_dir.glob("strugglebus-*.db")
+                if path != destination
+                and path.is_file()
+                and not path.is_symlink()
+                and path.resolve() != database
+            ),
+            key=lambda path: (
+                path.stat().st_mtime_ns,
+                path.name != "strugglebus-latest.db",
+                path.name,
+            ),
+            reverse=True,
+        )
+    )
+    for expired in backups[retention:]:
+        expired.unlink()
+
+
+def _write_receipt(
+    receipt_dir: Path,
+    operation_id: str,
+    destination: Path,
+    database: Path,
+) -> None:
+    """Write an atomic receipt for a cutover backup operation."""
+    if not OPERATION_ID_PATTERN.fullmatch(operation_id):
+        raise RuntimeError("operation ID must be exactly 32 hex characters")
+    receipt_name = f".cutover-backup-receipt-{operation_id}.json"
+    receipt_path = receipt_dir / receipt_name
+
+    # Collect sanitized evidence from the backup.
+    backup_sha256, backup_size = _sha256_regular_file(destination)
+    helper_sha256, _ = _sha256_regular_file(Path(__file__))
+    with closing(
+        sqlite3.connect(
+            f"{destination.as_uri()}?mode=ro&immutable=1", uri=True
+        )
+    ) as conn:
+        conn.execute("PRAGMA query_only = ON")
+        schema_version = int(
+            conn.execute("PRAGMA user_version").fetchone()[0]
+        )
+        message_count = conn.execute(
+            "SELECT COUNT(*) FROM messages"
+        ).fetchone()[0]
+        max_seq_row = conn.execute(
+            "SELECT MAX(seq) FROM messages"
+        ).fetchone()
+        max_seq = max_seq_row[0] if max_seq_row[0] is not None else 0
+
+    receipt = {
+        "receipt_version": 1,
+        "operation_id": operation_id,
+        "receipt_workspace": str(receipt_dir),
+        "backup_helper_sha256": helper_sha256,
+        "backup_basename": destination.name,
+        "backup_sha256": backup_sha256,
+        "backup_size_bytes": backup_size,
+        "message_count": message_count,
+        "max_seq": max_seq,
+        "schema_version": schema_version,
+    }
+
+    payload = json.dumps(receipt, separators=(",", ":"), sort_keys=True)
+    temporary = receipt_path.with_suffix(".tmp")
+    descriptor = os.open(
+        temporary,
+        os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0),
+        0o600,
+    )
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as f:
+            f.write(payload)
+            f.flush()
+            os.fsync(f.fileno())
+        # Atomic link — fails if receipt already exists (no TOCTOU).
+        try:
+            os.link(temporary, receipt_path)
+        except FileExistsError:
+            raise RuntimeError("receipt already exists for this operation")
+        temporary.unlink()
+        _sync_directory(receipt_dir)
+    except Exception:
+        try:
+            temporary.unlink()
+        except FileNotFoundError:
+            pass
+        raise
+
+
+def main() -> int:
+    # Parse positional args: DATABASE BACKUP_DIR RETENTION
+    # Maintenance creation/verification and cutover receipts are separate modes.
+    positional = []
+    operation_id = None
+    receipt_dir = None
+    maintenance_id = None
+    verify_maintenance_id = None
+    args = sys.argv[1:]
+    i = 0
+    while i < len(args):
+        if args[i] == "--operation-id":
+            if i + 1 >= len(args):
+                raise SystemExit("--operation-id requires a value")
+            operation_id = args[i + 1]
+            i += 2
+        elif args[i] == "--receipt-dir":
+            if i + 1 >= len(args):
+                raise SystemExit("--receipt-dir requires a value")
+            receipt_dir = args[i + 1]
+            i += 2
+        elif args[i] == "--maintenance-id":
+            if i + 1 >= len(args):
+                raise SystemExit("--maintenance-id requires a value")
+            if maintenance_id is not None:
+                raise SystemExit("--maintenance-id must be supplied only once")
+            maintenance_id = args[i + 1]
+            i += 2
+        elif args[i] == "--verify-maintenance-id":
+            if i + 1 >= len(args):
+                raise SystemExit("--verify-maintenance-id requires a value")
+            if verify_maintenance_id is not None:
+                raise SystemExit(
+                    "--verify-maintenance-id must be supplied only once"
+                )
+            verify_maintenance_id = args[i + 1]
+            i += 2
+        else:
+            positional.append(args[i])
+            i += 1
+
+    if len(positional) != 3:
+        raise SystemExit("usage: sqlite_backup DATABASE BACKUP_DIR RETENTION "
+                         "[--maintenance-id ID | --verify-maintenance-id ID | "
+                         "--operation-id ID --receipt-dir DIR]")
+
+    if maintenance_id is not None and verify_maintenance_id is not None:
+        raise SystemExit(
+            "--maintenance-id and --verify-maintenance-id cannot be combined"
+        )
+    for option, identifier in (
+        ("--maintenance-id", maintenance_id),
+        ("--verify-maintenance-id", verify_maintenance_id),
+    ):
+        if identifier is None:
+            continue
+        if not OPERATION_ID_PATTERN.fullmatch(identifier):
+            raise SystemExit(
+                f"{option} must be exactly 32 lowercase hex characters"
+            )
+        if operation_id is not None or receipt_dir is not None:
+            raise SystemExit(
+                f"{option} cannot be combined with "
+                "--operation-id or --receipt-dir"
+            )
+
+    database = Path(positional[0]).resolve(strict=True)
+    configured_backup_dir = Path(positional[1])
+    configured_metadata = configured_backup_dir.lstat()
+    if (
+        not configured_backup_dir.is_absolute()
+        or not stat.S_ISDIR(configured_metadata.st_mode)
+        or stat.S_ISLNK(configured_metadata.st_mode)
+        or _is_reparse_point(configured_metadata)
+    ):
+        raise SystemExit("backup directory path is unsafe")
+    backup_dir = configured_backup_dir.resolve(strict=True)
+    if backup_dir != configured_backup_dir.absolute():
+        raise SystemExit("backup directory path is unsafe")
+    directory_metadata = backup_dir.stat()
+    if os.name == "posix" and (
+        directory_metadata.st_uid != os.geteuid()
+        or stat.S_IMODE(directory_metadata.st_mode) & 0o077
+    ):
+        raise SystemExit("backup directory permissions are unsafe")
+    retention = int(positional[2])
+    if retention < 1:
+        raise SystemExit("retention must be positive")
+
+    # Validate receipt arguments — both or neither.
+    if (operation_id is None) != (receipt_dir is None):
+        raise SystemExit("--operation-id and --receipt-dir must be used together")
+    if operation_id is not None:
+        if not OPERATION_ID_PATTERN.fullmatch(operation_id):
+            raise SystemExit("--operation-id must be exactly 32 hex characters")
+        receipt_dir_path = Path(receipt_dir)
+        _validate_receipt_directory(receipt_dir_path, operation_id)
+    else:
+        receipt_dir_path = None
+
+    if verify_maintenance_id is not None:
+        destination = backup_dir / f"maintenance-{verify_maintenance_id}.db"
+        with _backup_lock(backup_dir):
+            _verify_maintenance_backup(destination, database)
+        print(destination)
+        return 0
+
+    with _backup_lock(backup_dir):
+        if maintenance_id is not None:
+            destination = backup_dir / f"maintenance-{maintenance_id}.db"
+            if os.path.lexists(destination):
+                raise RuntimeError(
+                    "maintenance backup already exists for this operation"
+                )
+        descriptor, temporary_name = tempfile.mkstemp(
+            prefix=".strugglebus-backup-",
+            suffix=".db",
+            dir=backup_dir,
+        )
+        os.close(descriptor)
+        temporary = Path(temporary_name)
+        try:
+            with closing(
+                sqlite3.connect(f"{database.as_uri()}?mode=ro", uri=True)
+            ) as source:
+                with closing(sqlite3.connect(temporary)) as target:
+                    source.backup(target)
+                    result = target.execute("PRAGMA integrity_check").fetchone()
+                    if result != ("ok",):
+                        raise RuntimeError("backup integrity check failed")
+            temporary.chmod(0o600)
+            if maintenance_id is not None:
+                _publish_maintenance_backup(temporary, destination)
+            elif retention == 1:
+                destination = backup_dir / "strugglebus-latest.db"
+                if os.path.lexists(destination) and os.path.samefile(
+                    destination,
+                    database,
+                ):
+                    raise RuntimeError(
+                        "backup destination must differ from the database"
+                    )
+                deadline = time.monotonic() + LOCK_TIMEOUT_SECONDS
+                while True:
+                    try:
+                        os.replace(temporary, destination)
+                        break
+                    except PermissionError as error:
+                        if os.name != "nt":
+                            raise
+                        if time.monotonic() >= deadline:
+                            raise RuntimeError(
+                                "timed out publishing stable backup because "
+                                "it is in use"
+                            ) from error
+                        time.sleep(
+                            min(
+                                0.05,
+                                max(0.0, deadline - time.monotonic()),
+                            )
+                        )
+            else:
+                destination = _destination(backup_dir)
+                os.link(temporary, destination)
+                temporary.unlink()
+        finally:
+            temporary.unlink(missing_ok=True)
+
+        if maintenance_id is None:
+            _prune(backup_dir, database, destination, retention)
+        if operation_id is not None and receipt_dir_path is not None:
+            _write_receipt(receipt_dir_path, operation_id, destination, database)
+
+    print(destination)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -1,0 +1,8 @@
+---
+- name: Exercise production release tasks in check mode
+  hosts: localhost
+  gather_facts: false
+  vars:
+    strugglebus_release_test_fixture: true
+  roles:
+    - role: release

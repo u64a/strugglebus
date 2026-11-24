@@ -1,0 +1,153 @@
+---
+- name: Run the disposable production acceptance smoke
+  hosts: strugglebus_guests
+  become: true
+  gather_facts: false
+  vars:
+    strugglebus_smoke_input:
+      admin_credential_path: "{{ strugglebus_config_dir }}/credentials/admin-token"
+      base_url: "https://{{ strugglebus_effective_domain }}"
+      ca_path: "{{ strugglebus_caddy_ca_path }}"
+      database_path: "{{ strugglebus_database_path }}"
+      expected_release_id: "{{ strugglebus_release_version }}"
+      release_environment_path: "{{ strugglebus_current_link }}/release.env"
+      operator_session_path: "{{ strugglebus_smoke_operator_session_path | default('') }}"
+    strugglebus_smoke_expected_phases:
+      - candidate_contract
+      - operator_authority
+      - enrollment
+      - credential_proof
+      - roe_receipt
+      - identity
+      - channel_subscription
+      - mcp_post_rest_read
+      - rest_reply_mcp_read
+      - sse_resume
+      - dashboard_safety
+      - revocation
+      - rest_denial
+      - mcp_denial
+      - helper_cleanup
+      - ansible_always_cleanup
+  tasks:
+    - name: Require the already-active production release
+      ansible.builtin.stat:
+        path: "{{ strugglebus_current_link }}/venv/bin/python"
+        follow: true
+      register: strugglebus_smoke_python
+
+    - name: Validate the production smoke interpreter
+      ansible.builtin.assert:
+        that:
+          - strugglebus_smoke_python.stat.exists
+          - strugglebus_smoke_python.stat.isreg
+          - strugglebus_smoke_python.stat.executable
+        fail_msg: The active release Python interpreter is unavailable.
+
+    - name: Create a root-only disposable smoke workspace
+      ansible.builtin.tempfile:
+        path: /run
+        prefix: strugglebus-smoke-
+        state: directory
+      register: strugglebus_smoke_workspace
+
+    - name: Execute and clean the disposable production smoke
+      block:
+        - name: Install the reviewed disposable smoke helper temporarily
+          ansible.builtin.copy:
+            src: ../files/strugglebus_disposable_smoke.py
+            dest: "{{ strugglebus_smoke_workspace.path }}/smoke.py"
+            owner: root
+            group: root
+            mode: "0700"
+
+        - name: Initialize the root-only sanitized smoke result
+          ansible.builtin.copy:
+            content: "[]\n"
+            dest: "{{ strugglebus_smoke_workspace.path }}/result.json"
+            owner: root
+            group: root
+            mode: "0600"
+
+        - name: Run named smoke phases with credential-bearing input hidden
+          ansible.builtin.command:
+            argv:
+              - "{{ strugglebus_current_link }}/venv/bin/python"
+              - -I
+              - "{{ strugglebus_smoke_workspace.path }}/smoke.py"
+              - run
+            stdin: >-
+              {{
+                strugglebus_smoke_input
+                | combine({'work_dir': strugglebus_smoke_workspace.path})
+                | to_json
+              }}
+            stdin_add_newline: true
+          register: strugglebus_smoke_execution
+          changed_when: false
+          failed_when: false
+          no_log: true
+      always:
+        - name: Re-run exact marker cleanup from the Ansible always path
+          ansible.builtin.command:
+            argv:
+              - "{{ strugglebus_current_link }}/venv/bin/python"
+              - -I
+              - "{{ strugglebus_smoke_workspace.path }}/smoke.py"
+              - cleanup
+            stdin: >-
+              {{ {'work_dir': strugglebus_smoke_workspace.path} | to_json }}
+            stdin_add_newline: true
+          register: strugglebus_smoke_cleanup
+          changed_when: false
+          failed_when: false
+
+        - name: Read the sanitized smoke result
+          ansible.builtin.slurp:
+            src: "{{ strugglebus_smoke_workspace.path }}/result.json"
+          register: strugglebus_smoke_result_file
+          failed_when: false
+
+        - name: Decode the sanitized smoke result
+          ansible.builtin.set_fact:
+            strugglebus_smoke_result: >-
+              {{
+                strugglebus_smoke_result_file.content
+                | default('W10=')
+                | b64decode
+                | from_json
+              }}
+
+        - name: Remove disposable smoke workspace only after exact cleanup
+          ansible.builtin.file:
+            path: "{{ strugglebus_smoke_workspace.path }}"
+            state: absent
+          when: strugglebus_smoke_cleanup.rc | default(1) == 0
+
+        - name: Retain root-only provenance and sanitized failure evidence on cleanup refusal
+          ansible.builtin.debug:
+            msg: >-
+              Exact cleanup failed. The root-only workspace is retained at
+              {{ strugglebus_smoke_workspace.path }} for local operator review;
+              artifact_cleanup_refused records containment of the original saved
+              database binding with incomplete artifact cleanup;
+              containment_unknown means the prior containment outcome cannot be
+              established. Neither result claims containment of a replacement database.
+              do not retry using another operation namespace or delete unrelated data.
+          when: strugglebus_smoke_cleanup.rc | default(1) != 0
+
+        - name: Report only the sanitized named smoke result
+          ansible.builtin.debug:
+            var: strugglebus_smoke_result
+
+        - name: Require every smoke phase and both cleanup paths to pass
+          ansible.builtin.assert:
+            that:
+              - strugglebus_smoke_execution.rc | default(1) == 0
+              - strugglebus_smoke_cleanup.rc | default(1) == 0
+              - strugglebus_smoke_expected_phases | length == 24
+              - strugglebus_smoke_result | map(attribute='phase') | list == strugglebus_smoke_expected_phases
+              - strugglebus_smoke_result | selectattr('passed', 'equalto', false) | list | length == 0
+              - strugglebus_smoke_result | selectattr('shape_matches', 'equalto', false) | list | length == 0
+              - strugglebus_smoke_result | selectattr('count_matches', 'equalto', false) | list | length == 0
+            fail_msg: The sanitized result above identifies the failed smoke phase.

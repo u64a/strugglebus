@@ -1,0 +1,12 @@
+[Unit]
+Description=Daily Strugglebus update check
+
+[Timer]
+# Around four in the morning, local time. A machine that was off then checks
+# shortly after it next starts.
+OnCalendar=*-*-* 04:00:00
+RandomizedDelaySec=45min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

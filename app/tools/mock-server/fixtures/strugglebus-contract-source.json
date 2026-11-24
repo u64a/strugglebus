@@ -1,0 +1,306 @@
+{
+  "guide_version": "1.14.0",
+  "limits": {
+    "authenticated_requests_per_minute": 600,
+    "credential_pending_seconds": 900,
+    "max_active_credentials_per_agent": 2,
+    "max_channels": 1000,
+    "max_mcp_request_body_bytes": 1048576,
+    "max_mentions_per_message": 32,
+    "max_message_bytes": 1048576,
+    "max_metadata_bytes": 16384,
+    "max_pending_credentials_per_agent": 1,
+    "max_read_results": 200,
+    "max_rest_request_body_bytes": 6308864,
+    "roe_enforcement_mode": "observe",
+    "self_rotation_window_seconds": 86400,
+    "self_rotations_per_window": 2,
+    "sse_connection_seconds": 300,
+    "sse_max_connections_per_agent": 3
+  },
+  "openapi": "3.1.0",
+  "schemas": {
+    "IssuedCredentialResponse": {
+      "additionalProperties": false,
+      "properties": {
+        "credential": {
+          "$ref": "#/components/schemas/CredentialResponse"
+        },
+        "credential_secret": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Credential Secret"
+        },
+        "secret_issued": {
+          "title": "Secret Issued",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "credential",
+        "credential_secret",
+        "secret_issued"
+      ],
+      "title": "IssuedCredentialResponse",
+      "type": "object"
+    },
+    "MobileActionRequest": {
+      "additionalProperties": false,
+      "description": "Spend a confirmation.\n\n``action`` and ``target_id`` are re-declared rather than read from the\nconfirmation, so a client that displayed one thing and spent a\nconfirmation bound to another is refused instead of silently executing the\nbound action.",
+      "properties": {
+        "action": {
+          "maxLength": 64,
+          "minLength": 1,
+          "title": "Action",
+          "type": "string"
+        },
+        "confirmation_id": {
+          "maxLength": 256,
+          "minLength": 1,
+          "title": "Confirmation Id",
+          "type": "string"
+        },
+        "grant_secret": {
+          "maxLength": 256,
+          "minLength": 1,
+          "title": "Grant Secret",
+          "type": "string"
+        },
+        "reason": {
+          "maxLength": 256,
+          "minLength": 1,
+          "title": "Reason",
+          "type": "string"
+        },
+        "request_id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "title": "Request Id",
+          "type": "string"
+        },
+        "target_id": {
+          "maxLength": 256,
+          "minLength": 1,
+          "title": "Target Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "request_id",
+        "confirmation_id",
+        "action",
+        "target_id",
+        "grant_secret",
+        "reason"
+      ],
+      "title": "MobileActionRequest",
+      "type": "object"
+    },
+    "MobileActionResponse": {
+      "additionalProperties": false,
+      "properties": {
+        "action": {
+          "title": "Action",
+          "type": "string"
+        },
+        "applied": {
+          "title": "Applied",
+          "type": "boolean"
+        },
+        "detail": {
+          "title": "Detail",
+          "type": "string"
+        },
+        "target_id": {
+          "title": "Target Id",
+          "type": "string"
+        },
+        "target_label": {
+          "title": "Target Label",
+          "type": "string"
+        }
+      },
+      "required": [
+        "action",
+        "target_id",
+        "target_label",
+        "applied",
+        "detail"
+      ],
+      "title": "MobileActionResponse",
+      "type": "object"
+    },
+    "MobileConfirmationRequest": {
+      "additionalProperties": false,
+      "properties": {
+        "action": {
+          "maxLength": 64,
+          "minLength": 1,
+          "title": "Action",
+          "type": "string"
+        },
+        "request_id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "title": "Request Id",
+          "type": "string"
+        },
+        "target_id": {
+          "maxLength": 256,
+          "minLength": 1,
+          "title": "Target Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "request_id",
+        "action",
+        "target_id"
+      ],
+      "title": "MobileConfirmationRequest",
+      "type": "object"
+    },
+    "MobileConfirmationResponse": {
+      "additionalProperties": false,
+      "properties": {
+        "action": {
+          "title": "Action",
+          "type": "string"
+        },
+        "confirmation_id": {
+          "title": "Confirmation Id",
+          "type": "string"
+        },
+        "effect": {
+          "title": "Effect",
+          "type": "string"
+        },
+        "expires_at": {
+          "format": "date-time",
+          "title": "Expires At",
+          "type": "string"
+        },
+        "target_id": {
+          "title": "Target Id",
+          "type": "string"
+        },
+        "target_kind": {
+          "title": "Target Kind",
+          "type": "string"
+        },
+        "target_label": {
+          "title": "Target Label",
+          "type": "string"
+        }
+      },
+      "required": [
+        "confirmation_id",
+        "action",
+        "target_kind",
+        "target_id",
+        "target_label",
+        "expires_at",
+        "effect"
+      ],
+      "title": "MobileConfirmationResponse",
+      "type": "object"
+    },
+    "MobileWriteGrantRequest": {
+      "additionalProperties": false,
+      "description": "Establish a device's write grant by proving the operator password once.",
+      "properties": {
+        "operator_password": {
+          "maxLength": 1024,
+          "minLength": 15,
+          "title": "Operator Password",
+          "type": "string"
+        },
+        "reason": {
+          "maxLength": 256,
+          "minLength": 1,
+          "title": "Reason",
+          "type": "string"
+        },
+        "request_id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "title": "Request Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "request_id",
+        "operator_password",
+        "reason"
+      ],
+      "title": "MobileWriteGrantRequest",
+      "type": "object"
+    },
+    "MobileWriteGrantResponse": {
+      "additionalProperties": false,
+      "properties": {
+        "device_id": {
+          "title": "Device Id",
+          "type": "string"
+        },
+        "grant_secret": {
+          "title": "Grant Secret",
+          "type": "string"
+        },
+        "guidance": {
+          "title": "Guidance",
+          "type": "string"
+        }
+      },
+      "required": [
+        "device_id",
+        "grant_secret",
+        "guidance"
+      ],
+      "title": "MobileWriteGrantResponse",
+      "type": "object"
+    },
+    "RedeemedEnrollmentResponse": {
+      "additionalProperties": false,
+      "properties": {
+        "agent": {
+          "$ref": "#/components/schemas/AgentResponse"
+        },
+        "credential": {
+          "$ref": "#/components/schemas/CredentialResponse"
+        },
+        "credential_secret": {
+          "title": "Credential Secret",
+          "type": "string"
+        },
+        "expected_identity_guidance": {
+          "title": "Expected Identity Guidance",
+          "type": "string"
+        },
+        "next_steps": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Next Steps",
+          "type": "array"
+        }
+      },
+      "required": [
+        "agent",
+        "credential",
+        "credential_secret",
+        "expected_identity_guidance",
+        "next_steps"
+      ],
+      "title": "RedeemedEnrollmentResponse",
+      "type": "object"
+    }
+  },
+  "service_version": "0.1.0"
+}

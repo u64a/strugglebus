@@ -1,0 +1,382 @@
+---
+- name: Inspect the private Caddy runtime directory
+  ansible.builtin.stat:
+    path: /run/caddy
+    follow: false
+  register: caddy_runtime_directory
+  ignore_errors: true
+  when: caddy_activation_test_fixture is not defined
+
+- name: Inspect the private Caddy admin socket
+  ansible.builtin.stat:
+    path: /run/caddy/admin.sock
+    follow: false
+  register: caddy_admin_socket
+  ignore_errors: true
+  when: caddy_activation_test_fixture is not defined
+
+- name: Verify Caddy is active after restart
+  ansible.builtin.command:
+    argv:
+      - systemctl
+      - is-active
+      - --quiet
+      - caddy.service
+  register: caddy_active_state
+  changed_when: false
+  check_mode: false
+  ignore_errors: true
+  when: caddy_activation_test_fixture is not defined
+
+- name: Inspect Caddy TCP listeners
+  ansible.builtin.command:
+    argv:
+      - ss
+      - -H
+      - -ltn
+  register: caddy_listener_state
+  changed_when: false
+  check_mode: false
+  ignore_errors: true
+  when: caddy_activation_test_fixture is not defined
+
+- name: Record the isolated Caddy runtime observation
+  ansible.builtin.command:
+    argv:
+      - "{{ ansible_playbook_python }}"
+      - -c
+      - >-
+        import pathlib,sys;
+        state=pathlib.Path(sys.argv[1]);
+        log=pathlib.Path(sys.argv[2]);
+        current=state.read_text(encoding="ascii").strip();
+        assert current in {"restarted","verified"};
+        event="verify" if current == "restarted" else "verify-unchanged";
+        log.open("a",encoding="ascii").write(event + "\n");
+        state.write_text("verified\n",encoding="ascii")
+      - "{{ caddy_activation_test_fixture.state }}"
+      - "{{ caddy_activation_test_fixture.log }}"
+  changed_when: false
+  when: caddy_activation_test_fixture is defined
+
+- name: Materialize the isolated Caddy runtime observation
+  ansible.builtin.set_fact:
+    caddy_runtime_directory:
+      failed: false
+      stat:
+        exists: >-
+          {{
+            caddy_activation_test_fixture.scenario
+            != 'mismatch-runtime_dir_exists'
+          }}
+        isdir: >-
+          {{
+            caddy_activation_test_fixture.scenario
+            != 'mismatch-runtime_dir_type'
+          }}
+        islnk: >-
+          {{
+            caddy_activation_test_fixture.scenario
+            == 'mismatch-runtime_dir_not_symlink'
+          }}
+        pw_name: >-
+          {{
+            'other'
+            if caddy_activation_test_fixture.scenario
+              == 'mismatch-runtime_dir_owner'
+            else 'caddy'
+          }}
+        gr_name: >-
+          {{
+            'other'
+            if caddy_activation_test_fixture.scenario
+              == 'mismatch-runtime_dir_group'
+            else 'caddy'
+          }}
+        mode: >-
+          {{
+            '0770'
+            if caddy_activation_test_fixture.scenario
+              == 'mismatch-runtime_dir_mode'
+            else '0750'
+          }}
+    caddy_admin_socket:
+      failed: false
+      stat:
+        exists: >-
+          {{
+            caddy_activation_test_fixture.scenario
+            != 'mismatch-admin_socket_exists'
+          }}
+        issock: >-
+          {{
+            caddy_activation_test_fixture.scenario
+            != 'mismatch-admin_socket_type'
+          }}
+        islnk: >-
+          {{
+            caddy_activation_test_fixture.scenario
+            == 'mismatch-admin_socket_not_symlink'
+          }}
+        pw_name: >-
+          {{
+            'other'
+            if caddy_activation_test_fixture.scenario
+              == 'mismatch-admin_socket_owner'
+            else 'caddy'
+          }}
+        gr_name: >-
+          {{
+            'other'
+            if caddy_activation_test_fixture.scenario
+              == 'mismatch-admin_socket_group'
+            else 'caddy'
+          }}
+        mode: >-
+          {{
+            '0770'
+            if caddy_activation_test_fixture.scenario
+              == 'mismatch-admin_socket_mode'
+            else '0700'
+          }}
+    caddy_active_state:
+      failed: >-
+        {{
+          caddy_activation_test_fixture.scenario
+          == 'mismatch-systemctl_active'
+        }}
+      rc: >-
+        {{
+          3
+          if caddy_activation_test_fixture.scenario
+            == 'mismatch-systemctl_active'
+          else 0
+        }}
+    caddy_listener_state:
+      failed: >-
+        {{
+          caddy_activation_test_fixture.scenario
+          == 'mismatch-listener_probe_succeeded'
+        }}
+      rc: >-
+        {{
+          1
+          if caddy_activation_test_fixture.scenario
+            == 'mismatch-listener_probe_succeeded'
+          else 0
+        }}
+      stdout: >-
+        {{
+          ''
+          if caddy_activation_test_fixture.scenario
+            in [
+              'mismatch-listener_probe_succeeded',
+              'mismatch-https_listener_present'
+            ]
+          else (
+            [
+              'LISTEN 0 4096 *:443 *:*',
+              'LISTEN 0 4096 *:80 *:*'
+            ] | join('\n')
+            if caddy_activation_test_fixture.scenario
+              == 'mismatch-http_listener_absent'
+            else 'LISTEN 0 4096 *:443 *:*'
+          )
+        }}
+      stdout_lines: >-
+        {{
+          []
+          if caddy_activation_test_fixture.scenario
+            in [
+              'mismatch-listener_probe_succeeded',
+              'mismatch-https_listener_present'
+            ]
+          else (
+            ['LISTEN 0 4096 *:443 *:*', 'LISTEN 0 4096 *:80 *:*']
+            if caddy_activation_test_fixture.scenario
+              == 'mismatch-http_listener_absent'
+            else ['LISTEN 0 4096 *:443 *:*']
+          )
+        }}
+  when: caddy_activation_test_fixture is defined
+
+- name: Normalize the Caddy runtime observation
+  ansible.builtin.set_fact:
+    caddy_normalized_listener_addresses: >-
+      {{
+        caddy_listener_state.stdout_lines
+        | default([])
+        | map('split')
+        | map(attribute=3)
+        | unique
+        | sort
+        | list
+      }}
+
+- name: Record the named Caddy runtime checks
+  ansible.builtin.set_fact:
+    caddy_runtime_checks:
+      runtime_dir_exists: >-
+        {{
+          not (caddy_runtime_directory is failed)
+          and caddy_runtime_directory.stat.exists | default(false)
+        }}
+      runtime_dir_type: >-
+        {{
+          not (caddy_runtime_directory.stat.exists | default(false))
+          or caddy_runtime_directory.stat.isdir | default(false)
+        }}
+      runtime_dir_owner: >-
+        {{
+          not (caddy_runtime_directory.stat.exists | default(false))
+          or caddy_runtime_directory.stat.pw_name | default('') == 'caddy'
+        }}
+      runtime_dir_group: >-
+        {{
+          not (caddy_runtime_directory.stat.exists | default(false))
+          or caddy_runtime_directory.stat.gr_name | default('') == 'caddy'
+        }}
+      runtime_dir_mode: >-
+        {{
+          not (caddy_runtime_directory.stat.exists | default(false))
+          or caddy_runtime_directory.stat.mode | default('') == '0750'
+        }}
+      runtime_dir_not_symlink: >-
+        {{ not caddy_runtime_directory.stat.islnk | default(false) }}
+      admin_socket_exists: >-
+        {{
+          not (caddy_admin_socket is failed)
+          and caddy_admin_socket.stat.exists | default(false)
+        }}
+      admin_socket_type: >-
+        {{
+          not (caddy_admin_socket.stat.exists | default(false))
+          or caddy_admin_socket.stat.issock | default(false)
+        }}
+      admin_socket_owner: >-
+        {{
+          not (caddy_admin_socket.stat.exists | default(false))
+          or caddy_admin_socket.stat.pw_name | default('') == 'caddy'
+        }}
+      admin_socket_group: >-
+        {{
+          not (caddy_admin_socket.stat.exists | default(false))
+          or caddy_admin_socket.stat.gr_name | default('') == 'caddy'
+        }}
+      admin_socket_mode: >-
+        {{
+          not (caddy_admin_socket.stat.exists | default(false))
+          or caddy_admin_socket.stat.mode | default('') in ['0200', '0700']
+        }}
+      admin_socket_not_symlink: >-
+        {{ not caddy_admin_socket.stat.islnk | default(false) }}
+      systemctl_active: >-
+        {{ not (caddy_active_state is failed) and caddy_active_state.rc == 0 }}
+      listener_probe_succeeded: >-
+        {{ not (caddy_listener_state is failed) and caddy_listener_state.rc == 0 }}
+      https_listener_present: >-
+        {{
+          (caddy_listener_state is failed)
+          or '*:443' in caddy_normalized_listener_addresses
+          or '0.0.0.0:443' in caddy_normalized_listener_addresses
+          or '[::]:443' in caddy_normalized_listener_addresses
+        }}
+      http_listener_absent: >-
+        {{
+          (caddy_listener_state is failed)
+          or (
+            '*:80' not in caddy_normalized_listener_addresses
+            and '0.0.0.0:80' not in caddy_normalized_listener_addresses
+            and '[::]:80' not in caddy_normalized_listener_addresses
+          )
+        }}
+
+- name: Retain the failed Caddy runtime predicates
+  ansible.builtin.set_fact:
+    caddy_failed_runtime_predicates: >-
+      {{
+        caddy_runtime_checks
+        | dict2items
+        | rejectattr('value', 'equalto', true)
+        | map(attribute='key')
+        | sort
+        | list
+      }}
+
+- name: Build the sanitized Caddy failure report
+  ansible.builtin.set_fact:
+    caddy_runtime_failure_report:
+      failed_predicates: "{{ caddy_failed_runtime_predicates }}"
+      runtime_directory:
+        exists: "{{ caddy_runtime_directory.stat.exists | default(false) }}"
+        type: >-
+          {{
+            'directory'
+            if caddy_runtime_directory.stat.isdir | default(false)
+            else (
+              'missing'
+              if not caddy_runtime_directory.stat.exists | default(false)
+              else 'other'
+            )
+          }}
+        owner: "{{ caddy_runtime_directory.stat.pw_name | default('') }}"
+        group: "{{ caddy_runtime_directory.stat.gr_name | default('') }}"
+        mode: "{{ caddy_runtime_directory.stat.mode | default('') }}"
+        link: "{{ caddy_runtime_directory.stat.islnk | default(false) }}"
+      admin_socket:
+        exists: "{{ caddy_admin_socket.stat.exists | default(false) }}"
+        type: >-
+          {{
+            'socket'
+            if caddy_admin_socket.stat.issock | default(false)
+            else (
+              'missing'
+              if not caddy_admin_socket.stat.exists | default(false)
+              else 'other'
+            )
+          }}
+        owner: "{{ caddy_admin_socket.stat.pw_name | default('') }}"
+        group: "{{ caddy_admin_socket.stat.gr_name | default('') }}"
+        mode: "{{ caddy_admin_socket.stat.mode | default('') }}"
+        link: "{{ caddy_admin_socket.stat.islnk | default(false) }}"
+      systemctl_active:
+        rc: "{{ caddy_active_state.rc | default(-1) }}"
+        result: >-
+          {{
+            'active'
+            if not (caddy_active_state is failed) and caddy_active_state.rc == 0
+            else 'inactive-or-error'
+          }}
+      tcp_listener_addresses: "{{ caddy_normalized_listener_addresses }}"
+
+- name: Stop Caddy after failed runtime verification
+  ansible.builtin.systemd_service:
+    name: caddy
+    state: stopped
+  when:
+    - caddy_activation_test_fixture is not defined
+    - caddy_failed_runtime_predicates | length > 0
+
+- name: Stop the isolated fixture after failed verification
+  ansible.builtin.command:
+    argv:
+      - "{{ ansible_playbook_python }}"
+      - -c
+      - >-
+        import pathlib,sys;
+        pathlib.Path(sys.argv[1]).write_text("stopped\n",encoding="ascii");
+        pathlib.Path(sys.argv[2]).open("a",encoding="ascii").write("stop\n")
+      - "{{ caddy_activation_test_fixture.state }}"
+      - "{{ caddy_activation_test_fixture.log }}"
+  changed_when: true
+  when:
+    - caddy_activation_test_fixture is defined
+    - caddy_failed_runtime_predicates | length > 0
+
+- name: Require the protected Caddy runtime and HTTPS-only listener
+  ansible.builtin.assert:
+    that:
+      - caddy_failed_runtime_predicates | length == 0
+    fail_msg: >-
+      Caddy runtime verification failed and was stopped:
+      {{ caddy_runtime_failure_report | to_json }}

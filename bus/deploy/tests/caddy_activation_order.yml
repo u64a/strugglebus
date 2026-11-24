@@ -1,0 +1,78 @@
+---
+- name: Exercise sequential Caddy activation outcomes
+  hosts: localhost
+  gather_facts: false
+  vars:
+    caddy_activation_test_scenario: >-
+      {{ lookup('ansible.builtin.env', 'STRUGGLEBUS_CADDY_TEST_SCENARIO') }}
+    caddy_activation_test_log: >-
+      {{ lookup('ansible.builtin.env', 'STRUGGLEBUS_CADDY_TEST_LOG') }}
+    caddy_activation_test_state: "{{ caddy_activation_test_log }}.state"
+    caddy_activation_test_fixture:
+      scenario: "{{ caddy_activation_test_scenario }}"
+      log: "{{ caddy_activation_test_log }}"
+      state: "{{ caddy_activation_test_state }}"
+      marker: "{{ caddy_activation_test_log }}.marker"
+    caddy_expected_activation_marker: |-
+      runtime_sha256=test
+      config_sha256=test
+    caddy_activation_test_predicates:
+      - runtime_dir_exists
+      - runtime_dir_type
+      - runtime_dir_owner
+      - runtime_dir_group
+      - runtime_dir_mode
+      - runtime_dir_not_symlink
+      - admin_socket_exists
+      - admin_socket_type
+      - admin_socket_owner
+      - admin_socket_group
+      - admin_socket_mode
+      - admin_socket_not_symlink
+      - systemctl_active
+      - listener_probe_succeeded
+      - https_listener_present
+      - http_listener_absent
+  pre_tasks:
+    - name: Validate the isolated Caddy activation scenario
+      ansible.builtin.assert:
+        that:
+          - >-
+            caddy_activation_test_scenario
+            in ['success', 'validation-failure', 'restart-failure']
+            or (
+              caddy_activation_test_scenario.startswith('mismatch-')
+              and (
+                caddy_activation_test_scenario
+                | regex_replace('^mismatch-', '')
+              ) in caddy_activation_test_predicates
+            )
+          - caddy_activation_test_log | length > 0
+
+    - name: Initialize the stopped package-default fixture
+      ansible.builtin.copy:
+        dest: "{{ caddy_activation_test_state }}"
+        content: "package-default-stopped\n"
+        mode: "0600"
+
+  tasks:
+    - name: Apply the production Caddy activation sequence
+      ansible.builtin.include_tasks: ../roles/caddy/tasks/apply.yml
+
+    - name: Record enablement only after verified activation
+      ansible.builtin.command:
+        argv:
+          - "{{ ansible_playbook_python }}"
+          - -c
+          - >-
+            import pathlib,sys;
+            state=pathlib.Path(sys.argv[1]);
+            log=pathlib.Path(sys.argv[2]);
+            assert state.read_text(encoding="ascii").strip() == "verified";
+            log.open("a",encoding="ascii").write("enable\n")
+          - "{{ caddy_activation_test_state }}"
+          - "{{ caddy_activation_test_log }}"
+      changed_when: true
+
+    - name: Verify the healthy unchanged fixture without reactivation
+      ansible.builtin.include_tasks: ../roles/caddy/tasks/verify.yml

@@ -1,0 +1,6 @@
+---
+- name: Validate create-only inputs before any Proxmox operation
+  ansible.builtin.import_tasks: validate.yml
+
+- name: Provision the guest through the Proxmox API
+  ansible.builtin.include_tasks: api.yml

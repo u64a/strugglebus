@@ -1,0 +1,27 @@
+---
+- name: Adopt VM-local Strugglebus self-updates
+  hosts: strugglebus_guests
+  become: true
+  gather_facts: true
+  gather_subset: [min]
+  vars:
+    strugglebus_self_update_minimum_free_bytes: 5368709120
+  pre_tasks:
+    - name: Require explicit exact-version self-update adoption
+      ansible.builtin.assert:
+        that:
+          - ansible_facts.distribution == 'Debian'
+          - ansible_facts.distribution_major_version == '13'
+          - strugglebus_self_update_version is match('^[0-9]+\.[0-9]+\.[0-9]+$')
+          - strugglebus_self_update_approval == 'adopt-self-update-' ~ strugglebus_self_update_version
+          - strugglebus_updater_socket_path == '/run/strugglebus-updater/worker.sock'
+          - strugglebus_maintenance_socket_path == '/run/strugglebus-maintenance/control.sock'
+          - strugglebus_health_url is match('^https://[A-Za-z0-9.-]+/healthz$')
+          - strugglebus_caddy_ca_path is match('^/')
+          - strugglebus_self_update_minimum_free_bytes | int >= 5368709120
+        fail_msg: >-
+          Self-update adoption requires an exact installed release, protected
+          updater and maintenance socket paths, canonical HTTPS readiness, and
+          explicit operator approval.
+  roles:
+    - self_update

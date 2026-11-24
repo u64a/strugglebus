@@ -1,0 +1,131 @@
+---
+- name: Exercise immutable release preflight offline
+  hosts: localhost
+  gather_facts: false
+  vars:
+    scenario: "{{ lookup('env', 'STRUGGLEBUS_RELEASE_TEST_SCENARIO') }}"
+    mutation_log: "{{ lookup('env', 'STRUGGLEBUS_RELEASE_TEST_LOG') }}"
+    expected_wheel: strugglebus-0.2.0-py3-none-any.whl
+    wheel_content: offline-wheel
+    lock_content: offline-lock
+  tasks:
+    - name: Create the isolated release root
+      ansible.builtin.tempfile:
+        state: directory
+      register: release_test_root
+
+    - name: Create an existing versioned release for non-fresh scenarios
+      ansible.builtin.file:
+        path: "{{ release_test_root.path }}/offline-test"
+        state: directory
+      when: scenario != "fresh"
+
+    - name: Seed the expected artifacts
+      ansible.builtin.copy:
+        content: "{{ item.content }}"
+        dest: "{{ release_test_root.path }}/offline-test/{{ item.dest }}"
+      loop:
+        - dest: "{{ expected_wheel }}"
+          content: "{{ wheel_content }}"
+        - dest: requirements.lock
+          content: "{{ lock_content }}"
+        - dest: release.env
+          content: "STRUGGLEBUS_RELEASE_ID=offline-test\n"
+      when: >-
+        scenario in [
+          "matching-installed",
+          "matching-unmarked",
+          "marker-mismatch",
+          "marker-hash-mismatch"
+        ]
+
+    - name: Seed a conflicting wheel basename
+      ansible.builtin.copy:
+        content: "{{ wheel_content }}"
+        dest: >-
+          {{ release_test_root.path }}/offline-test/{{
+            'application.whl'
+            if scenario == 'legacy-wheel'
+            else 'strugglebus-0.1.1-py3-none-any.whl'
+          }}
+      when: scenario in ["different-wheel", "legacy-wheel"]
+
+    - name: Seed a second conflicting wheel
+      ansible.builtin.copy:
+        content: "{{ wheel_content }}"
+        dest: "{{ release_test_root.path }}/offline-test/other-0.1.0-py3-none-any.whl"
+      when: scenario == "ambiguous-wheels"
+
+    - name: Seed a symlinked wheel entry
+      ansible.builtin.file:
+        src: /dev/null
+        dest: "{{ release_test_root.path }}/offline-test/application.whl"
+        state: link
+      when: scenario == "symlink-wheel"
+
+    - name: Seed the expected wheel for the ambiguous scenario
+      ansible.builtin.copy:
+        content: "{{ wheel_content }}"
+        dest: "{{ release_test_root.path }}/offline-test/{{ expected_wheel }}"
+      when: scenario == "ambiguous-wheels"
+
+    - name: Calculate artifact checksums
+      ansible.builtin.set_fact:
+        strugglebus_wheel_sha256: "{{ wheel_content | hash('sha256') }}"
+        strugglebus_requirements_lock_sha256: "{{ lock_content | hash('sha256') }}"
+        strugglebus_wheel_src: "/tmp/{{ expected_wheel }}"
+        strugglebus_release_root: "{{ release_test_root.path }}"
+        strugglebus_release_version: offline-test
+        strugglebus_release_identity_content: "STRUGGLEBUS_RELEASE_ID=offline-test\n"
+
+    - name: Build the exact expected installation marker
+      ansible.builtin.set_fact:
+        strugglebus_expected_installed_marker: |
+          wheel_filename={{ expected_wheel }}
+          wheel_sha256={{ strugglebus_wheel_sha256 }}
+          requirements_lock_sha256={{ strugglebus_requirements_lock_sha256 }}
+          agent_access_freeze=global-v1
+
+    - name: Seed installed release metadata
+      ansible.builtin.copy:
+        content: >-
+          {{
+            'wheel_filename=other-0.1.0-py3-none-any.whl\n'
+            + 'wheel_sha256=' + strugglebus_wheel_sha256 + '\n'
+            + 'requirements_lock_sha256='
+            + strugglebus_requirements_lock_sha256 + '\n'
+            if scenario == 'marker-mismatch'
+            else 'wheel_filename=' + expected_wheel + '\n'
+            + 'wheel_sha256=' + ('0' * 64) + '\n'
+            + 'requirements_lock_sha256='
+            + strugglebus_requirements_lock_sha256 + '\n'
+            if scenario == 'marker-hash-mismatch'
+            else strugglebus_expected_installed_marker
+          }}
+        dest: "{{ release_test_root.path }}/offline-test/.installed"
+      when: >-
+        scenario in [
+          "matching-installed",
+          "marker-mismatch",
+          "marker-hash-mismatch"
+        ]
+
+    - name: Exercise the production immutable-release tasks
+      block:
+        - name: Run the production preflight
+          ansible.builtin.include_tasks: ../roles/release/tasks/immutable_preflight.yml
+
+        - name: Record reaching the mutation boundary
+          ansible.builtin.copy:
+            content: upload
+            dest: "{{ mutation_log }}"
+      rescue:
+        - name: Reject an unexpected preflight failure
+          ansible.builtin.fail:
+            msg: "Immutable release scenario {{ scenario }} unexpectedly failed."
+          when: scenario in ["fresh", "matching-installed"]
+      always:
+        - name: Remove the isolated release root
+          ansible.builtin.file:
+            path: "{{ release_test_root.path }}"
+            state: absent

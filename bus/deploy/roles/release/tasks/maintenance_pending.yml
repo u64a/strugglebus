@@ -1,0 +1,40 @@
+---
+- name: Inspect maintenance ownership before release staging
+  ansible.builtin.stat:
+    path: /var/lib/strugglebus-maintenance/operation.json
+    follow: false
+  register: strugglebus_pending_maintenance_stat
+
+- name: Validate protected maintenance ownership metadata
+  ansible.builtin.assert:
+    that:
+      - strugglebus_pending_maintenance_stat.stat.isreg | default(false)
+      - not (strugglebus_pending_maintenance_stat.stat.islnk | default(true))
+      - strugglebus_pending_maintenance_stat.stat.nlink == 1
+      - strugglebus_pending_maintenance_stat.stat.pw_name == 'root'
+      - strugglebus_pending_maintenance_stat.stat.mode == '0600'
+      - strugglebus_pending_maintenance_stat.stat.size <= 65536
+  when: strugglebus_pending_maintenance_stat.stat.exists
+
+- name: Read maintenance ownership before release staging
+  ansible.builtin.slurp:
+    src: /var/lib/strugglebus-maintenance/operation.json
+  register: strugglebus_pending_maintenance_bytes
+  when: strugglebus_pending_maintenance_stat.stat.exists
+  no_log: true
+
+- name: Require the maintenance flow for retained recovery provenance
+  ansible.builtin.assert:
+    that:
+      - strugglebus_release_action == 'maintenance'
+      - >-
+        (strugglebus_pending_maintenance_bytes.content | b64decode | from_json).version == 1
+      - >-
+        (strugglebus_pending_maintenance_bytes.content | b64decode | from_json).phase == 'complete'
+        or (strugglebus_pending_maintenance_bytes.content | b64decode | from_json).binding.candidate
+           == strugglebus_release_version
+    fail_msg: >-
+      Retained maintenance provenance requires the maintenance flow. An unresolved
+      operation blocks distinct upgrades and legacy rollback; use exact forward
+      recovery or separately reviewed, compatible protected recovery.
+  when: strugglebus_pending_maintenance_stat.stat.exists

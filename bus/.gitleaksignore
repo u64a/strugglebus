@@ -1,0 +1,3 @@
+# Synthetic offline-client credential reference used only to test receipt isolation.
+# Keep this scoped to the exact historical finding; do not allowlist its path or rule.
+a6bc38639615aaf82e76db0ba5fdd2724228b8d7:tests/test_dev_offline_connector.py:generic-api-key:119

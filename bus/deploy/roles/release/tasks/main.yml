@@ -1,0 +1,387 @@
+---
+- name: Validate release action
+  ansible.builtin.assert:
+    that:
+      - >-
+        strugglebus_release_action
+        in ["initial_install", "maintenance"]
+      - >-
+        (strugglebus_release_lock_wait_seconds | default(30)) is integer
+      - >-
+        strugglebus_release_lock_wait_seconds | default(30) >= 1
+      - >-
+        strugglebus_release_lock_wait_seconds | default(30) <= 300
+      - >-
+        (strugglebus_release_lock_lease_seconds | default(7200)) is integer
+      - >-
+        strugglebus_release_lock_lease_seconds | default(7200) >= 600
+      - >-
+        strugglebus_release_lock_lease_seconds | default(7200) <= 14400
+      - >-
+        (
+          strugglebus_service_user == "strugglebus"
+          and strugglebus_service_group == "strugglebus"
+        )
+        or (
+          strugglebus_release_test_fixture | default(false)
+          and ansible_connection == "local"
+          and inventory_hostname == "localhost"
+        )
+    fail_msg: >-
+      Release actions require bounded lock settings and the fixed
+      strugglebus:strugglebus service identity.
+
+- name: Resolve optional verified release assets on the controller
+  ansible.builtin.include_tasks: resolve_release_assets.yml
+  when: >-
+    strugglebus_release_action
+    in ["initial_install", "maintenance"]
+
+- name: Select the fixed release helper interpreter
+  ansible.builtin.set_fact:
+    strugglebus_release_python_interpreter_path: >-
+      {{
+        strugglebus_release_test_python_interpreter
+        if (
+          strugglebus_release_test_fixture | default(false)
+          and ansible_connection == "local"
+          and inventory_hostname == "localhost"
+          and strugglebus_release_test_python_interpreter is defined
+        )
+        else "/usr/bin/python3.13"
+      }}
+
+- name: Inspect the production Python interpreter
+  ansible.builtin.stat:
+    path: "{{ strugglebus_release_python_interpreter_path }}"
+    follow: false
+  register: strugglebus_python_interpreter
+
+- name: Require the protected production Python interpreter
+  ansible.builtin.assert:
+    that:
+      - strugglebus_python_interpreter.stat.isreg | default(false)
+      - not (strugglebus_python_interpreter.stat.islnk | default(true))
+      - strugglebus_python_interpreter.stat.executable | default(false)
+      - >-
+        (
+          strugglebus_python_interpreter.stat.pw_name | default("") == "root"
+          and strugglebus_python_interpreter.stat.gr_name | default("") == "root"
+        )
+        or (
+          strugglebus_release_test_fixture | default(false)
+          and ansible_connection == "local"
+          and inventory_hostname == "localhost"
+        )
+      - not (strugglebus_python_interpreter.stat.wgrp | default(true))
+      - not (strugglebus_python_interpreter.stat.woth | default(true))
+    fail_msg: >-
+      /usr/bin/python3.13 is missing or unsafe. Run configure.yml from this
+      reviewed revision before a release action.
+
+- name: Inspect the service-user privilege drop binary
+  ansible.builtin.stat:
+    path: /usr/sbin/runuser
+    follow: false
+  register: strugglebus_runuser_binary
+
+- name: Require the protected service-user privilege drop binary
+  ansible.builtin.assert:
+    that:
+      - strugglebus_runuser_binary.stat.isreg | default(false)
+      - not (strugglebus_runuser_binary.stat.islnk | default(true))
+      - strugglebus_runuser_binary.stat.executable | default(false)
+      - strugglebus_runuser_binary.stat.pw_name | default("") == "root"
+      - strugglebus_runuser_binary.stat.gr_name | default("") == "root"
+      - not (strugglebus_runuser_binary.stat.wgrp | default(true))
+      - not (strugglebus_runuser_binary.stat.woth | default(true))
+    fail_msg: >-
+      /usr/sbin/runuser is missing or unsafe. Run configure.yml from this
+      reviewed revision before a release action.
+
+- name: Inspect release safety runtime helpers
+  ansible.builtin.stat:
+    path: "{{ item }}"
+  loop:
+    - >-
+      {{
+        strugglebus_release_lock_helper
+        | default('/usr/local/libexec/strugglebus-release-lock')
+      }}
+    - >-
+      {{
+        strugglebus_release_validator_helper
+        | default('/usr/local/libexec/strugglebus-validate-release')
+      }}
+    - >-
+      {{
+        strugglebus_backup_validator_helper
+        | default('/usr/local/libexec/strugglebus-validate-backup')
+      }}
+    - >-
+      {{
+        strugglebus_backup_helper
+        | default('/usr/local/libexec/strugglebus-sqlite-backup')
+      }}
+    - >-
+      {{
+        strugglebus_access_freeze_inspector_helper
+        | default('/usr/local/libexec/strugglebus-inspect-access-freeze')
+      }}
+  register: strugglebus_release_runtime_helpers
+
+- name: Require the configured release safety runtime
+  ansible.builtin.assert:
+    that:
+      - item.stat.isreg | default(false)
+      - item.stat.executable | default(false)
+      - >-
+        item.stat.pw_name | default("")
+        == (strugglebus_release_helper_owner | default("root"))
+      - not (item.stat.wgrp | default(true))
+      - not (item.stat.woth | default(true))
+    fail_msg: >-
+      Release safety helpers are missing or unsafe. Run configure.yml from this
+      same reviewed revision before a release action.
+  loop: "{{ strugglebus_release_runtime_helpers.results }}"
+
+- name: Import release safety helpers in isolated mode
+  ansible.builtin.command:
+    argv:
+      - "{{ strugglebus_release_python_interpreter_path }}"
+      - -I
+      - -c
+      - >-
+        import runpy, sys;
+        runpy.run_path(sys.argv[1], run_name="strugglebus_release_probe")
+      - "{{ item.item }}"
+  loop: "{{ strugglebus_release_runtime_helpers.results }}"
+  changed_when: false
+  check_mode: false
+
+- name: Import the backup helper through the service-user boundary
+  ansible.builtin.command:
+    argv:
+      - /usr/bin/timeout
+      - --signal=TERM
+      - --kill-after=10s
+      - 30s
+      - /usr/sbin/runuser
+      - --user
+      - "{{ strugglebus_service_user }}"
+      - --group
+      - "{{ strugglebus_service_group }}"
+      - --
+      - /usr/bin/env
+      - -i
+      - "HOME={{ strugglebus_data_dir }}"
+      - LANG=C.UTF-8
+      - "LOGNAME={{ strugglebus_service_user }}"
+      - PATH=/usr/local/bin:/usr/bin:/bin
+      - "USER={{ strugglebus_service_user }}"
+      - /usr/bin/python3.13
+      - -I
+      - -c
+      - >-
+        import runpy;
+        runpy.run_path(
+          "/usr/local/libexec/strugglebus-sqlite-backup",
+          run_name="strugglebus_release_service_probe"
+        )
+  changed_when: false
+  check_mode: false
+  when: not (strugglebus_release_test_fixture | default(false))
+
+- name: Inspect the root-owned release staging directory
+  ansible.builtin.stat:
+    path: >-
+      {{
+        strugglebus_release_staging_dir
+        | default('/var/lib/strugglebus-release-staging')
+      }}
+  register: strugglebus_release_staging_directory
+
+- name: Require the protected release staging directory
+  ansible.builtin.assert:
+    that:
+      - strugglebus_release_staging_directory.stat.isdir | default(false)
+      - not (strugglebus_release_staging_directory.stat.islnk | default(true))
+      - strugglebus_release_staging_directory.stat.mode | default("") == "0700"
+      - >-
+        strugglebus_release_staging_directory.stat.pw_name | default("")
+        == (strugglebus_release_helper_owner | default("root"))
+    fail_msg: >-
+      The root-owned release staging directory is missing or unsafe. Run
+      configure.yml from this same reviewed revision before a release action.
+
+- name: Inspect the persistent access-freeze transition lock directory
+  ansible.builtin.stat:
+    path: "{{ strugglebus_data_dir }}/.access-freeze-lock"
+  register: strugglebus_access_freeze_lock_directory
+
+- name: Require the protected access-freeze transition lock directory
+  ansible.builtin.assert:
+    that:
+      - strugglebus_access_freeze_lock_directory.stat.isdir | default(false)
+      - not (strugglebus_access_freeze_lock_directory.stat.islnk | default(true))
+      - strugglebus_access_freeze_lock_directory.stat.mode | default("") == "0700"
+      - >-
+        strugglebus_access_freeze_lock_directory.stat.pw_name | default("")
+        == strugglebus_service_user
+      - >-
+        strugglebus_access_freeze_lock_directory.stat.gr_name | default("")
+        == strugglebus_service_group
+    fail_msg: >-
+      The persistent access-freeze transition lock directory is missing or
+      unsafe. Run configure.yml from this same reviewed revision before a
+      release action.
+
+- name: Run release action under the exclusive lock
+  when: not ansible_check_mode
+  block:
+    - name: Acquire the bounded process-owned release lock
+      ansible.builtin.command:
+        argv:
+          - "{{ strugglebus_release_python_interpreter_path }}"
+          - -I
+          - >-
+            {{
+              strugglebus_release_lock_helper
+              | default('/usr/local/libexec/strugglebus-release-lock')
+            }}
+          - acquire
+          - --lock-path
+          - /run/lock/strugglebus/release.lock
+          - --metadata-path
+          - /run/lock/strugglebus/release.json
+          - --wait-seconds
+          - "{{ strugglebus_release_lock_wait_seconds | default(30) | string }}"
+          - --lease-seconds
+          - "{{ strugglebus_release_lock_lease_seconds | default(7200) | string }}"
+      register: strugglebus_release_lock
+      changed_when: true
+      no_log: true
+
+    - name: Parse and verify the release lock identity
+      ansible.builtin.set_fact:
+        strugglebus_release_lock_metadata: "{{ strugglebus_release_lock.stdout | from_json }}"
+      no_log: true
+
+    - name: Require valid release lock metadata
+      ansible.builtin.assert:
+        that:
+          - strugglebus_release_lock_metadata.version == 1
+          - strugglebus_release_lock_metadata.pid is integer
+          - strugglebus_release_lock_metadata.pid > 1
+          - strugglebus_release_lock_metadata.start_ticks is integer
+          - strugglebus_release_lock_metadata.start_ticks > 0
+          - >-
+            strugglebus_release_lock_metadata.token
+            is match('^[0-9a-f]{64}$')
+          - >-
+            strugglebus_release_lock_metadata.lease_seconds
+            == (strugglebus_release_lock_lease_seconds | default(7200))
+      no_log: true
+
+    - name: Acquire the access-freeze transition lock as the service identity
+      ansible.builtin.command:
+        argv:
+          - /usr/sbin/runuser
+          - -u
+          - "{{ strugglebus_service_user }}"
+          - --
+          - "{{ strugglebus_release_python_interpreter_path }}"
+          - -I
+          - >-
+            {{
+              strugglebus_release_lock_helper
+              | default('/usr/local/libexec/strugglebus-release-lock')
+            }}
+          - acquire
+          - --lock-path
+          - "{{ strugglebus_data_dir }}/.access-freeze-lock/transition.lock"
+          - --metadata-path
+          - "{{ strugglebus_data_dir }}/.access-freeze-lock/release.json"
+          - --wait-seconds
+          - "{{ strugglebus_release_lock_wait_seconds | default(30) | string }}"
+          - --lease-seconds
+          - "{{ strugglebus_release_lock_lease_seconds | default(7200) | string }}"
+      register: strugglebus_access_freeze_lock
+      changed_when: true
+      no_log: true
+
+    - name: Parse and verify the access-freeze transition lock identity
+      ansible.builtin.set_fact:
+        strugglebus_access_freeze_lock_metadata: >-
+          {{ strugglebus_access_freeze_lock.stdout | from_json }}
+      no_log: true
+
+    - name: Require valid access-freeze transition lock metadata
+      ansible.builtin.assert:
+        that:
+          - strugglebus_access_freeze_lock_metadata.version == 1
+          - strugglebus_access_freeze_lock_metadata.pid is integer
+          - strugglebus_access_freeze_lock_metadata.pid > 1
+          - >-
+            strugglebus_access_freeze_lock_metadata.token
+            is match('^[0-9a-f]{64}$')
+          - >-
+            strugglebus_access_freeze_lock_metadata.lease_seconds
+            == (strugglebus_release_lock_lease_seconds | default(7200))
+      no_log: true
+
+    - name: Preserve maintenance recovery before any other release mutation
+      ansible.builtin.include_tasks: maintenance_pending.yml
+
+    - name: Run release action
+      ansible.builtin.include_tasks: "{{ strugglebus_release_action }}.yml"
+  always:
+    - name: Release the access-freeze transition lock
+      ansible.builtin.command:
+        argv:
+          - /usr/sbin/runuser
+          - -u
+          - "{{ strugglebus_service_user }}"
+          - --
+          - "{{ strugglebus_release_python_interpreter_path }}"
+          - -I
+          - >-
+            {{
+              strugglebus_release_lock_helper
+              | default('/usr/local/libexec/strugglebus-release-lock')
+            }}
+          - release
+          - --metadata-path
+          - "{{ strugglebus_data_dir }}/.access-freeze-lock/release.json"
+          - --token
+          - "{{ strugglebus_access_freeze_lock_metadata.token }}"
+      when:
+        - strugglebus_access_freeze_lock_metadata is defined
+        - strugglebus_access_freeze_lock_metadata.token is defined
+      changed_when: true
+      no_log: true
+
+    - name: Release the process-owned release lock
+      ansible.builtin.command:
+        argv:
+          - "{{ strugglebus_release_python_interpreter_path }}"
+          - -I
+          - >-
+            {{
+              strugglebus_release_lock_helper
+              | default('/usr/local/libexec/strugglebus-release-lock')
+            }}
+          - release
+          - --metadata-path
+          - /run/lock/strugglebus/release.json
+          - --token
+          - "{{ strugglebus_release_lock_metadata.token }}"
+      when:
+        - strugglebus_release_lock_metadata is defined
+        - strugglebus_release_lock_metadata.token is defined
+      changed_when: true
+      no_log: true
+
+- name: Validate the release action without acquiring a lock in check mode
+  ansible.builtin.include_tasks: "{{ strugglebus_release_action }}.yml"
+  when: ansible_check_mode

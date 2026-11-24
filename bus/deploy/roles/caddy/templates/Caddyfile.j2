@@ -1,0 +1,44 @@
+{
+	admin unix//run/caddy/admin.sock
+	auto_https disable_redirects
+}
+
+(strugglebus_service) {
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		# Preserve the upstream form policy; default other responses to no disclosure.
+		?Referrer-Policy "no-referrer"
+		# Keep the effective edge policy as strict as the application policy.
+		Content-Security-Policy "default-src 'none'; style-src 'self'; script-src 'none'; connect-src 'none'; img-src 'none'; font-src 'none'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'"
+		-Powered-By
+		Server ""
+	}
+
+	reverse_proxy {{ strugglebus_bind_host }}:{{ strugglebus_bind_port }} {
+		header_up Host {host}
+		# Only the satellite proxy may assert a site; here it is client input.
+		header_up -X-Strugglebus-Satellite-Cert
+		flush_interval -1
+	}
+}
+
+{% if strugglebus_tls_mode == 'external' %}
+https://{{ strugglebus_external_domain }} {
+	tls {{ strugglebus_external_cert_path }} {{ strugglebus_external_key_path }}
+	import strugglebus_service
+}
+
+{% if strugglebus_external_tls_legacy_compatibility_site | default(true) %}
+https://{{ strugglebus_domain }} {
+	tls internal
+	import strugglebus_service
+}
+{% endif %}
+{% else %}
+https://{{ strugglebus_domain }} {
+	tls internal
+	import strugglebus_service
+}
+{% endif %}

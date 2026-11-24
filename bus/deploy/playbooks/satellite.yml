@@ -1,0 +1,13 @@
+---
+# Set up the satellite path on an existing guest: the site CA, the satellite
+# proxy and the tunnel to the gateway. It does not touch the application unit:
+# the app learns the satellite settings at its next maintenance deploy.
+#
+#   ansible-playbook -i "$PROTECTED_INVENTORY" deploy/playbooks/satellite.yml
+- name: Configure the Strugglebus satellite path
+  hosts: strugglebus_guests
+  become: true
+  gather_facts: false
+  roles:
+    - role: deployment_identity
+    - role: satellite

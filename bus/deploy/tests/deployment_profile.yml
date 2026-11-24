@@ -1,0 +1,142 @@
+---
+# Behavioural test for the deployment identity guard.
+#
+# The guard has to hold in both directions. Production must still be pinned to
+# the canonical identities exactly, which is the property the old literal
+# assertions provided and which must not regress. Development must be unable to
+# borrow a production identity, which is the new property that makes a
+# non-production deployment possible without editing the guard.
+#
+# The refusals are the more important half. A guard that accepts everything
+# still passes the acceptance cases, so every way of reaching a production
+# identity by the wrong route is exercised explicitly.
+- name: Exercise the deployment identity guard
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    accepted_cases:
+      - name: production keeps its canonical internal identity
+        profile: production
+        domain: bus.lan
+        external: bus.u64.lan
+        mode: internal
+        effective: bus.lan
+      - name: production external activation promotes the canonical name
+        profile: production
+        domain: bus.lan
+        external: bus.u64.lan
+        mode: external
+        effective: bus.u64.lan
+      - name: development uses the approved single non-production identity
+        profile: development
+        domain: dev-bus.u64.lan
+        external: dev-bus.u64.lan
+        mode: internal
+        effective: dev-bus.u64.lan
+
+    rejected_cases:
+      - name: an unknown profile is refused rather than interpreted
+        profile: staging
+        domain: bus.lan
+        external: bus.u64.lan
+        mode: internal
+        effective: bus.lan
+      - name: production may not be renamed away from bus.lan
+        profile: production
+        domain: dev-bus.u64.lan
+        external: bus.u64.lan
+        mode: internal
+        effective: dev-bus.u64.lan
+      - name: production may not be renamed away from bus.u64.lan
+        profile: production
+        domain: bus.lan
+        external: dev-bus.u64.lan
+        mode: internal
+        effective: bus.lan
+      - name: development may not carry the internal production identity
+        profile: development
+        domain: bus.lan
+        external: bus.lan
+        mode: internal
+        effective: bus.lan
+      - name: development may not carry the external production identity
+        profile: development
+        domain: dev-bus.u64.lan
+        external: bus.u64.lan
+        mode: internal
+        effective: dev-bus.u64.lan
+      - name: development may not carry the dedicated CA identity
+        profile: development
+        domain: ca.u64.lan
+        external: ca.u64.lan
+        mode: internal
+        effective: ca.u64.lan
+      - name: development may not take the evidence-gated external TLS path
+        profile: development
+        domain: dev-bus.u64.lan
+        external: dev-bus.u64.lan
+        mode: external
+        effective: dev-bus.u64.lan
+      - name: the effective identity may not be set apart from the mode
+        profile: production
+        domain: bus.lan
+        external: bus.u64.lan
+        mode: internal
+        effective: bus.u64.lan
+      - name: a malformed hostname is refused before it reaches a certificate
+        profile: development
+        domain: -bus-dev.u64a.lan
+        external: -bus-dev.u64a.lan
+        mode: internal
+        effective: -bus-dev.u64a.lan
+      - name: development may not invent an unused second identity
+        profile: development
+        domain: dev-bus.u64.lan
+        external: dev-bus-external.u64.lan
+        mode: internal
+        effective: dev-bus.u64.lan
+      - name: an empty profile is refused rather than treated as unset
+        profile: ""
+        domain: dev-bus.u64.lan
+        external: dev-bus.u64.lan
+        mode: internal
+        effective: dev-bus.u64.lan
+
+  tasks:
+    - name: Accept an identity that omits the profile entirely
+      ansible.builtin.include_role:
+        name: deployment_identity
+      vars:
+        strugglebus_domain: bus.lan
+        strugglebus_external_domain: bus.u64.lan
+        strugglebus_tls_mode: internal
+        strugglebus_effective_domain: bus.lan
+
+    - name: Require that an omitted profile resolves to production
+      ansible.builtin.assert:
+        that:
+          - strugglebus_validated_profile == "production"
+        fail_msg: An absent deployment profile must mean production.
+        quiet: true
+
+    - name: Accept every valid identity
+      ansible.builtin.include_role:
+        name: deployment_identity
+      vars:
+        strugglebus_deployment_profile: "{{ case.profile }}"
+        strugglebus_domain: "{{ case.domain }}"
+        strugglebus_external_domain: "{{ case.external }}"
+        strugglebus_tls_mode: "{{ case.mode }}"
+        strugglebus_effective_domain: "{{ case.effective }}"
+      loop: "{{ accepted_cases }}"
+      loop_control:
+        loop_var: case
+        label: "{{ case.name }}"
+
+    - name: Refuse every unsafe identity
+      ansible.builtin.include_tasks: deployment_profile_reject.yml
+      loop: "{{ rejected_cases }}"
+      loop_control:
+        loop_var: case
+        label: "{{ case.name }}"

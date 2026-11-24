@@ -1,0 +1,26 @@
+[Unit]
+Description=Check Strugglebus dedicated LAN certificate expiry
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+RuntimeDirectory=strugglebus-cert-monitor
+RuntimeDirectoryMode=0755
+RuntimeDirectoryPreserve=yes
+Environment=STRUGGLEBUS_LAN_CA_ENV=/etc/lan-ca/strugglebus-renew.env
+ExecStart=/usr/local/libexec/strugglebus-check-certificate-expiry /run/strugglebus-cert-monitor/status.json
+NoNewPrivileges=true
+PrivateDevices=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+RestrictRealtime=true
+RestrictNamespaces=true
+LockPersonality=true
+ReadWritePaths=/run/strugglebus-cert-monitor

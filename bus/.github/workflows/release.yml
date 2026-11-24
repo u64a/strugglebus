@@ -1,0 +1,127 @@
+name: Publish immutable release
+
+on:
+  create:
+
+permissions:
+  actions: read
+  contents: read
+
+concurrency:
+  group: immutable-release-publication
+  cancel-in-progress: false
+
+env:
+  RELEASE_REPOSITORY: NZCypher819/strugglebus
+
+jobs:
+  publish:
+    name: Publish exact qualified immutable release
+    if: >-
+      github.repository == 'NZCypher819/strugglebus' &&
+      github.event.ref_type == 'tag' &&
+      startsWith(github.event.ref, 'v') &&
+      github.actor == 'NZCypher819'
+    runs-on: [self-hosted, prox-runner]
+    timeout-minutes: 15
+    steps:
+      - name: Check out the trusted default-branch release controls
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ github.workflow_sha }}
+
+      - name: Validate the accepted release trigger
+        id: gate
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          RELEASE_ACTOR: ${{ github.actor }}
+          RELEASE_EVENT_REF: refs/tags/${{ github.event.ref }}
+          RELEASE_EVENT_SHA: ${{ github.sha }}
+          RELEASE_REF_TYPE: ${{ github.event.ref_type }}
+          RELEASE_TAG: ${{ github.event.ref }}
+          RELEASE_WORKFLOW_SHA: ${{ github.workflow_sha }}
+        run: |
+          set -euo pipefail
+          result="$(
+            python scripts/validate_release_trigger.py \
+              --repository "$RELEASE_REPOSITORY" \
+              --tag "$RELEASE_TAG" \
+              --event-sha "$RELEASE_EVENT_SHA" \
+              --event-ref "$RELEASE_EVENT_REF" \
+              --ref-type "$RELEASE_REF_TYPE" \
+              --actor "$RELEASE_ACTOR" \
+              --workflow-sha "$RELEASE_WORKFLOW_SHA" \
+              --defer-immutable-setting-check
+          )"
+          commit="$(python -c 'import json,sys; print(json.load(sys.stdin)["commit"])' <<< "$result")"
+          tree="$(git rev-parse "${commit}^{tree}")"
+          echo "commit=$commit" >> "$GITHUB_OUTPUT"
+          echo "source-tree=$tree" >> "$GITHUB_OUTPUT"
+
+      - name: Resolve the exact owner and tag bound qualification artifact
+        id: qualification
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          RELEASE_COMMIT: ${{ steps.gate.outputs.commit }}
+          RELEASE_TAG: ${{ github.event.ref }}
+        run: |
+          set -euo pipefail
+          python scripts/release_qualification.py resolve \
+            --repository "$RELEASE_REPOSITORY" \
+            --tag "$RELEASE_TAG" \
+            --commit "$RELEASE_COMMIT" > qualification-resolution.json
+          python scripts/release_qualification.py outputs \
+            --resolution qualification-resolution.json >> "$GITHUB_OUTPUT"
+
+      - name: Download the exact qualified release bytes
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: ${{ steps.qualification.outputs.artifact-name }}
+          path: qualified
+          run-id: ${{ steps.qualification.outputs.run-id }}
+          github-token: ${{ github.token }}
+
+      - name: Mint the repository-scoped release App token
+        id: release-app-token
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          app-id: ${{ secrets.STRUGGLEBUS_RELEASE_APP_ID }}
+          private-key: ${{ secrets.STRUGGLEBUS_RELEASE_APP_PRIVATE_KEY }}
+          owner: NZCypher819
+          repositories: strugglebus
+          permission-administration: read
+          permission-contents: write
+          skip-token-revoke: false
+
+      - name: Verify every binding and publish the exact qualified bytes
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          RELEASE_APP_TOKEN: ${{ steps.release-app-token.outputs.token }}
+          RELEASE_ACTOR: ${{ github.actor }}
+          RELEASE_ARTIFACT_DIGEST: ${{ steps.qualification.outputs.artifact-digest }}
+          RELEASE_ARTIFACT_ID: ${{ steps.qualification.outputs.artifact-id }}
+          RELEASE_ARTIFACT_NAME: ${{ steps.qualification.outputs.artifact-name }}
+          RELEASE_ARTIFACT_SIZE: ${{ steps.qualification.outputs.artifact-size-bytes }}
+          RELEASE_COMMIT: ${{ steps.gate.outputs.commit }}
+          RELEASE_QUALIFICATION_RUN_ID: ${{ steps.qualification.outputs.run-id }}
+          RELEASE_TAG: ${{ github.event.ref }}
+          RELEASE_WORKFLOW_SHA: ${{ github.workflow_sha }}
+          SOURCE_TREE: ${{ steps.gate.outputs.source-tree }}
+        run: |
+          set -euo pipefail
+          python scripts/publish_immutable_release.py qualified/release-assets \
+            --repository "$RELEASE_REPOSITORY" \
+            --tag "$RELEASE_TAG" \
+            --commit "$RELEASE_COMMIT" \
+            --tree "$SOURCE_TREE" \
+            --actor "$RELEASE_ACTOR" \
+            --workflow-sha "$RELEASE_WORKFLOW_SHA" \
+            --receipt "qualified/qualification/strugglebus-qualification-receipt-v1.json" \
+            --qualification-run-id "$RELEASE_QUALIFICATION_RUN_ID" \
+            --qualification-artifact-id "$RELEASE_ARTIFACT_ID" \
+            --qualification-artifact-name "$RELEASE_ARTIFACT_NAME" \
+            --qualification-artifact-digest "$RELEASE_ARTIFACT_DIGEST" \
+            --qualification-artifact-size "$RELEASE_ARTIFACT_SIZE" \
+            --source-root .

@@ -1,0 +1,148 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "metadata": {
+    "description": "Strugglebus satellite gateway: a key-less VM that forwards TCP 443 unchanged down a WireGuard tunnel the bus dials. No SSH rule; manage it with az vm run-command."
+  },
+  "parameters": {
+    "homeIp": {
+      "type": "string",
+      "metadata": { "description": "The bus network's public IPv4 address; the only source allowed to reach WireGuard." }
+    },
+    "dnsLabel": {
+      "type": "string",
+      "metadata": { "description": "DNS label for the public IP. Satellites send the resulting name as the TLS server name." }
+    },
+    "adminPublicKey": {
+      "type": "string",
+      "metadata": { "description": "Any SSH public key. Azure requires one; no rule admits SSH." }
+    },
+    "namePrefix": { "type": "string", "defaultValue": "sb-gw" },
+    "location": { "type": "string", "defaultValue": "[resourceGroup().location]" },
+    "vmSize": {
+      "type": "string",
+      "defaultValue": "Standard_B1s",
+      "metadata": { "description": "B1ls ran out of memory installing packages; B1s is the smallest that works." }
+    }
+  },
+  "variables": {
+    "nsg": "[concat(parameters('namePrefix'), '-nsg')]",
+    "vnet": "[concat(parameters('namePrefix'), '-vnet')]",
+    "ip": "[concat(parameters('namePrefix'), '-ip')]",
+    "nic": "[concat(parameters('namePrefix'), '-nic')]",
+    "tags": { "purpose": "strugglebus-satellite-gateway" }
+  },
+  "resources": [
+    {
+      "type": "Microsoft.Network/networkSecurityGroups",
+      "apiVersion": "2023-09-01",
+      "name": "[variables('nsg')]",
+      "location": "[parameters('location')]",
+      "tags": "[variables('tags')]",
+      "properties": {
+        "securityRules": [
+          {
+            "name": "satellites-https",
+            "properties": {
+              "priority": 100, "direction": "Inbound", "access": "Allow", "protocol": "Tcp",
+              "sourceAddressPrefix": "Internet", "sourcePortRange": "*",
+              "destinationAddressPrefix": "*", "destinationPortRange": "443"
+            }
+          },
+          {
+            "name": "bus-wireguard",
+            "properties": {
+              "priority": 110, "direction": "Inbound", "access": "Allow", "protocol": "Udp",
+              "sourceAddressPrefix": "[concat(parameters('homeIp'), '/32')]", "sourcePortRange": "*",
+              "destinationAddressPrefix": "*", "destinationPortRange": "51820"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "type": "Microsoft.Network/virtualNetworks",
+      "apiVersion": "2023-09-01",
+      "name": "[variables('vnet')]",
+      "location": "[parameters('location')]",
+      "tags": "[variables('tags')]",
+      "dependsOn": ["[resourceId('Microsoft.Network/networkSecurityGroups', variables('nsg'))]"],
+      "properties": {
+        "addressSpace": { "addressPrefixes": ["10.88.0.0/24"] },
+        "subnets": [
+          {
+            "name": "gateway",
+            "properties": {
+              "addressPrefix": "10.88.0.0/27",
+              "networkSecurityGroup": { "id": "[resourceId('Microsoft.Network/networkSecurityGroups', variables('nsg'))]" }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "type": "Microsoft.Network/publicIPAddresses",
+      "apiVersion": "2023-09-01",
+      "name": "[variables('ip')]",
+      "location": "[parameters('location')]",
+      "tags": "[variables('tags')]",
+      "sku": { "name": "Standard" },
+      "properties": {
+        "publicIPAllocationMethod": "Static",
+        "dnsSettings": { "domainNameLabel": "[parameters('dnsLabel')]" }
+      }
+    },
+    {
+      "type": "Microsoft.Network/networkInterfaces",
+      "apiVersion": "2023-09-01",
+      "name": "[variables('nic')]",
+      "location": "[parameters('location')]",
+      "tags": "[variables('tags')]",
+      "dependsOn": [
+        "[resourceId('Microsoft.Network/virtualNetworks', variables('vnet'))]",
+        "[resourceId('Microsoft.Network/publicIPAddresses', variables('ip'))]"
+      ],
+      "properties": {
+        "enableIPForwarding": true,
+        "ipConfigurations": [
+          {
+            "name": "primary",
+            "properties": {
+              "subnet": { "id": "[resourceId('Microsoft.Network/virtualNetworks/subnets', variables('vnet'), 'gateway')]" },
+              "publicIPAddress": { "id": "[resourceId('Microsoft.Network/publicIPAddresses', variables('ip'))]" }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "type": "Microsoft.Compute/virtualMachines",
+      "apiVersion": "2024-03-01",
+      "name": "[parameters('namePrefix')]",
+      "location": "[parameters('location')]",
+      "tags": "[variables('tags')]",
+      "dependsOn": ["[resourceId('Microsoft.Network/networkInterfaces', variables('nic'))]"],
+      "properties": {
+        "hardwareProfile": { "vmSize": "[parameters('vmSize')]" },
+        "osProfile": {
+          "computerName": "[parameters('namePrefix')]",
+          "adminUsername": "sbadmin",
+          "linuxConfiguration": {
+            "disablePasswordAuthentication": true,
+            "ssh": { "publicKeys": [{ "path": "/home/sbadmin/.ssh/authorized_keys", "keyData": "[parameters('adminPublicKey')]" }] }
+          }
+        },
+        "storageProfile": {
+          "imageReference": { "publisher": "Canonical", "offer": "ubuntu-24_04-lts", "sku": "server", "version": "latest" },
+          "osDisk": { "createOption": "FromImage", "diskSizeGB": 30, "managedDisk": { "storageAccountType": "StandardSSD_LRS" } }
+        },
+        "networkProfile": { "networkInterfaces": [{ "id": "[resourceId('Microsoft.Network/networkInterfaces', variables('nic'))]" }] },
+        "securityProfile": { "securityType": "TrustedLaunch", "uefiSettings": { "secureBootEnabled": true, "vTpmEnabled": true } }
+      }
+    }
+  ],
+  "outputs": {
+    "fqdn": { "type": "string", "value": "[reference(variables('ip')).dnsSettings.fqdn]" },
+    "publicIp": { "type": "string", "value": "[reference(variables('ip')).ipAddress]" }
+  }
+}

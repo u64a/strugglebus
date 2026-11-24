@@ -1,0 +1,44 @@
+---
+- name: Renew the process-owned release lock lease
+  ansible.builtin.command:
+    argv:
+      - "{{ strugglebus_release_python_interpreter_path }}"
+      - -I
+      - >-
+        {{
+          strugglebus_release_lock_helper
+          | default('/usr/local/libexec/strugglebus-release-lock')
+        }}
+      - renew
+      - --metadata-path
+      - /run/lock/strugglebus/release.json
+      - --token
+      - "{{ strugglebus_release_lock_metadata.token }}"
+      - --lease-seconds
+      - "{{ strugglebus_release_lock_lease_seconds | default(7200) | string }}"
+  changed_when: false
+  no_log: true
+
+- name: Renew the access-freeze transition lock
+  ansible.builtin.command:
+    argv:
+      - /usr/sbin/runuser
+      - -u
+      - "{{ strugglebus_service_user }}"
+      - --
+      - "{{ strugglebus_release_python_interpreter_path }}"
+      - -I
+      - >-
+        {{
+          strugglebus_release_lock_helper
+          | default('/usr/local/libexec/strugglebus-release-lock')
+        }}
+      - renew
+      - --metadata-path
+      - "{{ strugglebus_data_dir }}/.access-freeze-lock/release.json"
+      - --token
+      - "{{ strugglebus_access_freeze_lock_metadata.token }}"
+      - --lease-seconds
+      - "{{ strugglebus_release_lock_lease_seconds | default(7200) | string }}"
+  changed_when: false
+  no_log: true

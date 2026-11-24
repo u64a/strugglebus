@@ -1,0 +1,12 @@
+include requirements.lock
+prune tests
+prune deploy
+prune .github
+global-exclude __pycache__
+global-exclude *.py[cod]
+global-exclude *.db
+global-exclude *.db-shm
+global-exclude *.db-wal
+global-exclude .env
+global-exclude *.vault
+global-exclude *.vault.*

@@ -1,0 +1,35 @@
+---
+# One refused deployment identity.
+#
+# Ansible cannot loop a block, so each refusal case runs through this file.
+# The shape matters: the guard is expected to fail, so the failure itself is
+# the pass condition. The rescue then has to distinguish a real refusal from
+# the deliberate fail task below, otherwise a guard that accepted everything
+# would still look green.
+- name: Attempt a refused deployment identity
+  block:
+    - name: Run the deployment identity guard with an unsafe identity
+      ansible.builtin.include_role:
+        name: deployment_identity
+      vars:
+        strugglebus_deployment_profile: "{{ case.profile }}"
+        strugglebus_domain: "{{ case.domain }}"
+        strugglebus_external_domain: "{{ case.external }}"
+        strugglebus_tls_mode: "{{ case.mode }}"
+        strugglebus_effective_domain: "{{ case.effective }}"
+
+    - name: Record that the guard failed to refuse
+      ansible.builtin.fail:
+        msg: >-
+          The deployment identity guard accepted "{{ case.name }}"
+          but must have refused it.
+
+  rescue:
+    - name: Confirm the refusal came from the guard and not from the test
+      ansible.builtin.assert:
+        that:
+          - ansible_failed_task.name != "Record that the guard failed to refuse"
+        fail_msg: >-
+          The deployment identity guard accepted "{{ case.name }}"
+          but must have refused it.
+        quiet: true

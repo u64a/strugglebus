@@ -1,0 +1,20 @@
+#!/bin/bash
+# Runs a Strugglebus administration command as the service account, for example:
+#
+#   strugglebus-admin agent list
+#   strugglebus-admin backup
+#   strugglebus-admin access-freeze status
+#
+# Files it writes (--credential-output, --token-output) must be under
+# /var/lib/strugglebus, which is the only place the service account can write.
+set -euo pipefail
+[ "$(id -u)" = "0" ] || { echo "strugglebus-admin: run this as root (sudo strugglebus-admin ...)." >&2; exit 1; }
+set -a
+# shellcheck disable=SC1091
+. /etc/strugglebus/strugglebus.env
+CREDENTIALS_DIRECTORY=/etc/strugglebus/credentials
+STRUGGLEBUS_ADMIN_CREDENTIAL_PATH=/etc/strugglebus/credentials/admin-token
+set +a
+cd /var/lib/strugglebus
+umask 077
+exec runuser -u strugglebus -- /opt/strugglebus/venv/bin/strugglebus "$@"

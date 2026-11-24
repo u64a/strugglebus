@@ -1,0 +1,34 @@
+[Unit]
+Description=Integrity-checked Strugglebus SQLite backup
+ConditionPathExists={{ strugglebus_database_path }}
+
+[Service]
+Type=oneshot
+User={{ strugglebus_service_user }}
+Group={{ strugglebus_service_group }}
+ExecStart=/usr/bin/python3.13 -I /usr/local/libexec/strugglebus-sqlite-backup {{ strugglebus_database_path }} {{ strugglebus_backup_dir }} 7
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+ProtectProc=invisible
+ProcSubset=pid
+RestrictSUIDSGID=true
+RestrictRealtime=true
+RestrictNamespaces=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+RemoveIPC=true
+RestrictAddressFamilies=AF_UNIX
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+ReadWritePaths={{ strugglebus_data_dir }} {{ strugglebus_backup_dir }}
