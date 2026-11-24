@@ -1,0 +1,17 @@
+# Changes to these paths need the owner's review before they merge.
+#
+# The worker host runs agents with unrestricted shells on people's PCs, and a
+# host installs whatever the project key signed. So every change to it is
+# looked at by a person, not only the release file that names it.
+/worker-host/                 @NZCypher819
+
+# Whatever signs or names a release, wherever it sits.
+release.toml                  @NZCypher819
+release.toml.sig              @NZCypher819
+
+# This rule, the checks that are required to pass, and the secrets scan's
+# exceptions, so none of them can be changed in the pull request that needs
+# them changed.
+/.github/CODEOWNERS           @NZCypher819
+/.github/workflows/           @NZCypher819
+/.gitleaksignore              @NZCypher819
