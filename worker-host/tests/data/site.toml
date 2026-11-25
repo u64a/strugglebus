@@ -1,0 +1,24 @@
+# The site the tests fill config.template.toml with (tests/test_config.py fill()). Example names only.
+bus_url = "https://bus.example.lan"
+fleet_repo = "acme/strugglebus-fleet"
+coordinator = "coord-main"
+vault_repo = "acme/team-notes"
+
+remotes = [
+  "https://github.com/acme/",
+  "https://github.com/acme-partner/",
+  "https://github.com/acme-labs/",
+  "https://git.example.lan/",
+]
+
+[repos]
+app-core = "acme/app-core"
+app-cloud = "acme/app-cloud"
+app-collector = "acme/app-collector"
+strugglebus-worker-host = "acme/strugglebus-worker-host"
+
+[openbao]
+url = "https://vault.example.lan:8200"
+ca_url = "https://ca.example.lan"
+san_domain = "example.lan"
+leaf_authority = "token-minter"

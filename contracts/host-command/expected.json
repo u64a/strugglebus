@@ -1,0 +1,30 @@
+{
+ "now": "2026-11-24T14:03:00Z",
+ "this_host": "host-office1-host",
+ "commands": {
+  "cmd-pause.json": "accept",
+  "cmd-update.json": "accept",
+  "cmd-other-host.json": "not-this-host",
+  "cmd-expired.json": "expired",
+  "cmd-too-long.json": "bad-time",
+  "cmd-from-future.json": "bad-time",
+  "cmd-bad-verb.json": "bad-verb",
+  "cmd-unknown-field.json": "unknown-field",
+  "cmd-replayed.json": "replayed",
+  "cmd-duplicate-key.json": "duplicate-key",
+  "cmd-fleet-namespace.json": "bad-signature"
+ },
+ "command_order": [
+  "cmd-pause.json",
+  "cmd-update.json",
+  "cmd-other-host.json",
+  "cmd-expired.json",
+  "cmd-too-long.json",
+  "cmd-from-future.json",
+  "cmd-bad-verb.json",
+  "cmd-unknown-field.json",
+  "cmd-replayed.json",
+  "cmd-duplicate-key.json",
+  "cmd-fleet-namespace.json"
+ ]
+}

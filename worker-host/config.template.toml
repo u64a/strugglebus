@@ -1,0 +1,233 @@
+# strugglebus worker host: configuration (TOML).
+# install.ps1 copies this to %LOCALAPPDATA%\strugglebus-worker-host\config.toml and fills in the
+# @...@ values for this machine. Edit that copy, not this template, then `wh stop` and `wh start`.
+# Unknown keys are an error, so a typo stops the host instead of being silently ignored.
+
+# This machine's short name: lower case, digits and dashes, at most 31 characters. A task with
+# "host": "<host_name>" goes to this machine only.
+host_name = "@HOST_NAME@"
+
+# The bus lets an SPN create only agents whose names start with "<SPN name>-", so agent_prefix MUST
+# equal the name of the SPN whose credential `wh enrol` is given (any other name is refused: HTTP 422
+# "agent name is outside the SPN prefix"). Every bus identity this host uses is derived from it, and
+# nothing else: the host is <agent_prefix>-host, a worker is <agent_prefix>-<worker>. Tasks still
+# name the worker by its short name (core5); mentions and [[hosts]] pins use the full names.
+# Example: SPN host-box1, host identity host-box1-host, worker host-box1-core5.
+# Written by install.ps1 -AgentPrefix (lower case, digits and dashes, 2 to 31 characters).
+agent_prefix = "@AGENT_PREFIX@"
+
+# The one channel the host reads and answers on. `worker-hosts` exists on the bus (the coordinator
+# created it); `wh enrol` subscribes the host to it with PUT /api/subscriptions/<channel>. If the
+# channel is ever missing the host logs `channel-missing` and polls NOTHING else (it never falls
+# back to another channel).
+channel = "worker-hosts"
+
+# Poll interval and claim settle window, seconds. settle_seconds must be at least 2 x poll_seconds.
+poll_seconds = 10
+settle_seconds = 20
+
+# Where worker clones, worker logs and per-worker temp folders live (one clone per worker).
+workers_root = '@WORKERS_ROOT@'
+
+# The bus (site.toml) and its LAN root certificate (install.ps1 -BusCa).
+bus_url = @BUS_URL@
+bus_ca = '@BUS_CA@'
+
+# Full paths to the tools, found by install.ps1. copilot must be the .exe (a .cmd wrapper is
+# refused: the prompt must never pass through cmd.exe).
+copilot_exe = '@COPILOT_EXE@'
+gh_exe = '@GH_EXE@'
+git_exe = '@GIT_EXE@'
+python_exe = '@PYTHON_EXE@'
+
+# Before the first signed fleet.toml: the [coordinator]'s briefs are read from this repository's main branch at the
+# commit a task pins (owner/repo). A fleet coordinator names its own (fleet.toml notes_repo).
+vault_repo = @VAULT_REPO@
+
+# fleet.toml: the coordinators this host takes tasks from and the other hosts, signed with a key pinned in
+# C:\ProgramData\strugglebus\allowed_signers (install.ps1 -PinSigners, elevated; docs/agent-host-build.md 7.2).
+# Fetched from this repository's main every fleet_refresh_minutes and accepted only with a good signature and a
+# higher serial; release.toml (self-update) comes from the same repository. Empty: neither.
+# Until the first one is accepted, [coordinator] and [[hosts]] below are used; after that, never again.
+fleet_repo = @FLEET_REPO@
+fleet_refresh_minutes = 15
+# Where the signed fleet comes from: "git" (fleet_repo), "bus" (published by the App) or "either" (the bus first).
+fleet_source = @FLEET_SOURCE@
+# Empty: Win32-OpenSSH (C:\Program Files\OpenSSH), then Windows' own, then Git's ssh-keygen.
+ssh_keygen_exe = ""
+
+# Bus messages cannot be edited after posting: the bus makes them immutable, as a safety measure.
+# Every reply still carries the digest of the task body the host validated (cheap, and a claim about
+# a different body still does not count). false: no re-read before starting. Leave it false.
+messages_mutable = false
+
+# How the scheduled task logs on, written by install.ps1 -Logon (shown by `wh status`).
+# "Password": at startup, logged on or not; a local account whose password Task Scheduler keeps.
+# "Interactive": at your sign-in, only while you are signed in, no stored password (Entra ID with
+# Windows Hello for Business); after a reboot the host comes back once you sign in.
+# DPAPI and the copilot/gh sign-ins work in both. Change it by re-running install.ps1, not here.
+logon_type = "Password"
+
+# true when the scheduled task runs as a Windows account made for the host alone (the recommended setup). false: it
+# runs as a person's own account; the StruggleBus App then shows a standing "not-dedicated" warning, because workers
+# can reach everything that account can.
+dedicated_account = false
+
+# Name of the scheduled task install.ps1 registers. "" means none (dry runs, tests).
+scheduled_task = "StrugglebusWorkerHost"
+
+# Tags this machine offers. A task with "needs": [...] is claimed only if every tag is here.
+tags = []
+
+# A task older than this when first read is ignored (no replay of history).
+max_task_age_hours = 2
+
+# Game (or other) process names that PAUSE the host while any is running: no new claims, running
+# workers carry on, and it resumes by itself when they exit. ".exe" is optional, e.g.
+# ["eldenring", "cyberpunk2077"].
+pause_while_running = []
+
+# Heartbeat on the channel: every N minutes while a worker runs, every M while idle, and at once
+# when the coordinator posts {"v":1,"type":"status"}.
+heartbeat_running_minutes = 10
+heartbeat_idle_minutes = 60
+
+[coordinator]
+# Before the first signed fleet.toml only: tasks from this identity alone are considered; its agent_id
+# is pinned by `wh enrol` / `wh pin`. With no pin every task is ignored. Ignored once fleet.toml is in use.
+# Optional: project (default "default"), notes_channel (default: the channel above) and owner (named in its workers'
+# preamble), as a fleet.toml entry would give them.
+agent_name = @COORDINATOR@
+
+[models]
+# Which models a task (or set-model) may ask for: workerhost/models.py.
+# - default: the model when a task names none. One exact Copilot CLI model id.
+# - allowed: exact ids or FAMILIES: a prefix of 3+ characters ending in one '*'. "claude-*" also covers a Claude
+#   model released tomorrow. "*", "c*" or "cla*de" are refused (too broad, or not a trailing wildcard).
+# - denied: checked first; a match is refused even if a family allows it (e.g. a research preview).
+# EACH FAMILY IS A DIFFERENT PROVIDER that receives the code (and any engagement data) a worker sees. The default is
+# the three already relied on through Copilot. Opt this host in to others deliberately, e.g. "grok-*", "mai-code-*",
+# "hydrafusion*" (research preview).
+# Copilot CLI and your GitHub Copilot model policy still decide what can actually run; a retired model fails at launch.
+# HOT RELOAD: the host re-reads this [models] table within a second of the file changing, with no restart. A bad edit
+# is logged (models-reload-failed) and the previous models stay in force. Nothing else in this file is re-read.
+# AUDIT: every change in force (and every failed reload) is posted to the bus "security" channel with the old and new
+# lists and this file's SHA-256, including a list changed while the host was stopped.
+default = "claude-opus-5.5"
+allowed = ["claude-*", "gpt-*", "gemini-*"]
+denied = []
+
+[engines]
+# Which agent runs a worker (workerhost/engines.py; docs/agent-host-build.md 7.6):
+#   ghcp   = GitHub Copilot CLI (copilot_exe above; models in [models]; work-paid)
+#   claude = Claude Code (the table below; the Claude account signed in as the host's user)
+# `default` is the engine for a task that names none; a task can say "engine": "ghcp" | "claude". install.ps1 asks
+# for it on a new host (-DefaultEngine). The heartbeat lists what is usable now: engines=ghcp*,claude (* = default).
+# Read at start: restart the host (wh drain, then wh start) after changing this table.
+default = "@DEFAULT_ENGINE@"
+
+[engines.claude]
+# Present = Claude Code may run workers here, once it is installed and signed in (run `claude`, then /login, as the
+# account the host runs as). Remove this table to turn Claude Code off on this host.
+exe = "claude"
+# Claude Code's own model ids: aliases (opus, sonnet, fable, haiku = the latest of each) or full ids with dashes
+# (claude-opus-5-5). Same rules as [models]: families with one trailing '*', denied checked first.
+default_model = "opus"
+allowed = ["opus", "sonnet", "fable", "haiku", "claude-*"]
+denied = []
+
+[remotes]
+# The outer fence on clone URLs (docs/agent-host-build.md 7.3). A task's repo must sit under one of these AND under
+# its coordinator's `repos` in the signed fleet.toml, so even a signed mistake cannot point this host anywhere else.
+# Whole path segments: "https://github.com/acme/" does not match "https://github.com/acme-evil/...". https only.
+allowed = @REMOTES@
+
+[repos]
+# Short name used in tasks = GitHub owner/repo. The older task form: a task may name its repository by full clone URL
+# ("https://github.com/<owner>/<repo>") instead.
+@REPOS@
+
+# Before the first signed fleet.toml only (then fleet.toml's [[host]] list is used): every worker host,
+# this one included, pinned by agent_id AND the full agent_name (<agent_prefix>-host). Only claims from
+# these count in the claim protocol. `wh enrol` prints the line to add for a new host.
+# [[hosts]]
+# agent_name = "host-box1-host"
+# agent_id = "00000000-0000-4000-8000-000000000000"
+
+[resources]
+# Starting points: 128 GB machine max_workers = 12, 64 GB machine max_workers = 6, both with
+# worker_commit_gb = 8. install.ps1 picks from the installed memory (96 GB or more: 12; 60 GB or
+# more: 6). Any other machine gets 2 and the installer asks you to set it here.
+max_workers = @MAX_WORKERS@
+worker_commit_gb = @WORKER_COMMIT_GB@
+# Refuse if (committed + worker_commit_gb) / commit limit would exceed this percentage.
+max_commit_pct = 80
+# Refuse if free physical memory minus worker_commit_gb would fall below this.
+min_free_ram_gb = 6
+# Free space on the workers_root drive; below it idle clones are cleaned first, then refuse.
+min_free_disk_gb = 40
+# As memory_guard.ps1: two samples a minute apart over either line stop all claiming and post
+# `pressure`. Running workers are never killed for it.
+guard_commit_pct = 85
+guard_free_gb = 6
+
+[runtime]
+# A worker is killed and `timed-out` posted after this; warned at 80 %.
+max_runtime_hours = 6
+# A worker log silent this long posts a `stalled` note (not killed).
+stall_minutes = 45
+# After a reboot, resume an interrupted worker once (not after `wh stop`).
+resume_after_reboot = true
+task_wait_timeout_seconds = 3600
+
+[cleanup]
+log_retention_days = 14
+host_log_days = 30
+# A clone whose last task finished (exit 0) and was cleaned is deleted this long after it went idle,
+# once nothing in it is unpushed; it is kept that long only so a follow-up task can reuse it.
+finished_clone_hours = 12
+# Every other clone (failed, timed out, stopped, or from before the host kept a ledger): idle this long.
+idle_clone_days = 7
+# How often the clean-up runs (it also runs at once under disk pressure).
+sweep_hours = 6
+# The sweep runs inside the host loop, so it stops after this long; what is left waits 15 minutes
+# for the next sweep. (`wh cleanup` with the host stopped has no limit.)
+sweep_budget_minutes = 5
+salvage_days = 30
+salvage_cap_mb = 50
+pytest_temp_days = 2
+
+[ghcp]
+# Daily GitHub Copilot CLI update window (local time), only when no worker is running.
+window_start = "04:00"
+window_end = "06:00"
+winget_id = "GitHub.Copilot"
+retry_minutes = 30
+
+[update]
+# Self-update from signed releases (release.toml on the fleet repository's main; docs/design.md 10a). Local times.
+# At check_at the host fetches; if a newer signed release is there it announces it on announce_channel (mentioning
+# every coordinator) and takes no new tasks. At window it applies the release when no worker is running; at
+# window + grace_minutes it pushes running workers' work to their branches, stops them, applies, and resumes each of
+# them once after the restart. These settings move to the signed baseline.toml once it exists.
+enabled = true
+check_at = "01:00"
+window = "03:00"
+grace_minutes = 30
+announce_channel = "announce"
+# When Windows installs updates and restarts (setup\20-policy: daily at 03:00). While updates that may need a restart
+# are waiting, the host takes no task that could still be running then, and says restart-pending in its heartbeat.
+windows_restart = "03:00"
+
+[openbao]
+# Host secrets in OpenBao (docs/openbao-design.md; agent-host-build.md section 6.4). Off: the DPAPI store as before.
+# Turn on only after setup\30-openbao.ps1 (the leaf) and `wh openbao seed-spn` or `wh openbao migrate`.
+enabled = false
+url = @OPENBAO_URL@
+ca_url = @OPENBAO_CA_URL@
+# The DNS domain of this host's leaf (<agent_prefix>.<san_domain>). Needed only for the first leaf: after that the name
+# on the leaf the host holds is used. setup\30-openbao.ps1 reads it too (or takes -San).
+san_domain = @SAN_DOMAIN@
+# The bus agent that mints one-time step-ca tokens, asked in leaf_channel ("security") when the host needs a leaf.
+# Empty: the host asks by file only (<bootstrap_dir>\<san>.needed).
+leaf_authority = @LEAF_AUTHORITY@
