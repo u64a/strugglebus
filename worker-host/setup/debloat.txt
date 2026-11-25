@@ -1,0 +1,146 @@
+# setup/debloat.txt: what setup/10-debloat.ps1 removes and sets on a DEDICATED host (agent-host-build.md section 6).
+# Reviewed by the owner. One entry per line; `#` starts a comment. Names are exact (no wildcards).
+#
+#   app     <package name>                     removed for all users AND as a provisioned package (new profiles)
+#   keep    <package name>                     never removed; an `app` line naming it is an error
+#   feature <optional feature name>            disabled (Disable-WindowsOptionalFeature, no restart)
+#   policy  <HKLM\path> <value name> <dword>   machine policy, so Windows does not put things back
+#   user    <path> <value name> <dword>        per-user setting, written to the user running the script AND to
+#                                              the Default profile (so every new profile starts with it)
+#   onedrive                                   OneDrive uninstalled for this user; new profiles never install it
+#
+# Checked against a fresh Windows 11 Enterprise 26H2 image (en-us_windows_11_business_editions_version_26h2,
+# the Surface Laptop 4 test host, 4 Nov 2026). Lines marked (not on 26H2) cover older or other images; a line for
+# something that is not there does nothing.
+#
+# Undo, line by line:
+#   app      winget install --id <Store id> -s msstore, or the Microsoft Store page; nothing else depends on these
+#   feature  Enable-WindowsOptionalFeature -Online -FeatureName <name>
+#   policy / user   delete the value (regedit, or Remove-ItemProperty), then sign out and in
+#   onedrive winget install Microsoft.OneDrive, and delete the DisableFileSyncNGSC policy value
+#
+# Deliberately NOT here (section 6): disabling services wholesale, hosts-file telemetry blocks, removing Store,
+# Edge or Defender, and anything from third-party debloat scripts.
+
+# --- Copilot, Widgets, Recall -----------------------------------------------------------------------------------
+app     Microsoft.Copilot                          # Copilot app (not on 26H2)
+app     MicrosoftWindows.Client.WebExperience      # Widgets (Windows Web Experience Pack)
+feature Recall                                     # already "DisabledWithPayloadRemoved" on 26H2 Enterprise
+# Not "policy HKLM\SOFTWARE\Policies\Microsoft\Dsh AllowNewsAndInterests 0": Windows 26H2 (build 26300) refuses that
+# one value even to administrators (other values in the key write fine; found on a rebuild, 9 Nov 2026). Widgets is gone
+# with the WebExperience app above.
+policy  HKLM\SOFTWARE\Policies\Microsoft\Windows\WindowsCopilot TurnOffWindowsCopilot 1
+policy  HKLM\SOFTWARE\Policies\Microsoft\Windows\WindowsAI DisableAIDataAnalysis 1   # no Recall snapshots
+policy  HKLM\SOFTWARE\Policies\Microsoft\Windows\WindowsAI AllowRecallEnablement 0
+user    Software\Policies\Microsoft\Windows\WindowsCopilot TurnOffWindowsCopilot 1
+user    Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced ShowCopilotButton 0
+
+# --- Xbox and Game Bar ------------------------------------------------------------------------------------------
+app     Microsoft.GamingApp                        # Xbox app
+app     Microsoft.XboxApp                          # old Xbox app (not on 26H2)
+app     Microsoft.XboxGamingOverlay                # Game Bar
+app     Microsoft.XboxSpeechToTextOverlay
+app     Microsoft.Xbox.TCUI
+app     Microsoft.XboxIdentityProvider
+policy  HKLM\SOFTWARE\Policies\Microsoft\Windows\GameDVR AllowGameDVR 0
+
+# --- News, Weather, Bing search, web results in Start -----------------------------------------------------------
+app     Microsoft.BingNews
+app     Microsoft.BingWeather
+app     Microsoft.BingSearch
+policy  HKLM\SOFTWARE\Policies\Microsoft\Windows\Windows Search DisableWebSearch 1
+policy  HKLM\SOFTWARE\Policies\Microsoft\Windows\Windows Search ConnectedSearchUseWeb 0
+policy  HKLM\SOFTWARE\Policies\Microsoft\Windows\Windows Search AllowCortana 0
+user    Software\Policies\Microsoft\Windows\Explorer DisableSearchBoxSuggestions 1
+
+# --- Teams (consumer), new Outlook, Clipchamp, To Do, Office Hub, Power Automate --------------------------------
+app     MSTeams                                    # Teams (free)
+app     MicrosoftTeams                             # older consumer Teams / Chat (not on 26H2)
+app     Microsoft.OutlookForWindows                # new Outlook
+app     Clipchamp.Clipchamp
+app     Microsoft.Todos
+app     Microsoft.MicrosoftOfficeHub
+app     Microsoft.PowerAutomateDesktop
+
+# --- Phone Link, Feedback Hub, Tips, Get Help, Maps, Alarms, Sound Recorder, Dev Home, Solitaire, Cortana -------
+app     Microsoft.YourPhone                        # Phone Link
+app     MicrosoftWindows.CrossDevice               # Phone Link's cross-device host
+app     Microsoft.WindowsFeedbackHub
+app     Microsoft.Getstarted                       # Tips (not on 26H2)
+app     Microsoft.GetHelp
+app     Microsoft.WindowsMaps                      # (not on 26H2)
+app     Microsoft.WindowsAlarms
+app     Microsoft.WindowsSoundRecorder
+app     Microsoft.Windows.DevHome
+app     Microsoft.MicrosoftSolitaireCollection
+app     Microsoft.549981C3F5F10                    # Cortana (not on 26H2)
+
+# --- Quick Assist: a common tool for taking over machines by social engineering; not wanted on a host ----------
+app     MicrosoftCorporationII.QuickAssist
+
+# --- OneDrive: uninstalled, and file sync blocked by policy -----------------------------------------------------
+onedrive
+policy  HKLM\SOFTWARE\Policies\Microsoft\Windows\OneDrive DisableFileSyncNGSC 1
+
+# --- Consumer content Windows installs or shows by itself -------------------------------------------------------
+policy  HKLM\SOFTWARE\Policies\Microsoft\Windows\CloudContent DisableWindowsConsumerFeatures 1   # no "suggested" apps
+policy  HKLM\SOFTWARE\Policies\Microsoft\Windows\CloudContent DisableConsumerAccountStateContent 1
+policy  HKLM\SOFTWARE\Policies\Microsoft\Windows\CloudContent DisableCloudOptimizedContent 1
+policy  HKLM\SOFTWARE\Policies\Microsoft\Windows\CloudContent DisableSoftLanding 1               # tips
+policy  HKLM\SOFTWARE\Policies\Microsoft\Windows\AdvertisingInfo DisabledByGroupPolicy 1         # advertising ID
+policy  HKLM\SOFTWARE\Policies\Microsoft\Windows\Explorer HideRecommendedSection 1               # Start "Recommended"
+user    Software\Policies\Microsoft\Windows\CloudContent DisableWindowsSpotlightFeatures 1       # lock-screen Spotlight
+user    Software\Policies\Microsoft\Windows\CloudContent DisableTailoredExperiencesWithDiagnosticData 1
+user    Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager SystemPaneSuggestionsEnabled 0
+user    Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager SilentInstalledAppsEnabled 0
+user    Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager PreInstalledAppsEnabled 0
+user    Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager OemPreInstalledAppsEnabled 0
+user    Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager SoftLandingEnabled 0
+user    Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager RotatingLockScreenOverlayEnabled 0  # lock-screen tips
+user    Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager SubscribedContent-310093Enabled 0   # "welcome experience"
+user    Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager SubscribedContent-338387Enabled 0   # lock-screen fun facts
+user    Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager SubscribedContent-338388Enabled 0   # Start suggestions
+user    Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager SubscribedContent-338389Enabled 0   # tips and tricks
+user    Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager SubscribedContent-353694Enabled 0   # suggested content in Settings
+user    Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager SubscribedContent-353696Enabled 0
+user    Software\Microsoft\Windows\CurrentVersion\AdvertisingInfo Enabled 0
+user    Software\Microsoft\Windows\CurrentVersion\Notifications\Settings\Windows.SystemToast.Suggested Enabled 0   # "suggested" notifications
+user    Software\Microsoft\Windows\CurrentVersion\UserProfileEngagement ScoobeSystemSettingEnabled 0           # "finish setting up" nag
+
+# --- Taskbar, Start, Explorer -----------------------------------------------------------------------------------
+user    Software\Microsoft\Windows\CurrentVersion\Search SearchboxTaskbarMode 0                   # no search box
+user    Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced ShowTaskViewButton 0
+user    Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced Start_IrisRecommendations 0   # tips in Start
+user    Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced HideFileExt 0                 # show file extensions
+
+# --- Keep: removing these breaks things (section 6) --------------------------------------------------------------
+keep    Microsoft.WindowsStore                     # winget needs the Store and App Installer
+keep    Microsoft.StorePurchaseApp
+keep    Microsoft.DesktopAppInstaller              # winget
+keep    Microsoft.Winget.Source
+keep    Microsoft.MicrosoftEdge.Stable
+keep    Microsoft.SecHealthUI                      # Windows Security
+keep    Microsoft.WindowsTerminal
+keep    Microsoft.PowerShell
+keep    Microsoft.WindowsNotepad
+keep    Microsoft.WindowsCalculator
+keep    Microsoft.ScreenSketch                     # Snipping Tool
+keep    Microsoft.Paint
+keep    Microsoft.Windows.Photos
+keep    Microsoft.ApplicationCompatibilityEnhancements
+keep    Microsoft.AV1VideoExtension
+keep    Microsoft.AVCEncoderVideoExtension
+keep    Microsoft.HEIFImageExtension
+keep    Microsoft.HEVCVideoExtension
+keep    Microsoft.MPEG2VideoExtension
+keep    Microsoft.RawImageExtension
+keep    Microsoft.VP9VideoExtensions
+keep    Microsoft.WebMediaExtensions
+keep    Microsoft.WebpImageExtension
+keep    Microsoft.WindowsCamera
+keep    Microsoft.ZuneMusic                        # Media Player
+keep    Microsoft.MicrosoftStickyNotes
+keep    Microsoft.StartExperiencesApp              # part of Start
+keep    Microsoft.WidgetsPlatformRuntime           # runtime only; Widgets itself is removed above and off by policy
+keep    Microsoft.Ink.Handwriting.*                # handwriting, one pack per display language
+keep    RealtekSemiconductorCorp.RealtekAudioControl   # OEM audio driver app (Surface)

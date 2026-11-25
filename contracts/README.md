@@ -7,9 +7,11 @@ contract is one pull request that every side's tests have to pass.
 | Folder | What it pins | Written by | Read by |
 |---|---|---|---|
 | `host-enrol/` | `sbhost-enrol.json`, the data file a worker host's installer reads | the Windows App | the worker host's installer |
+| `host-command/` | signed host commands (pause, resume, drain, update): good and bad documents with their SSHSIG signatures, the test signer, and `expected.json` with the result for each, in order | the Windows App (signs) | the worker host (`worker-host/workerhost/commands.py`) |
+| `fleet/` | the signed fleet document: a good one, one changed byte, one signed in the wrong namespace, the test signer, and `expected.json` | the Windows App (publishes) | the worker host (`worker-host/workerhost/fleet.py`) |
 
-More arrive with the worker host: its status message, the signed fleet document
-and signed host commands.
+The worker host's tests pin every file here by SHA-256 (`worker-host/tests/vectors.py`). The signatures were made
+with a throwaway RSA-2048 key, as a Windows Hello key would make them, and its private half was discarded.
 
 ## Rules
 

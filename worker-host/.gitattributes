@@ -1,0 +1,12 @@
+* text=auto eol=lf
+*.ps1 text eol=crlf
+*.cmd text eol=crlf
+
+# Signed files: git must never change their bytes (docs/signing-keys.md)
+fleet.toml -text
+baseline.toml -text
+release.toml -text
+*.sig -text
+keys/allowed_signers -text
+tests/data/vectors/** -text
+tools/bootstrap.ps1 -text

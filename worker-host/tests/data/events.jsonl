@@ -1,0 +1,12 @@
+{"type":"session.start","data":{"selectedModel":"model-a","sessionId":"s1"}}
+{"type":"user.message","data":{"content":"synthetic"}}
+{"type":"session.usage_record","data":{"usage":{"model":"model-a","inputTokens":1000,"outputTokens":100,"copilotUsage":{"totalNanoAiu":2000000000}}}}
+{"type":"assistant.message","data":{"content":"synthetic"}}
+{"type":"session.usage_record","data":{"usage":{"model":"model-a","inputTokens":2000,"outputTokens":200,"copilotUsage":{"totalNanoAiu":1500000000}}}}
+{"type":"some.future.event","data":{"anything":[1,2,3]}}
+{"type":"session.usage_record","data":{"usage":{"model":"model-b","inputTokens":500,"outputTokens":50,"copilotUsage":{"totalNanoAiu":6000000000}}}}
+{"type":"session.usage_record","data":{"usage":{"model":"model-b","inputTokens":10,"outputTokens":5}}}
+not json at all
+{"type":"tool.execution_complete","data":{"success":true}}
+{"type":"session.usage_record","data":{"usage":{"model":"model-a","inputTokens":300,"outputTokens":30,"copilotUsage":{"totalNanoAiu":1000000000}}}}
+{"type":"session.usage_record","data":{"usage":{"model":"model-b","inputTokens":99999,"outputTokens":9999,"copilotUsage":{"totalNan

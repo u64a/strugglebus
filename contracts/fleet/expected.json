@@ -1,0 +1,8 @@
+{
+ "this_host": "host-office1-host",
+ "fleet": {
+  "fleet.toml": "accept",
+  "fleet-changed-byte.toml": "bad-signature",
+  "fleet-wrong-namespace.toml": "bad-signature"
+ }
+}

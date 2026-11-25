@@ -1,0 +1,58 @@
+name: worker-host
+
+# The worker host's checks (worker-host/): the pytest suite and the CRAP gate on a GitHub-hosted Windows runner (the
+# host is Windows-only: DPAPI, Job Objects, schtasks).
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'worker-host/**'
+      - 'contracts/**'
+      - '.github/workflows/worker-host.yml'
+  # Every pull request runs this, whatever it touches, so it can be a required check.
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: worker-host-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  pytest:
+    runs-on: windows-latest
+    timeout-minutes: 25
+    strategy:
+      matrix:
+        python: ["3.12", "3.13"]
+    defaults:
+      run:
+        working-directory: worker-host
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - run: python -m pip install "pytest==9.0.3"
+      - run: python -m pytest tests -q
+  crap:
+    runs-on: windows-latest
+    timeout-minutes: 25
+    defaults:
+      run:
+        working-directory: worker-host
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install "pytest==9.0.3" "coverage==7.16.2" "radon==6.0.1"
+      - run: python -m coverage run --branch --source=workerhost,tools -m pytest tests -q
+      - run: python -m coverage json -q -o coverage.json
+      - run: python tools/crap.py check coverage.json
