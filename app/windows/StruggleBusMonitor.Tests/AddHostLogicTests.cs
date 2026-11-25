@@ -86,14 +86,32 @@ public class AddHostLogicTests
         Assert.Contains(mentions, AddHostLogic.Problem(form, Bus, hasGrant, Now));
 
     [Fact]
+    public void TheInstallerInTheAppIsTheWorkerHostsOwnFileByteForByte()
+    {
+        var source = File.ReadAllBytes(Path.Combine(AppContext.BaseDirectory, "WorkerHost", "bootstrap.ps1"));
+
+        var shipped = AddHostLogic.Bootstrap();
+
+        Assert.Equal(source, shipped);
+        Assert.NotEmpty(shipped);
+        // It is stored with line feeds only; a checkout that changed that would change its hash.
+        Assert.DoesNotContain((byte)'\r', shipped);
+        Assert.Contains("-DataFile", System.Text.Encoding.ASCII.GetString(shipped));
+    }
+
+    [Fact]
     public void TheResultSaysWhatToCompareAndWhatToDoNext()
     {
         var data = AddHostLogic.Data(Form(), Bus, AddHostLogic.PlaceholderCode, Now);
         var file = HostEnrolFile.Render(data);
 
-        var text = AddHostLogic.ResultText("sbhost-enrol.json", data, file, Now.AddMinutes(15), Now);
+        var bootstrap = AddHostLogic.Bootstrap();
+        var text = AddHostLogic.ResultText("sbhost-enrol.json", data, file, bootstrap, Now.AddMinutes(15), Now);
 
-        Assert.StartsWith("Saved sbhost-enrol.json for host-office1.", text);
+        Assert.StartsWith("Saved sbhost-enrol.json and bootstrap.ps1 for host-office1. Move both to the new PC.", text);
+        Assert.Contains(@"Get-FileHash -Algorithm SHA256 .\bootstrap.ps1", text);
+        Assert.Contains($"It must print:   {HostEnrolFile.Sha256(bootstrap)}", text);
+        Assert.True(text.IndexOf("Get-FileHash", StringComparison.Ordinal) < text.IndexOf("powershell -ExecutionPolicy", StringComparison.Ordinal));
         Assert.Contains($"Data file digest:  {HostEnrolFile.Digest(file)}", text);
         Assert.Equal(2, text.Split("Signer:            SHA256:").Length - 1);
         Assert.Contains(@"powershell -ExecutionPolicy Bypass -File .\bootstrap.ps1 -DataFile .\sbhost-enrol.json", text);

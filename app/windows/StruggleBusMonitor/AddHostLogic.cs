@@ -90,20 +90,39 @@ internal static class AddHostLogic
 
     public static string HelloPrompt(string prefix) => $"Create a one-time code for worker host {prefix}";
 
-    /// <summary>What the operator compares with the installer's own printout, and what to do next.</summary>
-    public static string ResultText(string fileName, HostEnrolData data, byte[] file, DateTimeOffset expiresAt, DateTimeOffset now)
+    public const string BootstrapFileName = "bootstrap.ps1";
+
+    /// <summary>
+    /// The worker host's installer, exactly as it is in this build's source (worker-host/tools). The
+    /// app hands it over unchanged and never edits it: only its hash is shown, for the operator to
+    /// check on the new PC before running it.
+    /// </summary>
+    public static byte[] Bootstrap()
+    {
+        using var stream = typeof(AddHostLogic).Assembly.GetManifestResourceStream(BootstrapFileName)!;
+        using var copy = new System.IO.MemoryStream();
+        stream.CopyTo(copy);
+        return copy.ToArray();
+    }
+
+    /// <summary>What the operator checks on the new PC, in the order they do it.</summary>
+    public static string ResultText(string fileName, HostEnrolData data, byte[] file, byte[] bootstrap, DateTimeOffset expiresAt, DateTimeOffset now)
     {
         var lines = new List<string>
         {
-            $"Saved {fileName} for {data.HostPrefix}.",
+            $"Saved {fileName} and {BootstrapFileName} for {data.HostPrefix}. Move both to the new PC.",
             string.Empty,
-            $"Data file digest:  {HostEnrolFile.Digest(file)}"
+            $@"1. On the new PC, check the installer before running it:  Get-FileHash -Algorithm SHA256 .\{BootstrapFileName}",
+            $"   It must print:   {HostEnrolFile.Sha256(bootstrap)}",
+            string.Empty,
+            $@"2. Run it as an administrator:  powershell -ExecutionPolicy Bypass -File .\{BootstrapFileName} -DataFile .\{HostEnrolFile.FileName}",
+            string.Empty,
+            "3. Before it does anything, the installer prints these. Check they match, then press Enter there:",
+            $"   Data file digest:  {HostEnrolFile.Digest(file)}"
         };
-        lines.AddRange(data.Signers.Select(signer => $"Signer:            {HostEnrolFile.SignerFingerprint(signer)}"));
+        lines.AddRange(data.Signers.Select(signer => $"   Signer:            {HostEnrolFile.SignerFingerprint(signer)}"));
         lines.Add(string.Empty);
-        lines.Add("The installer prints the same digest and signer fingerprints before it does anything. Check they match, then press Enter there.");
-        lines.Add($"The file holds a one-time code that works once and expires {FeedLogic.TimeLabel(expiresAt, now)}. Move it to the new PC privately. The installer blanks the code once it has been used.");
-        lines.Add($@"On the new PC, as an administrator:  powershell -ExecutionPolicy Bypass -File .\bootstrap.ps1 -DataFile .\{HostEnrolFile.FileName}");
+        lines.Add($"The data file holds a one-time code that works once and expires {FeedLogic.TimeLabel(expiresAt, now)}. Move it privately. The installer blanks the code once it has been used.");
         return string.Join(Environment.NewLine, lines);
     }
 }

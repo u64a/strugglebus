@@ -25,6 +25,11 @@
     <Resource Include="icon.ico" />
   </ItemGroup>
 
+  <!-- The worker host's installer, built in byte for byte from its own source in this repository. -->
+  <ItemGroup>
+    <EmbeddedResource Include="..\..\..\worker-host\tools\bootstrap.ps1" LogicalName="bootstrap.ps1" Link="bootstrap.ps1" />
+  </ItemGroup>
+
   <ItemGroup>
     <AssemblyAttribute Include="System.Runtime.CompilerServices.InternalsVisibleTo">
       <_Parameter1>StruggleBusMonitor.Tests</_Parameter1>
