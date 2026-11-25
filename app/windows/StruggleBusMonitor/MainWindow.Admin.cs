@@ -93,8 +93,9 @@ public partial class MainWindow
         var code = await MintHostCodeAsync(prefix, form.Reason);
         var data = AddHostLogic.Data(form, session, code.Code ?? string.Empty, now);
         var file = await WriteHostFileAsync(path, data);
+        var bootstrap = await WriteBootstrapBesideAsync(path);
         RememberSiteSettings(form);
-        HostResult.Text = AddHostLogic.ResultText(Path.GetFileName(path), data, file, code.ExpiresAt, now);
+        HostResult.Text = AddHostLogic.ResultText(Path.GetFileName(path), data, file, bootstrap, code.ExpiresAt, now);
         HostResultPanel.Visibility = Visibility.Visible;
         HostName.Clear();
         HostReason.Clear();
@@ -107,6 +108,14 @@ public partial class MainWindow
         var file = HostEnrolFile.Render(data);
         await File.WriteAllBytesAsync(path, file);
         return file;
+    }
+
+    /// <summary>Saves the installer next to the data file, unchanged, so the two travel together.</summary>
+    private static async Task<byte[]> WriteBootstrapBesideAsync(string dataFilePath)
+    {
+        var bootstrap = AddHostLogic.Bootstrap();
+        await File.WriteAllBytesAsync(Path.Combine(Path.GetDirectoryName(dataFilePath)!, AddHostLogic.BootstrapFileName), bootstrap);
+        return bootstrap;
     }
 
     private void RememberSiteSettings(AddHostForm form)

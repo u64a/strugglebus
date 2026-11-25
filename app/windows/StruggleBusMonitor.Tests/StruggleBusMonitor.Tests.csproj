@@ -25,6 +25,7 @@
 
   <ItemGroup>
     <None Include="..\..\..\contracts\**" Link="Contracts\%(RecursiveDir)%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\..\..\worker-host\tools\bootstrap.ps1" Link="WorkerHost\bootstrap.ps1" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
 </Project>
