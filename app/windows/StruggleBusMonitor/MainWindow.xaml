@@ -543,10 +543,10 @@
                                     <TextBlock x:Name="HostNameFeedback" FontSize="12" TextWrapping="Wrap" Margin="0,6,0,0" Visibility="Collapsed"/>
                                     <TextBlock Text="Agent programs on that PC" Style="{StaticResource FieldLabel}"/>
                                     <WrapPanel>
-                                        <CheckBox x:Name="HostEngineClaude" Content="Claude Code" IsChecked="True" Margin="0,0,18,0"/>
-                                        <CheckBox x:Name="HostEngineCopilot" Content="GitHub Copilot CLI"/>
+                                        <CheckBox x:Name="HostEngineClaude" Content="Claude Code" IsChecked="True" Style="{StaticResource Check}" Margin="0,0,24,0"/>
+                                        <CheckBox x:Name="HostEngineCopilot" Content="GitHub Copilot CLI" Style="{StaticResource Check}"/>
                                     </WrapPanel>
-                                    <CheckBox x:Name="HostDedicated" Content="Create a dedicated Windows account for the host (recommended)" IsChecked="True" Margin="0,14,0,0"/>
+                                    <CheckBox x:Name="HostDedicated" Content="Create a dedicated Windows account for the host (recommended)" IsChecked="True" Style="{StaticResource Check}" Margin="0,14,0,0"/>
                                     <TextBlock Text="Without it, the host's workers run as the person who installs it and can reach everything that person can." Style="{StaticResource MutedText}" TextWrapping="Wrap" Margin="0,4,0,0"/>
                                     <TextBlock Text="Site signers (one allowed_signers line each, at least two)" Style="{StaticResource FieldLabel}"/>
                                     <TextBox x:Name="HostSigners" MinHeight="64" MaxHeight="160" AcceptsReturn="True" TextWrapping="NoWrap" HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Auto" FontFamily="{StaticResource Mono}" FontSize="12" VerticalContentAlignment="Top" Tag="owner namespaces=&quot;strugglebus-fleet,strugglebus-host-command&quot; sk-ssh-ed25519@openssh.com AAAA... key-name"/>

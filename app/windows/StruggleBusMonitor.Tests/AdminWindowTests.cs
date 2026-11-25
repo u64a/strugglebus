@@ -147,7 +147,7 @@ public class AdminWindowTests(StaWindowAdminFixture sta)
         Assert.Equal(Visibility.Visible, window.AdminHostsPanel.Visibility);
         Assert.Equal(Visibility.Collapsed, window.AdminReasonCard.Visibility);
         var rows = ((IEnumerable<HostRow>)window.AdminHostList.ItemsSource).ToList();
-        Assert.Equal(["host-lab2", "office1"], rows.Select(row => row.Name));
+        Assert.Equal(["lab2", "office1"], rows.Select(row => row.Name));
         Assert.Equal(["NOT RESPONDING", "ONLINE"], rows.Select(row => row.StateLabel));
         Assert.Equal("1 of 2 workers busy  ·  version 1.4.0  ·  claude signed in  ·  runs as sbworker", rows[1].Meta);
         Assert.Equal(HostsLogic.WarningText("not-dedicated"), rows[1].Alerts);
@@ -189,7 +189,7 @@ public class AdminWindowTests(StaWindowAdminFixture sta)
         StaWindowAdminScene.Until(() => window.AdminHostsSummary.Text.Length > 0, "the worker hosts");
 
         var row = Assert.Single((IEnumerable<HostRow>)window.AdminHostList.ItemsSource);
-        Assert.Equal(("host-office1", false), (row.Name, row.HasJoined));
+        Assert.Equal(("office1", false), (row.Name, row.HasJoined));
     });
 
     private const string HostSignerLines =
@@ -220,6 +220,12 @@ public class AdminWindowTests(StaWindowAdminFixture sta)
             FillAddHost(window);
             Assert.Equal(Visibility.Visible, window.AdminAddHostPanel.Visibility);
             Assert.Equal("It will join the bus as host-office1", window.HostNameFeedback.Text);
+            // The labels sit clear of their boxes and use the normal text colour.
+            foreach (var box in new[] { window.HostEngineClaude, window.HostEngineCopilot, window.HostDedicated })
+            {
+                Assert.NotNull(box.ContentTemplate);
+                Assert.Same(window.FindResource("Fg"), box.Foreground);
+            }
 
             StaWindowAdminScene.ClickAndWait(window.HostCreateButton);
 

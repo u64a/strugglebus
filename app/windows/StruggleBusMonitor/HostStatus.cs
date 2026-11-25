@@ -209,8 +209,21 @@ internal static class HostsLogic
         };
     }
 
-    private static string DisplayName(BusAgent agent, HostStatus? status) =>
-        status is { Host.Length: > 0 } ? status.Host : agent.Name[..^HostSuffix.Length];
+    /// <summary>
+    /// The PC's own name. A host that has not reported one is named from its bus name, without the
+    /// "host-" in front and "-host" behind, so every row reads the same way.
+    /// </summary>
+    internal static string DisplayName(BusAgent agent, HostStatus? status)
+    {
+        var reported = status?.Host ?? string.Empty;
+        return reported.Length > 0 ? reported : WithoutPrefix(agent.Name[..^HostSuffix.Length]);
+    }
+
+    private static string WithoutPrefix(string name)
+    {
+        var start = AddHostLogic.PrefixStart;
+        return name.Length > start.Length && name.StartsWith(start, StringComparison.Ordinal) ? name[start.Length..] : name;
+    }
 
     private static readonly Dictionary<string, string> StateLabels = new(StringComparer.Ordinal)
     {

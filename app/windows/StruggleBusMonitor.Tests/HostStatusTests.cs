@@ -159,7 +159,7 @@ public class HostStatusTests
     {
         var row = HostsLogic.Row(Agent("host-lab2-host", Now), null, Now);
 
-        Assert.Equal(("host-lab2", "NO STATUS YET", "Warn", "", false), (row.Name, row.StateLabel, row.Tone, row.Meta, row.HasAlerts));
+        Assert.Equal(("lab2", "NO STATUS YET", "Warn", "", false), (row.Name, row.StateLabel, row.Tone, row.Meta, row.HasAlerts));
     }
 
     [Fact]
@@ -168,7 +168,7 @@ public class HostStatusTests
         var status = Parse("""{"sb_host_status":{"v":1,"agent":"host-office1-host","state":"online","workers":{"busy":0,"max":2}}}""");
         var row = HostsLogic.Row(Agent("host-office1-host", Now), status, Now);
 
-        Assert.Equal(("host-office1", "0 of 2 workers busy", false), (row.Name, row.Meta, row.HasAlerts));
+        Assert.Equal(("office1", "0 of 2 workers busy", false), (row.Name, row.Meta, row.HasAlerts));
     }
 
     [Fact]
@@ -236,6 +236,14 @@ public class HostStatusTests
         Assert.Equal("", hostile.ReleaseSource);
         Assert.Equal("", Parse(Full)!.ReleaseSource);
     }
+
+    [Theory]
+    [InlineData("host-surface-host", "surface")]
+    [InlineData("host-lab-pc-2-host", "lab-pc-2")]
+    [InlineData("buildbox-host", "buildbox")]
+    [InlineData("host--host", "host-")]
+    public void AHostWithNoStatusIsNamedLikeTheOthers(string agentName, string shown) =>
+        Assert.Equal(shown, HostsLogic.DisplayName(Agent(agentName, null), null));
 
     [Fact]
     public void TheSummaryCountsSilentHostsAndThoseNeedingAttention()
