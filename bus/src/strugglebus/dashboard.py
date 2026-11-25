@@ -1841,8 +1841,8 @@ def render_sites(
             'autocomplete="current-password" maxlength="1024">'
             "</div>"
             '<p><label><input type="checkbox" name="confirm" value="add" required> '
-            "I ran the join command myself on this machine, and I want it to reach "
-            "the agent plane through the gateway.</label></p>"
+            "I ran the join command myself on this machine, and I want its agents "
+            "to reach this bus through the gateway.</label></p>"
             f'{_access_action("Add site")}'
             "</form>"
             f"<p>The site certificate lasts {_escape(cert_days)} days and the "
@@ -1858,28 +1858,29 @@ def render_sites(
             "</div>"
             f"{problem}"
             '<p class="result-status" role="status">Satellite sites are not '
-            "configured on this deployment. Set the gateway hostname and the site "
-            "CA in the inventory to enable them.</p></section>"
+            "set up on this bus. Whoever runs the server turns them on by setting "
+            "the gateway hostname and the site CA in the deployment inventory."
+            "</p></section>"
         )
     body = (
         '<p class="breadcrumb"><a href="/system">Administration</a> / Satellite sites</p>'
         '<section class="panel" aria-labelledby="sites-heading">'
         '<div class="section-heading"><h2 id="sites-heading">Satellite sites</h2>'
-        '<p class="result-status" role="status">Remote machines that reach the '
-        "agent plane through the gateway. Agents on a site still use their own "
-        "keys.</p></div>"
+        '<p class="result-status" role="status">Remote machines whose agents '
+        "reach this bus through the gateway. Each agent still signs in with its "
+        "own key.</p></div>"
         f"{confirmation}"
         f"{listing}"
-        "<p>Revocation is terminal. New requests from the site are refused at "
-        "once, and its open streams end at their next check. The label stays "
-        "reserved.</p>"
+        "<p>Revoking a site is permanent. The bus refuses its new requests at "
+        "once and ends its open connections at their next check. Its label "
+        "cannot be used again.</p>"
         "</section>"
         f"{add}"
     )
     return _page(
         title="Satellite sites",
         active="sites",
-        lede="Admit and revoke remote machines on the satellite path.",
+        lede="Let a remote machine's agents reach this bus, or cut one off.",
         body=body,
         server_info=server_info,
         generated_at=generated_at,
