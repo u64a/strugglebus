@@ -242,6 +242,12 @@ public class AdminWindowTests(StaWindowAdminFixture sta)
             Assert.Contains("\"host_prefix\":\"host-office1\",\"enrol_code\":\"" + HostCode + "\",\"engines\":[\"claude\"],\"dedicated\":true,", text);
             Assert.EndsWith("\"fleet_source\":\"bus\",\"remotes\":[\"https://github.com/acme/\"]}\n", text);
 
+            // The installer is saved beside the data file, unchanged.
+            var bootstrapPath = Path.Combine(Path.GetDirectoryName(path)!, AddHostLogic.BootstrapFileName);
+            Assert.Equal(AddHostLogic.Bootstrap(), File.ReadAllBytes(bootstrapPath));
+            File.Delete(bootstrapPath);
+            Assert.Contains(HostEnrolFile.Sha256(AddHostLogic.Bootstrap()), window.HostResult.Text);
+
             Assert.Equal(Visibility.Visible, window.HostResultPanel.Visibility);
             Assert.Contains($"Data file digest:  {HostEnrolFile.Digest(file)}", window.HostResult.Text);
             Assert.DoesNotContain(HostCode, window.HostResult.Text);
