@@ -181,6 +181,7 @@ tbody tr:hover { background: var(--surface-raised); }
 .section-gap, .pagination { margin-top: 24px; }
 .compact { max-width: 800px; }
 dl { display: grid; grid-template-columns: minmax(110px, .8fr) minmax(0, 1.4fr); gap: 11px 20px; margin: 0; font-size: 13px; }
+dl + p { margin-top: 20px; }
 dt { color: var(--muted); }
 dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
 code { font: 12px/1.6 Consolas, monospace; color: var(--text); overflow-wrap: anywhere; }

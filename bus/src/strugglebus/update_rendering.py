@@ -40,8 +40,8 @@ def refresh(path: str) -> str:
 def disabled() -> str:
     return panel(
         "Update preparation is disabled",
-        "<p>No protected worker socket is configured. Separately approved host setup and "
-        "application adoption are required to enable this feature.</p>",
+        "<p>This bus is not set up to fetch releases from this page. Whoever runs the "
+        "server turns that on as a separate, approved setup step.</p>",
         description=BOUNDARY,
     )
 
@@ -49,8 +49,8 @@ def disabled() -> str:
 def maintenance_disabled() -> str:
     return panel(
         "Self-installation is disabled",
-        "<p>No protected maintenance supervisor socket is configured. Release discovery "
-        "and file preparation do not install, activate or schedule releases.</p>",
+        "<p>This bus is not set up to install releases itself. Finding and fetching a "
+        "release never installs, activates or schedules it.</p>",
     )
 
 

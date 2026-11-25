@@ -119,7 +119,7 @@ def add_site_routes(router: APIRouter) -> None:
         except ConfigurationError:
             return await _sites_page(
                 request, code=503, label=canonical,
-                error="Satellite sites are not configured on this deployment.",
+                error="Satellite sites are not set up on this bus.",
             )
         except AgentAccessFrozenError:
             return await _sites_page(

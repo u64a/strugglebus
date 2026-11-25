@@ -266,7 +266,7 @@ def test_unconfigured_deployments_explain_rather_than_offer_the_form(
     with operator_client(_application(app_config)) as client:
         page = client.get("/sites")
         assert page.status_code == 200
-        assert "not configured" in page.text
+        assert "not set up on this bus" in page.text
         assert 'action="/sites"' not in page.text
         assert _add(client).status_code == 503
 
