@@ -1,0 +1,23 @@
+{
+ "threshold": 30.0,
+ "functions": {
+  "workerhost/busclient.py::Bus.call": 81.6,
+  "workerhost/busclient.py::Bus.post": 35.7,
+  "workerhost/busclient.py::bootstrap": 83.3,
+  "workerhost/busclient.py::main": 82.7,
+  "workerhost/cli.py::cmd_openbao": 41.2,
+  "workerhost/host.py::Host.do_resumes": 127.7,
+  "workerhost/host.py::Host.handle_control": 178.2,
+  "workerhost/host.py::Host.maintain": 144.6,
+  "workerhost/host.py::Host.uniqueness": 71.3,
+  "workerhost/openbao.py::https_transport.call": 43.8,
+  "workerhost/panel.py::run": 53.7,
+  "workerhost/panel.py::run.icon": 42.0,
+  "workerhost/panel.py::run.refresh": 110.0,
+  "workerhost/panel.py::wh_command": 44.7,
+  "workerhost/vault.py::GitVault.brief_entry": 77.9,
+  "workerhost/vault.py::GitVault.export": 51.5,
+  "workerhost/vault.py::GitVault.fetch": 37.7,
+  "workerhost/winapi.py::process_identity": 79.9
+ }
+}

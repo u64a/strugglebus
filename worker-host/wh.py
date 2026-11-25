@@ -1,0 +1,10 @@
+"""Entry point for wh.cmd and the scheduled task: python wh.py [--home <folder>] <command>."""
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from workerhost.cli import main  # noqa: E402
+
+if __name__ == "__main__":
+    raise SystemExit(main())

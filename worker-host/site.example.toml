@@ -1,0 +1,37 @@
+# site.toml: your site's values, written into a NEW host's config.toml by
+#     install.ps1 -SiteFile <your site.toml>
+# Copy this file, fill it in, and keep it with your own deployment (it names your LAN, not secrets). Every value is
+# checked before anything is written; an existing config.toml is never changed by it.
+
+# Your StruggleBus (https only). Its LAN root certificate is install.ps1 -BusCa.
+bus_url = "https://bus.example.lan"
+
+# The repository holding your signed fleet.toml and release.toml (owner/repo on GitHub). Empty: no signed fleet and
+# no self-update; the host then trusts only the coordinator below.
+fleet_repo = "your-org/your-fleet"
+
+# Where hosts read the signed fleet from: "git" (fleet_repo, the default), "bus" (published by the StruggleBus App) or
+# "either" (both; the higher signed serial wins). Every copy is checked against the pinned signers the same way.
+fleet_source = "git"
+
+# Before your first signed fleet.toml only: the one coordinator trusted (pinned by `wh enrol`) and its notes
+# repository, where its task briefs live. Both may stay empty once you use fleet.toml.
+coordinator = ""
+vault_repo = ""
+
+# The outer fence on what workers may clone: whole hosts or single owners, https only. Each coordinator's signed
+# fleet.toml `repos` narrows it again.
+remotes = [
+  "https://github.com/your-org/",
+]
+
+# Optional short names a task may use for a repository (the older task form): short-name = "owner/repo".
+[repos]
+
+# Optional: host secrets in OpenBao, with a leaf certificate from step-ca (docs/openbao-design.md). Leave empty to keep
+# the host's secrets in Windows DPAPI.
+[openbao]
+url = ""
+ca_url = ""
+san_domain = ""        # the leaf is <agent_prefix>.<san_domain>
+leaf_authority = ""    # the bus agent that mints one-time tokens; empty: the host asks by file only
