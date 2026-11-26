@@ -119,6 +119,34 @@ function Assert-Signed {
     }
 }
 
+function Test-Program {
+    # True for a Windows program file (an .exe or .dll, whatever it is named):
+    # they all start with the two bytes 'MZ'.
+    param([string]$Path)
+    $stream = [IO.File]::OpenRead($Path)
+    try { return $stream.ReadByte() -eq 0x4D -and $stream.ReadByte() -eq 0x5A }
+    finally { $stream.Dispose() }
+}
+
+function Assert-EveryProgramSigned {
+    # No program file may ship unsigned. Each one in the package must be
+    # validly signed either by an allowed certificate (the app's own files) or
+    # by Microsoft (the .NET runtime that ships with it).
+    param([string]$Folder)
+    $ours = 0; $microsoft = 0; $bad = @()
+    foreach ($file in Get-ChildItem -LiteralPath $Folder -Recurse -File) {
+        if (-not (Test-Program $file.FullName)) { continue }
+        $signature = Get-AuthenticodeSignature -LiteralPath $file.FullName
+        $signer = $signature.SignerCertificate
+        if ($signature.Status -eq 'Valid' -and $signer.Thumbprint -in $Thumbprints -and $signature.TimeStamperCertificate) { $ours++ }
+        elseif ($signature.Status -eq 'Valid' -and $signer.Subject -match '(^|, )O=Microsoft Corporation(,|$)' -and $signer.Issuer -match '(^|, )O=Microsoft Corporation(,|$)') { $microsoft++ }
+        else { $bad += "$($file.FullName.Substring($Folder.Length + 1)) ($($signature.Status))" }
+    }
+    if ($bad.Count -gt 0) { throw "These program files are not signed by this project or by Microsoft:`n  $($bad -join "`n  ")" }
+    if ($ours -eq 0) { throw "No file in '$Folder' is signed by this project." }
+    Write-Host "every program file is signed: $ours by this project, $microsoft by Microsoft"
+}
+
 if ($Version -notmatch '^\d+\.\d+\.\d+([-.][0-9A-Za-z.-]+)?$') { throw "'$Version' is not a version like 1.7.2." }
 if ($ArtifactsDir -and -not $SkipUpload) { throw '-ArtifactsDir is for trying the signing step and needs -SkipUpload. A published release is always made from the build GitHub made for the tag.' }
 
@@ -169,6 +197,7 @@ try {
         $unpacked = Join-Path $work "portable-$runtime"
         Expand-Archive -LiteralPath $portable.FullName -DestinationPath $unpacked
         Assert-Signed @(Get-ChildItem -Path $unpacked -Recurse -Filter 'StruggleBusMonitor.exe' | ForEach-Object FullName)
+        Assert-EveryProgramSigned $unpacked
         $outputs[$runtime] = $releases
     }
 
