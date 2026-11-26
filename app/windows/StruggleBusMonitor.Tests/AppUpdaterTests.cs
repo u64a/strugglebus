@@ -30,6 +30,13 @@ internal sealed class FakeUpdateEngine : IUpdateEngine
         return Task.CompletedTask;
     }
 
+    public string? Refusal { get; set; }
+    public List<UpdatePackage> Discarded { get; } = [];
+
+    public string? Problem(UpdatePackage package) => Refusal;
+
+    public void Discard(UpdatePackage package) => Discarded.Add(package);
+
     public void ApplyAndRestart(UpdatePackage package) => Restarted.Add(package);
 
     public void ApplyAfterExit(UpdatePackage package)
@@ -297,5 +304,100 @@ public sealed class VelopackEngineTests
         Assert.Same(target, package?.Asset);
         Assert.Same(update, package?.Source);
         Assert.Null(VelopackEngine.FromUpdate(null));
+    }
+}
+
+public sealed class AppUpdaterSignatureTests
+{
+    private static readonly UpdatePackage Newer = new("1.5.0");
+
+    private const string NotSigned = "The update was not installed: helper.dll in it is not signed by this app's publisher.";
+
+    [Fact]
+    public async Task ADownloadThatIsNotSignedByThePublisherIsRemovedAndNeverInstalled()
+    {
+        var engine = new FakeUpdateEngine { Available = Newer, Refusal = NotSigned };
+        var updater = new AppUpdater(engine);
+
+        var status = await updater.CheckAndDownloadAsync(null, CancellationToken.None);
+        updater.RestartIntoUpdate();
+        updater.ApplyOnExit();
+
+        Assert.Equal(new UpdateStatus(UpdateState.Failed, Detail: NotSigned), status);
+        Assert.Equal([Newer], engine.Discarded);
+        Assert.Empty(engine.Restarted);
+        Assert.Empty(engine.AppliedAfterExit);
+    }
+
+    [Fact]
+    public async Task AnUpdateLeftByAnEarlierRunIsCheckedTooBeforeItIsOffered()
+    {
+        var engine = new FakeUpdateEngine { PendingRestart = Newer, Refusal = NotSigned };
+        var updater = new AppUpdater(engine);
+
+        var status = await updater.CheckAndDownloadAsync(null, CancellationToken.None);
+        updater.RestartIntoUpdate();
+
+        Assert.Equal(UpdateState.Failed, status.State);
+        Assert.Equal([Newer], engine.Discarded);
+        Assert.Empty(engine.Restarted);
+    }
+
+    [Fact]
+    public void AtStartupACheckedUpdateIsInstalledOncePerVersion()
+    {
+        var engine = new FakeUpdateEngine { PendingRestart = Newer };
+        var remembered = new List<string>();
+
+        new AppUpdater(engine).ApplyPendingAtStartup(lastAttempt: "1.4.5", remembered.Add);
+        // The same version again, as after an install that failed and came back to the old app.
+        new AppUpdater(engine).ApplyPendingAtStartup(lastAttempt: "1.5.0", remembered.Add);
+
+        Assert.Equal([Newer], engine.Restarted);
+        Assert.Equal(["1.5.0"], remembered);
+        Assert.Empty(engine.Discarded);
+    }
+
+    [Fact]
+    public void AtStartupAnUnsignedUpdateIsRemovedAndTheAppStartsAsUsual()
+    {
+        var engine = new FakeUpdateEngine { PendingRestart = Newer, Refusal = NotSigned };
+        var remembered = new List<string>();
+
+        new AppUpdater(engine).ApplyPendingAtStartup(null, remembered.Add);
+
+        Assert.Equal([Newer], engine.Discarded);
+        Assert.Empty(engine.Restarted);
+        Assert.Empty(remembered);
+    }
+
+    [Fact]
+    public void AtStartupNothingHappensWithoutAnUpdateOrAnInstalledCopy()
+    {
+        var none = new FakeUpdateEngine();
+        var portable = new FakeUpdateEngine { IsInstalled = false, PendingRestart = Newer };
+
+        new AppUpdater(none).ApplyPendingAtStartup(null, _ => Assert.Fail("nothing to remember"));
+        new AppUpdater(portable).ApplyPendingAtStartup(null, _ => Assert.Fail("nothing to remember"));
+        new AppUpdater(null).ApplyPendingAtStartup(null, _ => Assert.Fail("nothing to remember"));
+
+        Assert.Empty(none.Restarted);
+        Assert.Empty(portable.Restarted);
+    }
+
+    [Theory]
+    [InlineData(true, 1)]
+    [InlineData(false, 0)]
+    public void TheStartupInstallFollowsTheAutomaticUpdatesSetting(bool automatic, int installs)
+    {
+        var engine = new FakeUpdateEngine { PendingRestart = Newer };
+        var settings = new AppSettings { AutoUpdate = automatic };
+        var saves = 0;
+
+        App.ApplyPendingUpdate(settings, new AppUpdater(engine), () => saves++);
+
+        Assert.Equal(installs, engine.Restarted.Count);
+        Assert.Equal(installs, saves);
+        Assert.Equal(automatic ? "1.5.0" : null, settings.StartupUpdateAttempt);
     }
 }
