@@ -38,7 +38,8 @@ $SourceRepository = 'u64a/strugglebus'
 $DestinationRepository = 'NZCypher819/StruggleApp-Privacy'
 $Workflow = 'windows-release.yml'
 $PackId = 'NZCypher819.StruggleBusMonitor'
-$SignInstallerTool = Join-Path $PSScriptRoot '..\..\worker-host\tools\sign-bootstrap.ps1'
+$RepositoryRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..')).Path
+$SignInstallerTool = Join-Path $RepositoryRoot 'worker-host\tools\sign-bootstrap.ps1'
 $VpkVersion = '1.2.161'
 $TimestampServer = 'http://time.certum.pl'
 # The certificates allowed to sign a release, by thumbprint. A name is not
@@ -94,6 +95,7 @@ function Get-TagBuild {
     if ($position -notin @('identical', 'behind')) {
         throw "Tag $Tag ($commit) is not a commit on main (GitHub says '$position'). Refusing to release it."
     }
+    Assert-CheckoutIsTheTag $commit
     $runs = Invoke-Capture gh @('run', 'list', '-R', $SourceRepository, '--workflow', $Workflow, '--commit', $commit,
         '--json', 'databaseId,headBranch,status,conclusion') | ConvertFrom-Json
     $run = @($runs | Where-Object { $_.headBranch -eq $Tag }) | Select-Object -First 1
@@ -107,28 +109,35 @@ function Get-TagBuild {
     }
     Invoke-Checked gh @('run', 'download', "$($run.databaseId)", '-R', $SourceRepository, '-D', $Into)
     Write-Host "Using the build from run $($run.databaseId), commit $commit."
-    return $commit
+}
+
+function Assert-CheckoutIsTheTag {
+    # This script, and the installer-signing tool it calls (which holds the
+    # pinned release keys), run from the checkout on this PC. They are only the
+    # reviewed ones if the checkout is exactly the tagged commit with nothing
+    # changed. The same goes for the installer that gets signed, which the app
+    # built from that commit has inside it.
+    param([string]$Commit)
+    $head = Invoke-Capture git @('-C', $RepositoryRoot, 'rev-parse', 'HEAD')
+    $changes = Invoke-Capture git @('-C', $RepositoryRoot, 'status', '--porcelain')
+    if ($head -ne $Commit) { throw "This checkout is at $head, but the tag is $Commit. Check out the tag first, so the scripts that run are the reviewed ones." }
+    if ($changes) { throw "This checkout has changes that are not in the tag:`n$changes`nRemove them first, so the scripts that run are the reviewed ones." }
+    Write-Host "This checkout is the tagged commit, unchanged."
 }
 
 function Get-SignedInstaller {
     # The worker host's installer (bootstrap.ps1), signed, for Add a host to
     # hand over. The app has the unsigned file built in and uses a signed copy
-    # only if it is exactly that file plus one signature block, so the copy
-    # signed here must come from the same commit the app was built from.
+    # only if it is exactly that file plus one signature block. This checkout
+    # is the commit the app was built from (see Assert-CheckoutIsTheTag), so
+    # the file here is that file.
     #
     # worker-host/tools/sign-bootstrap.ps1 does the signing. It refuses unless
     # the file's hash is the one in a worker host release that verifies with the
     # project's release keys, so only an installer that release approved is
     # ever signed, and it checks the signed copy afterwards.
-    param([string]$Commit, [string]$Into)
-    $unsigned = Join-Path $Into 'bootstrap-unsigned.ps1'
-    if ($Commit) {
-        $content = Invoke-Capture gh @('api', "repos/$SourceRepository/contents/worker-host/tools/bootstrap.ps1?ref=$Commit", '--jq', '.content')
-        [IO.File]::WriteAllBytes($unsigned, [Convert]::FromBase64String($content))
-    }
-    else {
-        Copy-Item -LiteralPath (Join-Path $PSScriptRoot '..\..\worker-host\tools\bootstrap.ps1') -Destination $unsigned
-    }
+    param([string]$Into)
+    $unsigned = Join-Path $RepositoryRoot 'worker-host\tools\bootstrap.ps1'
     $signed = Join-Path $Into 'bootstrap.ps1'
     Invoke-Checked pwsh (@('-NoProfile', '-File', $SignInstallerTool) + (Get-HostReleaseArguments) + @('-Bootstrap', $unsigned, '-Out', $signed, '-Sign'))
     return $signed
@@ -260,12 +269,11 @@ Write-Host "Working in: $work"
 
 try {
     $builds = $ArtifactsDir
-    $commit = $null
     if (-not $builds) {
         $builds = Join-Path $work 'builds'
-        $commit = Get-TagBuild -Tag $tag -Into $builds
+        Get-TagBuild -Tag $tag -Into $builds
     }
-    $installer = Get-SignedInstaller -Commit $commit -Into $work
+    $installer = Get-SignedInstaller -Into $work
 
     $signParams = "/fd SHA256 /td SHA256 /tr $TimestampServer /sha1 $($certificate.Thumbprint)"
     $outputs = @{}
