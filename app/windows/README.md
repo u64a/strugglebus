@@ -27,9 +27,20 @@ The enrollment and operator grant live in `%LOCALAPPDATA%\StruggleBusMonitor` an
 installing, updating or uninstalling. Theme and window preferences are in `settings.json` beside them.
 
 From 1.7.2 the Setup program and the app are code-signed. Windows shows the publisher as
-"Open Source Developer Christopher Cunningham". The updater does not check that signature yet: it
-trusts whatever is published to that releases repository, so write access to that repository still
-decides what runs on every PC.
+"Open Source Developer Christopher Cunningham".
+
+From 1.7.3 the app checks an update before installing it, so write access to the releases
+repository is no longer enough to run code on every PC (`UpdateTrust.cs`):
+
+- every program file in the update must be signed by the project's certificate, matched by
+  thumbprint; Microsoft's signature is accepted only on libraries (the .NET runtime);
+- the app in it must be a newer version than the one running, read from the app's own signed file;
+- every other file beside the app must match `signed-files.psd1`, a list of hashes the release
+  script signs for that version. It is a PowerShell data file only because Windows can sign
+  those; it is read as text and never run.
+
+An update that fails is deleted and Settings says why. Revocation is not checked online. Copies
+older than 1.7.3 install whatever is published.
 
 ## Build
 

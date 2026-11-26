@@ -128,6 +128,32 @@ function Test-Program {
     finally { $stream.Dispose() }
 }
 
+function New-SignedFileList {
+    # The app checks an update before installing it. Program files carry their
+    # own signatures, but the files beside them are text, and some of them tell
+    # .NET which libraries to load. So their hashes go in a list, the list is
+    # signed, and the app refuses an update whose files do not match it.
+    #
+    # The list is a PowerShell data file only because Windows can sign and
+    # check those. It is read as text and never run.
+    param([string]$Build, [string]$Version, $Certificate)
+    $root = (Resolve-Path -LiteralPath $Build).Path
+    $list = Join-Path $root 'signed-files.psd1'
+    Remove-Item -LiteralPath $list -ErrorAction SilentlyContinue
+    $lines = @('# StruggleBus Monitor signed file list. Data only; never run.', "# version $(($Version -split '[-+]')[0])")
+    foreach ($file in Get-ChildItem -LiteralPath $root -Recurse -File | Sort-Object FullName) {
+        if (Test-Program $file.FullName) { continue }
+        $name = $file.FullName.Substring($root.Length + 1).Replace('\', '/')
+        $hash = (Get-FileHash -LiteralPath $file.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+        $lines += "# sha256 $hash  $name"
+    }
+    $lines += '@{}'
+    [IO.File]::WriteAllText($list, ($lines -join "`n") + "`n")
+    $signed = Set-AuthenticodeSignature -FilePath $list -Certificate $Certificate -HashAlgorithm SHA256 -TimestampServer $TimestampServer
+    if ($signed.Status -ne 'Valid') { throw "The file list could not be signed: $($signed.StatusMessage)" }
+    Write-Host "listed $($lines.Count - 3) file(s) beside the app in signed-files.psd1"
+}
+
 function Assert-EveryProgramSigned {
     # No program file may ship unsigned. Each one in the package must be
     # validly signed either by an allowed certificate (the app's own files) or
@@ -178,6 +204,8 @@ try {
         & $vpk download github --repoUrl "https://github.com/$DestinationRepository" --channel $runtime --outputDir $releases | Out-Host
         if ($LASTEXITCODE -ne 0) { Write-Warning "No previous $runtime release was downloaded; this one will have no small update package." }
 
+        New-SignedFileList -Build $build -Version $Version -Certificate $certificate
+
         Invoke-Checked $vpk @('pack',
             '--packId', $PackId,
             '--packVersion', $Version,
@@ -198,6 +226,7 @@ try {
         Expand-Archive -LiteralPath $portable.FullName -DestinationPath $unpacked
         Assert-Signed @(Get-ChildItem -Path $unpacked -Recurse -Filter 'StruggleBusMonitor.exe' | ForEach-Object FullName)
         Assert-EveryProgramSigned $unpacked
+        Assert-Signed @(Get-ChildItem -Path $unpacked -Recurse -Filter 'signed-files.psd1' | ForEach-Object FullName)
         $outputs[$runtime] = $releases
     }
 

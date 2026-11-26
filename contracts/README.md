@@ -6,6 +6,7 @@ contract is one pull request that every side's tests have to pass.
 
 | Folder | What it pins | Written by | Read by |
 |---|---|---|---|
+| `app-update/` | `signed-files.psd1`, a file list signed with the project's real code-signing certificate and timestamped, so the App's signature reader is tested against the real thing | the release script (`app/windows/release-signed.ps1`) | the Windows App (`UpdateTrust.cs`) |
 | `host-enrol/` | `sbhost-enrol.json`, the data file a worker host's installer reads | the Windows App | the worker host's installer |
 | `host-command/` | signed host commands (pause, resume, drain, update): good and bad documents with their SSHSIG signatures, the test signer, and `expected.json` with the result for each, in order | the Windows App (signs) | the worker host (`worker-host/workerhost/commands.py`) |
 | `fleet/` | the signed fleet document: a good one, one changed byte, one signed in the wrong namespace, the test signer, and `expected.json` | the Windows App (publishes) | the worker host (`worker-host/workerhost/fleet.py`) |
