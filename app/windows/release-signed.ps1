@@ -128,6 +128,72 @@ function Test-Program {
     finally { $stream.Dispose() }
 }
 
+function New-SignedFileList {
+    # The app checks an update before installing it. Signatures on the program
+    # files are not enough by themselves: the text files beside them tell .NET
+    # which libraries to load, and a library could be swapped for an older one
+    # that Microsoft also signed. So the hash of every file goes in a list, the
+    # list is signed, and the app refuses an update whose files do not match it.
+    #
+    # The project's own program files are signed first, here, so that the list
+    # holds the hashes of the files as they ship. The packaging tool then finds
+    # them signed and leaves them alone.
+    #
+    # The list is a PowerShell data file only because Windows can sign and
+    # check those. It is read as text and never run.
+    param([string]$Build, [string]$Version, $Certificate)
+    $root = (Resolve-Path -LiteralPath $Build).Path
+    $list = Join-Path $root 'signed-files.psd1'
+    Remove-Item -LiteralPath $list -ErrorAction SilentlyContinue
+    $lines = @('# StruggleBus Monitor signed file list. Data only; never run.', "# version $(($Version -split '[-+]')[0])")
+    # The packaging tool leaves this Microsoft crash-dump helper out of the
+    # package, so it must not be on the list. The app would refuse it anyway: a
+    # program that can be started has to be signed by this project.
+    Remove-Item -LiteralPath (Join-Path $root 'createdump.exe') -ErrorAction SilentlyContinue
+    $files = Get-ChildItem -LiteralPath $root -Recurse -File | Sort-Object FullName
+    foreach ($file in $files) {
+        if (-not (Test-Program $file.FullName) -or (Get-AuthenticodeSignature -LiteralPath $file.FullName).Status -ne 'NotSigned') { continue }
+        $signed = Set-AuthenticodeSignature -FilePath $file.FullName -Certificate $Certificate -HashAlgorithm SHA256 -TimestampServer $TimestampServer
+        if ($signed.Status -ne 'Valid') { throw "'$($file.Name)' could not be signed: $($signed.StatusMessage)" }
+        Write-Host "signed before listing: $($file.Name)"
+    }
+    foreach ($file in $files) {
+        $name = $file.FullName.Substring($root.Length + 1).Replace('\', '/')
+        $hash = (Get-FileHash -LiteralPath $file.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+        $lines += "# sha256 $hash  $name"
+    }
+    $lines += '@{}'
+    [IO.File]::WriteAllText($list, ($lines -join "`n") + "`n")
+    $signed = Set-AuthenticodeSignature -FilePath $list -Certificate $Certificate -HashAlgorithm SHA256 -TimestampServer $TimestampServer
+    if ($signed.Status -ne 'Valid') { throw "The file list could not be signed: $($signed.StatusMessage)" }
+    Write-Host "listed $($lines.Count - 3) file(s) beside the app in signed-files.psd1"
+}
+
+function Assert-ListMatches {
+    # The same comparison the app makes before installing an update, made here
+    # on the packaged files, so a release whose list and contents disagree is
+    # never published. Anything the packaging tool adds, drops or changes after
+    # the list was signed shows up here, not on users' PCs.
+    param([string]$Folder)
+    $addedByPackager = @('sq.version', 'Squirrel.exe', 'StruggleBus Monitor_ExecutionStub.exe', 'signed-files.psd1')
+    $listed = @{}
+    foreach ($line in Get-Content -LiteralPath (Join-Path $Folder 'signed-files.psd1')) {
+        if ($line.StartsWith('# SIG # Begin signature block')) { break }
+        if ($line -match '^# sha256 ([0-9a-f]{64})  (.+)$') { $listed[$Matches[2]] = $Matches[1] }
+    }
+    $problems = @()
+    foreach ($file in Get-ChildItem -LiteralPath $Folder -Recurse -File) {
+        $name = $file.FullName.Substring($Folder.Length + 1).Replace('\', '/')
+        if ($name -in $addedByPackager) { continue }
+        if (-not $listed.ContainsKey($name)) { $problems += "$name is in the package but not on the list"; continue }
+        if ($listed[$name] -ne (Get-FileHash -LiteralPath $file.FullName -Algorithm SHA256).Hash.ToLowerInvariant()) { $problems += "$name is not the file that was listed" }
+        $listed.Remove($name)
+    }
+    $problems += $listed.Keys | ForEach-Object { "$_ is on the list but not in the package" }
+    if ($problems.Count -gt 0) { throw "The package does not match its signed list of files:`n  $($problems -join "`n  ")" }
+    Write-Host 'the package matches its signed list of files'
+}
+
 function Assert-EveryProgramSigned {
     # No program file may ship unsigned. Each one in the package must be
     # validly signed either by an allowed certificate (the app's own files) or
@@ -178,6 +244,8 @@ try {
         & $vpk download github --repoUrl "https://github.com/$DestinationRepository" --channel $runtime --outputDir $releases | Out-Host
         if ($LASTEXITCODE -ne 0) { Write-Warning "No previous $runtime release was downloaded; this one will have no small update package." }
 
+        New-SignedFileList -Build $build -Version $Version -Certificate $certificate
+
         Invoke-Checked $vpk @('pack',
             '--packId', $PackId,
             '--packVersion', $Version,
@@ -198,6 +266,10 @@ try {
         Expand-Archive -LiteralPath $portable.FullName -DestinationPath $unpacked
         Assert-Signed @(Get-ChildItem -Path $unpacked -Recurse -Filter 'StruggleBusMonitor.exe' | ForEach-Object FullName)
         Assert-EveryProgramSigned $unpacked
+        $shippedList = Get-ChildItem -Path $unpacked -Recurse -Filter 'signed-files.psd1' | Select-Object -First 1
+        if (-not $shippedList) { throw "The signed list of files is missing from the $runtime package." }
+        Assert-Signed @($shippedList.FullName)
+        Assert-ListMatches $shippedList.Directory.FullName
         $outputs[$runtime] = $releases
     }
 
