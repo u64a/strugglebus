@@ -26,9 +26,10 @@ A copy run from the Portable ZIP or from a development build does not self-updat
 The enrollment and operator grant live in `%LOCALAPPDATA%\StruggleBusMonitor` and are not touched by
 installing, updating or uninstalling. Theme and window preferences are in `settings.json` beside them.
 
-Updates are not code-signed yet. The app trusts whatever is published to that releases repository,
-so the `STRUGGLEAPP_PRIVACY_TOKEN` secret and write access to that repository decide what runs on
-every PC.
+From 1.7.2 the Setup program and the app are code-signed. Windows shows the publisher as
+"Open Source Developer Christopher Cunningham". The updater does not check that signature yet: it
+trusts whatever is published to that releases repository, so write access to that repository still
+decides what runs on every PC.
 
 ## Build
 
@@ -41,22 +42,31 @@ The executable is produced under `windows\StruggleBusMonitor\bin\Debug\net10.0-w
 
 ## Public releases
 
-Pushing a semantic version tag such as `v1.2.0` runs `.github\workflows\windows-release.yml`.
-The workflow tests the app, publishes self-contained `win-x64` and `win-arm64` builds, packs each
-with [Velopack](https://velopack.io) (`vpk`), and uploads the Setup program, the Portable ZIP and
-the update packages to the matching GitHub Release in the public
-[`NZCypher819/StruggleApp-Privacy`](https://github.com/NZCypher819/StruggleApp-Privacy/releases)
-repository. Each runtime is its own update channel, so an x64 install only ever receives x64 builds.
+A release is made in two halves, because the code-signing key lives in the certificate authority's
+cloud and only works on a PC where the owner is logged in to it. GitHub's runners cannot sign.
 
-Configure the source repository Actions secret `STRUGGLEAPP_PRIVACY_TOKEN` before creating a release
-tag. It must contain a fine-grained GitHub personal access token scoped to
-`NZCypher819/StruggleApp-Privacy` with **Contents: Read and write** permission. The normal
-`GITHUB_TOKEN` cannot publish to another repository.
+1. **GitHub builds.** Pushing a tag such as `windows/v1.7.2` runs
+   `.github\workflows\windows-release.yml`. It tests the app, builds self-contained `win-x64` and
+   `win-arm64` copies, unsigned, and keeps them as artifacts of that run. It publishes nothing and
+   holds no secrets.
+2. **The signing PC signs and publishes.** With SimplySign Desktop logged in, run
+   `app\windows\release-signed.ps1`. It checks the tag is a commit on `main` and that its run
+   passed, downloads that build, signs the app and the Setup program, packs each runtime with
+   [Velopack](https://velopack.io) (`vpk`), checks every signature, and uploads to the matching
+   release in the public
+   [`NZCypher819/StruggleApp-Privacy`](https://github.com/NZCypher819/StruggleApp-Privacy/releases)
+   repository. It asks before it uploads.
+
+Each runtime is its own update channel, so an x64 install only ever receives x64 builds.
 
 ```powershell
-git tag v1.2.0
-git push origin v1.2.0
+git tag windows/v1.7.2
+git push origin windows/v1.7.2
+pwsh app\windows\release-signed.ps1 -Version 1.7.2
 ```
+
+Publishing uses the GitHub login that `gh` already holds, which needs write access to the releases
+repository. To try the signing step without publishing, add `-SkipUpload`.
 
 ## Development against the mock server
 
@@ -75,4 +85,4 @@ When a running Release executable locks the normal output directory, add `--arti
 
 The MVP uses the existing bearer-grant API. Windows Hello authorizes the action immediately before the grant is used, while DPAPI protects the grant at rest for the current Windows user. The operator password is not persisted. A future StruggleBus challenge-signing API can replace the bearer grant without changing the UI or action workflow.
 
-Releases are packaged but not code-signed. Test against the mock server and a quiet development bus before attempting any containment action.
+Test against the mock server and a quiet development bus before attempting any containment action.
