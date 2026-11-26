@@ -97,9 +97,22 @@ that cannot reach the bus shows as not alive, which is correct from the App's si
 neither one's logic:
 - **`bootstrap.ps1`:** a fixed file from a release of this repository, shipped in the App's own package. The App
   never edits it.
-  - **Once releases are Authenticode-signed** (the project's code-signing certificate), the App shows the expected publisher.
-    The operator checks it with `Get-AuthenticodeSignature .\bootstrap.ps1` (Status `Valid`, that publisher) before
-    running it.
+  - **Once releases are Authenticode-signed** (the project's code-signing certificate), the App ships a signed copy
+    and shows the expected certificate **thumbprint**, not only the name (a name can be shared, a thumbprint
+    cannot). The operator checks it before running it:
+    `$s = Get-AuthenticodeSignature .\bootstrap.ps1; $s.Status; $s.SignerCertificate.Thumbprint; [bool]$s.TimeStamperCertificate`
+    The expected result is `Valid`, the thumbprint the App shows, and `True`.
+  - **How a copy is signed** (`tools/sign-bootstrap.ps1`, run on the owner's PC with the certificate):
+    - The repository keeps bootstrap.ps1 unsigned. Its SHA-256 is `bootstrap_sha256` in the signed `release.toml`,
+      and the certificates allowed to sign it are that release's `authenticode_thumbprints` (current, and the next
+      before a renewal).
+    - `-Sign` verifies the release's signature first, and it must be by one of the project release keys **pinned
+      in the script itself** (the owner's YubiKeys, by fingerprint). An `allowed_signers` file an agent could edit
+      is never enough. It also **refuses** unless the file is exactly the one that release approved. Then it signs
+      a copy, with an RFC 3161 timestamp.
+    - The check (with or without `-Sign`) passes a signed copy only as: the released bytes, then exactly one
+      signature block, `Valid`, a thumbprint the release names, and timestamped. Signing only appends, so nothing
+      before the block can change.
   - **Until then,** the App shows the file's full SHA-256 and the exact command
     `Get-FileHash -Algorithm SHA256 .\bootstrap.ps1`, to run **on the target PC, before running the script**.
     `Get-FileHash` is built into Windows, so it can be trusted there.

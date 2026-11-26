@@ -37,12 +37,23 @@ def git(*args: str, check: bool = True) -> str:
     return r.stdout.strip()
 
 
+# The Authenticode certificates allowed to sign bootstrap.ps1 for a release (tools/sign-bootstrap.ps1): their
+# thumbprints, current and, once known, the next, so a renewed certificate arrives through a signed release rather
+# than a code change. The project's Certum open-source code-signing certificate, valid to 26 Nov 2027.
+AUTHENTICODE_THUMBPRINTS = ("3FF059FA28ED74ACB229CBA2E670CEA565015238",)
+
+
 def release_text(serial: int, version: str, commit: str, tree: str, needs_install: bool, notes: str,
-                 bootstrap: str = "", moved_to: tuple[str, str] | None = None) -> str:
+                 bootstrap: str = "", moved_to: tuple[str, str] | None = None,
+                 thumbprints: tuple[str, ...] = AUTHENTICODE_THUMBPRINTS) -> str:
     notes = re.sub(r"[\x00-\x1f\"\\]", " ", notes).strip()[:300]
     # bootstrap_sha256: tools/bootstrap.ps1 at this commit, so the App can pin the file it ships against a signed
     # value (docs/app-host-integration.md 2.1). Hosts ignore it (parse_release reads only the keys it knows).
     extra = (f'bootstrap_sha256 = "{bootstrap}"\n' if bootstrap else "")
+    if bootstrap and thumbprints:
+        # authenticode_thumbprints: who may Authenticode-sign that bootstrap.ps1 (tools/sign-bootstrap.ps1 checks it
+        # before and after signing). Signed with the rest, so a new certificate needs a signed release. Hosts ignore it.
+        extra += "authenticode_thumbprints = [" + ", ".join(f'"{t}"' for t in thumbprints) + "]\n"
     if moved_to:
         # The signed redirect: hosts that install this release read later
         # releases from here. A TOML table, so it comes after every top-level key.
