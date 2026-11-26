@@ -93,9 +93,9 @@ public partial class MainWindow
         var code = await MintHostCodeAsync(prefix, form.Reason);
         var data = AddHostLogic.Data(form, session, code.Code ?? string.Empty, now);
         var file = await WriteHostFileAsync(path, data);
-        var bootstrap = await WriteBootstrapBesideAsync(path);
+        var installer = await WriteInstallerBesideAsync(path);
         RememberSiteSettings(form);
-        HostResult.Text = AddHostLogic.ResultText(Path.GetFileName(path), data, file, bootstrap, code.ExpiresAt, now);
+        HostResult.Text = AddHostLogic.ResultText(Path.GetFileName(path), data, file, installer, code.ExpiresAt, now);
         HostResultPanel.Visibility = Visibility.Visible;
         HostName.Clear();
         HostReason.Clear();
@@ -110,12 +110,15 @@ public partial class MainWindow
         return file;
     }
 
-    /// <summary>Saves the installer next to the data file, unchanged, so the two travel together.</summary>
-    private static async Task<byte[]> WriteBootstrapBesideAsync(string dataFilePath)
+    /// <summary>
+    /// Saves the installer next to the data file, unchanged, so the two travel together: the
+    /// signed copy that came with the app when it passes its check, the built-in one otherwise.
+    /// </summary>
+    private async Task<HostInstaller> WriteInstallerBesideAsync(string dataFilePath)
     {
-        var bootstrap = AddHostLogic.Bootstrap();
-        await File.WriteAllBytesAsync(Path.Combine(Path.GetDirectoryName(dataFilePath)!, AddHostLogic.BootstrapFileName), bootstrap);
-        return bootstrap;
+        var installer = HostInstallerLogic.Pick(AddHostLogic.Bootstrap(), _platform.SignedInstallerPath, Authenticode.Read);
+        await File.WriteAllBytesAsync(Path.Combine(Path.GetDirectoryName(dataFilePath)!, AddHostLogic.BootstrapFileName), installer.Bytes);
+        return installer;
     }
 
     private void RememberSiteSettings(AddHostForm form)

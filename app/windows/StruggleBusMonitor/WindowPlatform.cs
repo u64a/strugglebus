@@ -21,6 +21,9 @@ internal interface IWindowPlatform
 
     /// <summary>Asks where to save a worker host's enrolment data file. Null when the operator cancels.</summary>
     string? PickHostFilePath(Window owner, string suggestedName);
+
+    /// <summary>Where a release puts the signed copy of the worker host's installer: beside the app.</summary>
+    string SignedInstallerPath { get; }
     void SetClipboardText(string text);
     Task<bool> VerifyHelloAsync(string message);
     Task Delay(TimeSpan time);
@@ -65,6 +68,8 @@ internal sealed class WindowPlatform : IWindowPlatform
         var dialog = ExportDialog(suggestedName);
         return dialog.ShowDialog(owner) == true ? dialog.FileName : null;
     }
+
+    public string SignedInstallerPath => HostInstallerLogic.SignedPath;
 
     public string? PickHostFilePath(Window owner, string suggestedName)
     {

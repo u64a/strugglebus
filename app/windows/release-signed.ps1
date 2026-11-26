@@ -26,7 +26,10 @@ param(
     # Use builds already on disk (folders publish-win-x64 and publish-win-arm64)
     # instead of downloading the tag's build. Only allowed with -SkipUpload.
     [string]$ArtifactsDir,
-    [string[]]$Runtimes = @('win-x64', 'win-arm64')
+    [string[]]$Runtimes = @('win-x64', 'win-arm64'),
+    # A checkout of the worker host's signed release: release.toml, its .sig and
+    # keys\allowed_signers. The installer is signed only if that release names it.
+    [string]$HostRelease = 'C:\repos\strugglebus-worker-host'
 )
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
@@ -35,6 +38,8 @@ $SourceRepository = 'u64a/strugglebus'
 $DestinationRepository = 'NZCypher819/StruggleApp-Privacy'
 $Workflow = 'windows-release.yml'
 $PackId = 'NZCypher819.StruggleBusMonitor'
+$RepositoryRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..')).Path
+$SignInstallerTool = Join-Path $RepositoryRoot 'worker-host\tools\sign-bootstrap.ps1'
 $VpkVersion = '1.2.161'
 $TimestampServer = 'http://time.certum.pl'
 # The certificates allowed to sign a release, by thumbprint. A name is not
@@ -90,6 +95,7 @@ function Get-TagBuild {
     if ($position -notin @('identical', 'behind')) {
         throw "Tag $Tag ($commit) is not a commit on main (GitHub says '$position'). Refusing to release it."
     }
+    Assert-CheckoutIsTheTag $commit
     $runs = Invoke-Capture gh @('run', 'list', '-R', $SourceRepository, '--workflow', $Workflow, '--commit', $commit,
         '--json', 'databaseId,headBranch,status,conclusion') | ConvertFrom-Json
     $run = @($runs | Where-Object { $_.headBranch -eq $Tag }) | Select-Object -First 1
@@ -103,6 +109,42 @@ function Get-TagBuild {
     }
     Invoke-Checked gh @('run', 'download', "$($run.databaseId)", '-R', $SourceRepository, '-D', $Into)
     Write-Host "Using the build from run $($run.databaseId), commit $commit."
+}
+
+function Assert-CheckoutIsTheTag {
+    # This script, and the installer-signing tool it calls (which holds the
+    # pinned release keys), run from the checkout on this PC. They are only the
+    # reviewed ones if the checkout is exactly the tagged commit with nothing
+    # changed. The same goes for the installer that gets signed, which the app
+    # built from that commit has inside it.
+    param([string]$Commit)
+    $head = Invoke-Capture git @('-C', $RepositoryRoot, 'rev-parse', 'HEAD')
+    $changes = Invoke-Capture git @('-C', $RepositoryRoot, 'status', '--porcelain')
+    if ($head -ne $Commit) { throw "This checkout is at $head, but the tag is $Commit. Check out the tag first, so the scripts that run are the reviewed ones." }
+    if ($changes) { throw "This checkout has changes that are not in the tag:`n$changes`nRemove them first, so the scripts that run are the reviewed ones." }
+    Write-Host "This checkout is the tagged commit, unchanged."
+}
+
+function Get-SignedInstaller {
+    # The worker host's installer (bootstrap.ps1), signed, for Add a host to
+    # hand over. The app has the unsigned file built in and uses a signed copy
+    # only if it is exactly that file plus one signature block. This checkout
+    # is the commit the app was built from (see Assert-CheckoutIsTheTag), so
+    # the file here is that file.
+    #
+    # worker-host/tools/sign-bootstrap.ps1 does the signing. It refuses unless
+    # the file's hash is the one in a worker host release that verifies with the
+    # project's release keys, so only an installer that release approved is
+    # ever signed, and it checks the signed copy afterwards.
+    param([string]$Into)
+    $unsigned = Join-Path $RepositoryRoot 'worker-host\tools\bootstrap.ps1'
+    $signed = Join-Path $Into 'bootstrap.ps1'
+    Invoke-Checked pwsh (@('-NoProfile', '-File', $SignInstallerTool) + (Get-HostReleaseArguments) + @('-Bootstrap', $unsigned, '-Out', $signed, '-Sign'))
+    return $signed
+}
+
+function Get-HostReleaseArguments {
+    return @('-Release', (Join-Path $HostRelease 'release.toml'), '-Signers', (Join-Path $HostRelease 'keys\allowed_signers'))
 }
 
 function Assert-Signed {
@@ -231,6 +273,7 @@ try {
         $builds = Join-Path $work 'builds'
         Get-TagBuild -Tag $tag -Into $builds
     }
+    $installer = Get-SignedInstaller -Into $work
 
     $signParams = "/fd SHA256 /td SHA256 /tr $TimestampServer /sha1 $($certificate.Thumbprint)"
     $outputs = @{}
@@ -244,6 +287,8 @@ try {
         & $vpk download github --repoUrl "https://github.com/$DestinationRepository" --channel $runtime --outputDir $releases | Out-Host
         if ($LASTEXITCODE -ne 0) { Write-Warning "No previous $runtime release was downloaded; this one will have no small update package." }
 
+        # Beside the app, and so on the signed list of files below.
+        Copy-Item -LiteralPath $installer -Destination (Join-Path $build 'bootstrap.ps1') -Force
         New-SignedFileList -Build $build -Version $Version -Certificate $certificate
 
         Invoke-Checked $vpk @('pack',
@@ -270,6 +315,10 @@ try {
         if (-not $shippedList) { throw "The signed list of files is missing from the $runtime package." }
         Assert-Signed @($shippedList.FullName)
         Assert-ListMatches $shippedList.Directory.FullName
+        # The installer as a user gets it, checked again by the worker host's own tool.
+        $shipped = Get-ChildItem -Path $unpacked -Recurse -Filter 'bootstrap.ps1' | Select-Object -First 1
+        if (-not $shipped) { throw "The signed installer is missing from the $runtime package." }
+        Invoke-Checked pwsh (@('-NoProfile', '-File', $SignInstallerTool) + (Get-HostReleaseArguments) + @('-Out', $shipped.FullName))
         $outputs[$runtime] = $releases
     }
 
