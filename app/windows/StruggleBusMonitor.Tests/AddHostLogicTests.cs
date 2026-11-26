@@ -106,7 +106,7 @@ public class AddHostLogicTests
         var file = HostEnrolFile.Render(data);
 
         var bootstrap = AddHostLogic.Bootstrap();
-        var text = AddHostLogic.ResultText("sbhost-enrol.json", data, file, bootstrap, Now.AddMinutes(15), Now);
+        var text = AddHostLogic.ResultText("sbhost-enrol.json", data, file, new HostInstaller(bootstrap), Now.AddMinutes(15), Now);
 
         Assert.StartsWith("Saved sbhost-enrol.json and bootstrap.ps1 for host-office1. Move both to the new PC.", text);
         Assert.Contains(@"Get-FileHash -Algorithm SHA256 .\bootstrap.ps1", text);
@@ -118,5 +118,34 @@ public class AddHostLogicTests
         Assert.Contains("works once", text);
         Assert.DoesNotContain(AddHostLogic.PlaceholderCode, text);
         Assert.Equal("Create a one-time code for worker host host-office1", AddHostLogic.HelloPrompt("host-office1"));
+    }
+
+    [Fact]
+    public void AFailedInstallerCheckIsTheFirstThingTheResultSays()
+    {
+        var data = AddHostLogic.Data(Form(), Bus, AddHostLogic.PlaceholderCode, Now);
+        var file = HostEnrolFile.Render(data);
+        var installer = new HostInstaller(AddHostLogic.Bootstrap(), Warning: HostInstallerLogic.FailedCheck);
+
+        var text = AddHostLogic.ResultText("sbhost-enrol.json", data, file, installer, Now.AddMinutes(15), Now);
+
+        Assert.StartsWith(HostInstallerLogic.FailedCheck, text);
+        Assert.Contains("Saved sbhost-enrol.json and bootstrap.ps1", text);
+        // The unsigned installer was saved, so its hash is what to check.
+        Assert.Contains(HostEnrolFile.Sha256(installer.Bytes), text);
+    }
+
+    [Fact]
+    public void ASignedInstallerIsCheckedByItsSignatureNotItsHash()
+    {
+        var data = AddHostLogic.Data(Form(), Bus, AddHostLogic.PlaceholderCode, Now);
+        var installer = new HostInstaller(AddHostLogic.Bootstrap(), "3FF059FA28ED74ACB229CBA2E670CEA565015238");
+
+        var text = AddHostLogic.ResultText("sbhost-enrol.json", data, HostEnrolFile.Render(data), installer, Now.AddMinutes(15), Now);
+
+        Assert.StartsWith("Saved sbhost-enrol.json and bootstrap.ps1", text);
+        Assert.Contains("Get-AuthenticodeSignature", text);
+        Assert.Contains("3FF059FA28ED74ACB229CBA2E670CEA565015238", text);
+        Assert.DoesNotContain("Get-FileHash", text);
     }
 }

@@ -26,7 +26,10 @@ param(
     # Use builds already on disk (folders publish-win-x64 and publish-win-arm64)
     # instead of downloading the tag's build. Only allowed with -SkipUpload.
     [string]$ArtifactsDir,
-    [string[]]$Runtimes = @('win-x64', 'win-arm64')
+    [string[]]$Runtimes = @('win-x64', 'win-arm64'),
+    # A checkout of the worker host's signed release: release.toml, its .sig and
+    # keys\allowed_signers. The installer is signed only if that release names it.
+    [string]$HostRelease = 'C:\repos\strugglebus-worker-host'
 )
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
@@ -35,6 +38,7 @@ $SourceRepository = 'u64a/strugglebus'
 $DestinationRepository = 'NZCypher819/StruggleApp-Privacy'
 $Workflow = 'windows-release.yml'
 $PackId = 'NZCypher819.StruggleBusMonitor'
+$SignInstallerTool = Join-Path $PSScriptRoot '..\..\worker-host\tools\sign-bootstrap.ps1'
 $VpkVersion = '1.2.161'
 $TimestampServer = 'http://time.certum.pl'
 # The certificates allowed to sign a release, by thumbprint. A name is not
@@ -103,6 +107,35 @@ function Get-TagBuild {
     }
     Invoke-Checked gh @('run', 'download', "$($run.databaseId)", '-R', $SourceRepository, '-D', $Into)
     Write-Host "Using the build from run $($run.databaseId), commit $commit."
+    return $commit
+}
+
+function Get-SignedInstaller {
+    # The worker host's installer (bootstrap.ps1), signed, for Add a host to
+    # hand over. The app has the unsigned file built in and uses a signed copy
+    # only if it is exactly that file plus one signature block, so the copy
+    # signed here must come from the same commit the app was built from.
+    #
+    # worker-host/tools/sign-bootstrap.ps1 does the signing. It refuses unless
+    # the file's hash is the one in a worker host release that verifies with the
+    # project's release keys, so only an installer that release approved is
+    # ever signed, and it checks the signed copy afterwards.
+    param([string]$Commit, [string]$Into)
+    $unsigned = Join-Path $Into 'bootstrap-unsigned.ps1'
+    if ($Commit) {
+        $content = Invoke-Capture gh @('api', "repos/$SourceRepository/contents/worker-host/tools/bootstrap.ps1?ref=$Commit", '--jq', '.content')
+        [IO.File]::WriteAllBytes($unsigned, [Convert]::FromBase64String($content))
+    }
+    else {
+        Copy-Item -LiteralPath (Join-Path $PSScriptRoot '..\..\worker-host\tools\bootstrap.ps1') -Destination $unsigned
+    }
+    $signed = Join-Path $Into 'bootstrap.ps1'
+    Invoke-Checked pwsh (@('-NoProfile', '-File', $SignInstallerTool) + (Get-HostReleaseArguments) + @('-Bootstrap', $unsigned, '-Out', $signed, '-Sign'))
+    return $signed
+}
+
+function Get-HostReleaseArguments {
+    return @('-Release', (Join-Path $HostRelease 'release.toml'), '-Signers', (Join-Path $HostRelease 'keys\allowed_signers'))
 }
 
 function Assert-Signed {
@@ -227,10 +260,12 @@ Write-Host "Working in: $work"
 
 try {
     $builds = $ArtifactsDir
+    $commit = $null
     if (-not $builds) {
         $builds = Join-Path $work 'builds'
-        Get-TagBuild -Tag $tag -Into $builds
+        $commit = Get-TagBuild -Tag $tag -Into $builds
     }
+    $installer = Get-SignedInstaller -Commit $commit -Into $work
 
     $signParams = "/fd SHA256 /td SHA256 /tr $TimestampServer /sha1 $($certificate.Thumbprint)"
     $outputs = @{}
@@ -244,6 +279,8 @@ try {
         & $vpk download github --repoUrl "https://github.com/$DestinationRepository" --channel $runtime --outputDir $releases | Out-Host
         if ($LASTEXITCODE -ne 0) { Write-Warning "No previous $runtime release was downloaded; this one will have no small update package." }
 
+        # Beside the app, and so on the signed list of files below.
+        Copy-Item -LiteralPath $installer -Destination (Join-Path $build 'bootstrap.ps1') -Force
         New-SignedFileList -Build $build -Version $Version -Certificate $certificate
 
         Invoke-Checked $vpk @('pack',
@@ -270,6 +307,10 @@ try {
         if (-not $shippedList) { throw "The signed list of files is missing from the $runtime package." }
         Assert-Signed @($shippedList.FullName)
         Assert-ListMatches $shippedList.Directory.FullName
+        # The installer as a user gets it, checked again by the worker host's own tool.
+        $shipped = Get-ChildItem -Path $unpacked -Recurse -Filter 'bootstrap.ps1' | Select-Object -First 1
+        if (-not $shipped) { throw "The signed installer is missing from the $runtime package." }
+        Invoke-Checked pwsh (@('-NoProfile', '-File', $SignInstallerTool) + (Get-HostReleaseArguments) + @('-Out', $shipped.FullName))
         $outputs[$runtime] = $releases
     }
 

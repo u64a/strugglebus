@@ -105,21 +105,39 @@ internal static class AddHostLogic
         return copy.ToArray();
     }
 
+    /// <summary>
+    /// How to check the installer on the new PC before running it. A signed installer is checked
+    /// by its signature and the certificate's thumbprint (a name can be shared, a thumbprint
+    /// cannot); an unsigned one by its hash.
+    /// </summary>
+    internal static IReadOnlyList<string> InstallerCheck(HostInstaller installer) => installer.Signed
+        ?
+        [
+            $@"1. On the new PC, check the installer before running it:  $s = Get-AuthenticodeSignature .\{BootstrapFileName}; $s.Status -eq 'Valid' -and $s.SignerCertificate.Thumbprint -eq '{installer.Thumbprint}'",
+            "   It must print:   True"
+        ]
+        :
+        [
+            $@"1. On the new PC, check the installer before running it:  Get-FileHash -Algorithm SHA256 .\{BootstrapFileName}",
+            $"   It must print:   {HostEnrolFile.Sha256(installer.Bytes)}"
+        ];
+
     /// <summary>What the operator checks on the new PC, in the order they do it.</summary>
-    public static string ResultText(string fileName, HostEnrolData data, byte[] file, byte[] bootstrap, DateTimeOffset expiresAt, DateTimeOffset now)
+    public static string ResultText(string fileName, HostEnrolData data, byte[] file, HostInstaller installer, DateTimeOffset expiresAt, DateTimeOffset now)
     {
-        var lines = new List<string>
-        {
+        var lines = new List<string>();
+        if (installer.Warning is not null) lines.AddRange([installer.Warning, string.Empty]);
+        lines.AddRange(
+        [
             $"Saved {fileName} and {BootstrapFileName} for {data.HostPrefix}. Move both to the new PC.",
             string.Empty,
-            $@"1. On the new PC, check the installer before running it:  Get-FileHash -Algorithm SHA256 .\{BootstrapFileName}",
-            $"   It must print:   {HostEnrolFile.Sha256(bootstrap)}",
+            .. InstallerCheck(installer),
             string.Empty,
             $@"2. Run it as an administrator:  powershell -ExecutionPolicy Bypass -File .\{BootstrapFileName} -DataFile .\{HostEnrolFile.FileName}",
             string.Empty,
             "3. Before it does anything, the installer prints these. Check they match, then press Enter there:",
             $"   Data file digest:  {HostEnrolFile.Digest(file)}"
-        };
+        ]);
         lines.AddRange(data.Signers.Select(signer => $"   Signer:            {HostEnrolFile.SignerFingerprint(signer)}"));
         lines.Add(string.Empty);
         lines.Add($"The data file holds a one-time code that works once and expires {FeedLogic.TimeLabel(expiresAt, now)}. Move it privately. The installer blanks the code once it has been used.");

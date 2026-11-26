@@ -49,6 +49,9 @@ internal sealed class StaWindowAdminPlatform : IWindowPlatform
     }
 
     public string? HostFilePath { get; set; }
+
+    /// <summary>No signed installer unless a test puts one here.</summary>
+    public string SignedInstallerPath { get; set; } = Path.Combine(Path.GetTempPath(), $"no-signed-installer-{Guid.NewGuid():N}.ps1");
     public List<string> SuggestedHostFileNames { get; } = [];
 
     public string? PickHostFilePath(Window owner, string suggestedName)
