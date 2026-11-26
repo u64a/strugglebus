@@ -37,8 +37,13 @@ $Workflow = 'windows-release.yml'
 $PackId = 'NZCypher819.StruggleBusMonitor'
 $VpkVersion = '1.2.161'
 $TimestampServer = 'http://time.certum.pl'
-# The publisher the certificate was issued to. A certificate with any other
-# name is refused, so a stray certificate in the store can never sign a release.
+# The certificates allowed to sign a release, by thumbprint. A name is not
+# enough: someone else with the same name could hold their own certificate.
+# When the certificate is renewed, add the new thumbprint here before the old
+# one expires. The publisher name is checked as well.
+$Thumbprints = @(
+    '3FF059FA28ED74ACB229CBA2E670CEA565015238'   # valid to 26 Nov 2027
+)
 $Publisher = 'CN=Open Source Developer Christopher Cunningham, O=Open Source Developer, L=Shell Cove, S=New South Wales, C=AU'
 
 function Invoke-Checked {
@@ -58,11 +63,11 @@ function Invoke-Capture {
 
 function Get-SigningCertificate {
     $found = @(Get-ChildItem Cert:\CurrentUser\My -CodeSigningCert |
-        Where-Object { $_.Subject -eq $Publisher -and $_.HasPrivateKey -and $_.NotAfter -gt (Get-Date) })
+        Where-Object { $_.Thumbprint -in $Thumbprints -and $_.Subject -eq $Publisher -and $_.HasPrivateKey -and $_.NotAfter -gt (Get-Date) })
     if ($found.Count -eq 0) {
         throw "The signing certificate is not available. Log in to SimplySign Desktop with a one-time code from your phone, then run this again."
     }
-    if ($found.Count -gt 1) { throw "More than one valid certificate for '$Publisher' is in the store. Remove the old one first." }
+    if ($found.Count -gt 1) { throw "More than one allowed signing certificate is in the store. Remove the old one first." }
     return $found[0]
 }
 
@@ -102,12 +107,12 @@ function Get-TagBuild {
 
 function Assert-Signed {
     # Every installer and the app itself must carry a valid, timestamped
-    # signature from the expected publisher before anything is uploaded.
+    # signature from an allowed certificate before anything is uploaded.
     param([string[]]$Files)
     foreach ($file in $Files) {
         $signature = Get-AuthenticodeSignature -LiteralPath $file
-        $signer = if ($signature.SignerCertificate) { $signature.SignerCertificate.Subject } else { '(none)' }
-        if ($signature.Status -ne 'Valid' -or $signer -ne $Publisher -or -not $signature.TimeStamperCertificate) {
+        $signer = if ($signature.SignerCertificate) { $signature.SignerCertificate.Thumbprint } else { '(none)' }
+        if ($signature.Status -ne 'Valid' -or $signer -notin $Thumbprints -or -not $signature.TimeStamperCertificate) {
             throw "'$file' is not correctly signed: status $($signature.Status), signer $signer."
         }
         Write-Host "signed: $(Split-Path $file -Leaf)"
