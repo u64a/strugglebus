@@ -1,8 +1,11 @@
 name: Windows release
 
-# Builds StruggleBus Monitor and publishes it to the releases repository the
-# installed app checks for updates. Runs only when a tag named windows/vX.Y.Z
-# is pushed, which needs write access to this repository.
+# Tests and builds StruggleBus Monitor for a release. Runs only when a tag
+# named windows/vX.Y.Z is pushed, which needs write access to this repository.
+#
+# It publishes nothing and holds no secrets. The code-signing key only works
+# on the owner's PC, so app/windows/release-signed.ps1, run there, downloads
+# the builds this workflow keeps, signs them and publishes the release.
 on:
   push:
     tags:
@@ -18,10 +21,6 @@ concurrency:
 env:
   PROJECT_PATH: app\windows\StruggleBusMonitor\StruggleBusMonitor.csproj
   TEST_PROJECT_PATH: app\windows\StruggleBusMonitor.Tests\StruggleBusMonitor.Tests.csproj
-  ICON_PATH: app\windows\StruggleBusMonitor\icon.ico
-  DESTINATION_REPOSITORY: NZCypher819/StruggleApp-Privacy
-  PACK_ID: NZCypher819.StruggleBusMonitor
-  VPK_VERSION: 1.2.161
 
 jobs:
   test:
@@ -43,15 +42,13 @@ jobs:
         shell: pwsh
         run: dotnet test $env:TEST_PROJECT_PATH -c Release
 
-  release:
-    name: Package and publish ${{ matrix.runtime }}
+  build:
+    name: Build ${{ matrix.runtime }}
     needs: test
     runs-on: windows-latest
     timeout-minutes: 30
     strategy:
-      fail-fast: false
-      # Both runtimes upload into the same GitHub release, so they must not race to create it.
-      max-parallel: 1
+      fail-fast: true
       matrix:
         runtime: [win-x64, win-arm64]
 
@@ -79,14 +76,7 @@ jobs:
           }
           "value=$($Matches[1])" >> $env:GITHUB_OUTPUT
 
-      - name: Check publish token
-        shell: pwsh
-        env:
-          GH_TOKEN: ${{ secrets.STRUGGLEAPP_PRIVACY_TOKEN }}
-        run: |
-          if (-not $env:GH_TOKEN) { throw 'The STRUGGLEAPP_PRIVACY_TOKEN Actions secret is not configured.' }
-
-      - name: Publish ${{ matrix.runtime }} build
+      - name: Build ${{ matrix.runtime }}
         shell: pwsh
         run: |
           dotnet publish $env:PROJECT_PATH `
@@ -100,46 +90,11 @@ jobs:
             -p:Version=${{ steps.version.outputs.value }} `
             -o .\publish
 
-      - name: Install Velopack CLI
-        shell: pwsh
-        run: dotnet tool install -g vpk --version $env:VPK_VERSION
-
-      # Fetching the previous release lets vpk build a small delta package. The first release on a
-      # channel has nothing to fetch, so a failure here is not fatal.
-      - name: Download previous release
-        shell: pwsh
-        continue-on-error: true
-        run: |
-          vpk download github `
-            --repoUrl "https://github.com/$env:DESTINATION_REPOSITORY" `
-            --channel ${{ matrix.runtime }} `
-            --outputDir .\Releases
-
-      - name: Pack installer and update packages
-        shell: pwsh
-        run: |
-          vpk pack `
-            --packId $env:PACK_ID `
-            --packVersion ${{ steps.version.outputs.value }} `
-            --packDir .\publish `
-            --runtime ${{ matrix.runtime }} `
-            --channel ${{ matrix.runtime }} `
-            --mainExe StruggleBusMonitor.exe `
-            --packTitle "StruggleBus Monitor" `
-            --icon $env:ICON_PATH `
-            --outputDir .\Releases
-
-      - name: Upload to public release
-        shell: pwsh
-        env:
-          GH_TOKEN: ${{ secrets.STRUGGLEAPP_PRIVACY_TOKEN }}
-        run: |
-          vpk upload github `
-            --repoUrl "https://github.com/$env:DESTINATION_REPOSITORY" `
-            --token $env:GH_TOKEN `
-            --channel ${{ matrix.runtime }} `
-            --outputDir .\Releases `
-            --tag v${{ steps.version.outputs.value }} `
-            --releaseName "StruggleBus Monitor v${{ steps.version.outputs.value }}" `
-            --publish `
-            --merge
+      # Unsigned. release-signed.ps1 downloads this by name, signs it and publishes.
+      - name: Keep the build for signing
+        uses: actions/upload-artifact@v4
+        with:
+          name: publish-${{ matrix.runtime }}
+          path: publish
+          if-no-files-found: error
+          retention-days: 14
