@@ -152,6 +152,8 @@ def test_the_bootstrap_hash_is_signed_in_and_hosts_still_accept_it(repo, capsys)
     assert make_release.main(["--dry-run"]) == 0
     out = capsys.readouterr().out
     assert f'bootstrap_sha256 = "{hashlib.sha256(body).hexdigest()}"' in out
+    # Who may Authenticode-sign that bootstrap (tools/sign-bootstrap.ps1), signed with the rest of the release.
+    assert 'authenticode_thumbprints = ["3FF059FA28ED74ACB229CBA2E670CEA565015238"]' in out
     assert released(out).serial == 1  # parse_release accepts it
 
 
