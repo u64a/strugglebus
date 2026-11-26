@@ -155,6 +155,9 @@ function New-HostTaskXml {
         $trigger = "<LogonTrigger><Enabled>true</Enabled><UserId>$user</UserId><Delay>PT1M</Delay></LogonTrigger>"
         $logonType = 'InteractiveToken'
     }
+    # RunOnlyIfNetworkAvailable is false on purpose: with true, Windows STOPS the host the moment the network drops
+    # (a Wi-Fi blip, a router reboot) and nothing starts it again until the next boot. The host itself rides out an
+    # unreachable bus and retries (seen on a laptop host, 26 Nov 2026: stopped by a 2-minute gateway reboot).
     return @"
 <?xml version="1.0" encoding="UTF-16"?>
 <Task version="1.4" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
@@ -174,7 +177,7 @@ function New-HostTaskXml {
     <DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>
     <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>
     <StartWhenAvailable>true</StartWhenAvailable>
-    <RunOnlyIfNetworkAvailable>true</RunOnlyIfNetworkAvailable>
+    <RunOnlyIfNetworkAvailable>false</RunOnlyIfNetworkAvailable>
     <ExecutionTimeLimit>PT0S</ExecutionTimeLimit>
     <RestartOnFailure><Interval>PT1M</Interval><Count>999</Count></RestartOnFailure>
     <Enabled>false</Enabled>

@@ -162,7 +162,8 @@ def common(root: ET.Element) -> None:
     assert text(root, s + "RestartOnFailure/t:Count") == "999"
     assert text(root, s + "ExecutionTimeLimit") == "PT0S"
     assert text(root, s + "MultipleInstancesPolicy") == "IgnoreNew"
-    assert text(root, s + "RunOnlyIfNetworkAvailable") == "true"
+    # Never true: Windows would stop the host on any network drop and not start it again until a reboot.
+    assert text(root, s + "RunOnlyIfNetworkAvailable") == "false"
     assert text(root, s + "DisallowStartIfOnBatteries") == "false"
     assert text(root, s + "Enabled") == "false"  # disabled until `wh start`
     assert text(root, "t:Principals/t:Principal/t:RunLevel") == "LeastPrivilege"
