@@ -62,22 +62,36 @@ public sealed class UpdateTrustTests : IDisposable
     private static readonly (string Name, byte[] Content) Config = ("StruggleBusMonitor.runtimeconfig.json", Text("""{"config":1}"""));
     private static readonly (string Name, byte[] Content) Culture = ("de/Resources.txt", Text("hallo"));
 
+    private static readonly string[] AddedByThePackagingTool = ["sq.version", "Squirrel.exe", "StruggleBus Monitor_ExecutionStub.exe", "signed-files.psd1"];
+
     /// <summary>A package as the release script makes one, which the changes below then spoil.</summary>
-    private static Dictionary<string, byte[]> Good() => new()
+    private static Dictionary<string, byte[]> Good() => Listed(new()
     {
         ["lib/app/StruggleBusMonitor.exe"] = Program("ours"),
         ["lib/app/StruggleBusMonitor.dll"] = Library("ours"),
         ["lib/app/Squirrel.exe"] = Program("ours"),
+        ["lib/app/StruggleBus Monitor_ExecutionStub.exe"] = Program("ours"),
         ["lib/app/coreclr.dll"] = Library("microsoft"),
         ["lib/app/" + Deps.Name] = Deps.Content,
         ["lib/app/" + Config.Name] = Config.Content,
         ["lib/app/" + Culture.Name] = Culture.Content,
         ["lib/app/sq.version"] = Text("1.7.3"),
-        ["lib/app/signed-files.psd1"] = Text(ListOf("1.7.3", Deps, Config, Culture)),
         ["lib/app/"] = [],
         ["NZCypher819.StruggleBusMonitor.nuspec"] = Text("<package/>"),
         ["[Content_Types].xml"] = Text("<Types/>")
-    };
+    });
+
+    /// <summary>Signs off the files as they are now: the list names every file beside the app, programs included.</summary>
+    private static Dictionary<string, byte[]> Listed(Dictionary<string, byte[]> files)
+    {
+        var beside = from file in files
+                     where file.Key.StartsWith("lib/app/", StringComparison.Ordinal) && file.Key.Length > "lib/app/".Length
+                     let name = file.Key["lib/app/".Length..]
+                     where !AddedByThePackagingTool.Contains(name)
+                     select (name, file.Value);
+        files["lib/app/signed-files.psd1"] = Text(ListOf("1.7.3", [.. beside]));
+        return files;
+    }
 
     /// <summary>The signer written after a program's header. A stub too short to hold one counts as Microsoft's.</summary>
     private static string Marker(byte[] program) =>
@@ -133,7 +147,7 @@ public sealed class UpdateTrustTests : IDisposable
     [Fact]
     public void MicrosoftsSignatureIsAcceptedOnALibraryButNotOnAProgramThatCanBeStarted()
     {
-        Assert.Null(Changed(files => files["lib/app/hostfxr.dll"] = Library("microsoft")));
+        Assert.Null(Changed(files => { files["lib/app/hostfxr.dll"] = Library("microsoft"); Listed(files); }));
         Assert.Equal($"{Refused}tool.exe in it is not signed by this app's publisher.", Changed(files => files["lib/app/tool.exe"] = Program("microsoft")));
         // Named like a library, but its own header says it is a program.
         Assert.Equal($"{Refused}tool.dll in it is not signed by this app's publisher.", Changed(files => files["lib/app/tool.dll"] = Program("microsoft")));
@@ -202,6 +216,37 @@ public sealed class UpdateTrustTests : IDisposable
             Changed(files => files.Remove("lib/app/StruggleBusMonitor.runtimeconfig.json")));
         // A line after the signature block is not part of what was signed.
         Assert.Equal($"{Refused}smuggled.json in it is not on the publisher's signed list.", Changed(files => files["lib/app/smuggled.json"] = Text("x")));
+    }
+
+    [Fact]
+    public void ALibraryCannotBeSwappedForAnotherThatMicrosoftAlsoSigned()
+    {
+        // An older build of the runtime with a known flaw is genuinely signed by Microsoft, so its
+        // signature passes. The list is what pins the file to the one the publisher shipped.
+        var older = Library("microsoft");
+        older[2] = 1; // one byte different, still signed
+
+        Assert.Equal($"{Refused}coreclr.dll in it is not what the publisher signed.", Changed(files => files["lib/app/coreclr.dll"] = older));
+        Assert.Equal($"{Refused}hostfxr.dll in it is not on the publisher's signed list.", Changed(files => files["lib/app/hostfxr.dll"] = Library("microsoft")));
+        Assert.Equal($"{Refused}coreclr.dll is missing from it.", Changed(files => files.Remove("lib/app/coreclr.dll")));
+    }
+
+    [Fact]
+    public void TheProjectsOwnProgramsArePinnedTooExceptTheTwoThePackagingToolAdds()
+    {
+        // An older StruggleBusMonitor.dll is genuinely signed by the project, but it is not this release's.
+        var older = Library("ours");
+        older[2] = 1; // one byte different, still signed
+
+        Assert.Equal($"{Refused}StruggleBusMonitor.dll in it is not what the publisher signed.", Changed(files => files["lib/app/StruggleBusMonitor.dll"] = older));
+        Assert.Equal($"{Refused}Extra.exe in it is not on the publisher's signed list.", Changed(files => files["lib/app/Extra.exe"] = Program("ours")));
+        // The updater and launcher are added after the list is made. They must still be the project's.
+        var newerUpdater = Program("ours");
+        newerUpdater[2] = 1;
+        Assert.Null(Changed(files => files["lib/app/Squirrel.exe"] = newerUpdater));
+        Assert.Equal($"{Refused}Squirrel.exe in it is not signed by this app's publisher.", Changed(files => files["lib/app/Squirrel.exe"] = Program("stranger")));
+        Assert.Equal($"{Refused}StruggleBus Monitor_ExecutionStub.exe in it is not signed by this app's publisher.",
+            Changed(files => files["lib/app/StruggleBus Monitor_ExecutionStub.exe"] = Program("microsoft")));
     }
 
     [Fact]

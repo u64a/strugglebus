@@ -30,12 +30,16 @@ internal sealed record FileReaders(Func<string, FileSignature> Signature, Func<s
 ///    that can be started.
 /// 2. The app in it must be newer than the one running, going by the version inside the app's
 ///    own signed file. An old release that was genuinely signed cannot be served again as new.
-/// 3. Every other file beside the app must match a list of hashes the publisher signed for that
-///    version. Those files are text, but some of them tell .NET which libraries to load.
+/// 3. Every file beside the app, programs included, must match a list of hashes the publisher
+///    signed for that version. That pins the package byte for byte: a text file that tells .NET
+///    which libraries to load cannot be edited, and a library cannot be swapped for an older
+///    one that Microsoft also signed.
 ///
-/// Limits, so nobody reads more into this than it gives: revocation is not checked online, and
-/// the package's own wrapping (its name and description files) is not covered, because nothing
-/// in it is loaded or run.
+/// Limits, so nobody reads more into this than it gives: revocation is not checked online. Two
+/// things are not on the list. The package's own wrapping (its name and description files) and
+/// the packaging tool's version file hold nothing that is loaded or run; at worst a change to
+/// them confuses the updater about versions. And the two helper programs the packaging tool
+/// adds after the list is made are covered by rule 1 alone.
 /// </summary>
 internal static class UpdateTrust
 {
@@ -55,8 +59,15 @@ internal static class UpdateTrust
     public const string MainProgram = "StruggleBusMonitor.exe";
     public const string FileList = "signed-files.psd1";
 
-    /// <summary>Written into the package by the packaging tool after signing; it holds only the version.</summary>
-    private const string PackagerVersionFile = "sq.version";
+    /// <summary>
+    /// What the packaging tool adds beside the app after the list is made, so the list cannot
+    /// name them: its version file, and its updater and launcher, which rule 1 still requires
+    /// to be signed by this project.
+    /// </summary>
+    private static readonly HashSet<string> AddedByPackager = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "sq.version", "Squirrel.exe", "StruggleBus Monitor_ExecutionStub.exe"
+    };
     private const string Microsoft = "Microsoft Corporation";
     private const string Refused = "The update was not installed: ";
 
@@ -116,13 +127,13 @@ internal static class UpdateTrust
     private static string? ContentsProblem(UpdatePackageFiles package, SignedFileList list, Version version)
     {
         if (list.Version != version) return $"{Refused}its signed list of files is for another version.";
-        var problem = list.Problem(package.OtherFiles.Where(IsOnTheList).ToList());
+        var problem = list.Problem(package.AppFiles.Where(IsOnTheList).ToList());
         return problem is null ? null : Refused + problem;
     }
 
-    /// <summary>Every file beside the app is on the list except the list itself and the packaging tool's version file.</summary>
+    /// <summary>Every file beside the app is on the list except the list itself and what the packaging tool adds.</summary>
     private static bool IsOnTheList((string Name, ZipArchiveEntry Entry) file) =>
-        file.Name != FileList && file.Name != PackagerVersionFile;
+        file.Name != FileList && !AddedByPackager.Contains(file.Name);
 
     private static Version? ThreeParts(Version? version) =>
         version is null ? null : new Version(version.Major, version.Minor, Math.Max(version.Build, 0));
@@ -142,10 +153,10 @@ internal sealed class UpdatePackageFiles(ZipArchive zip, string scratch)
     /// <summary>Every program file anywhere in the package.</summary>
     public IEnumerable<ZipArchiveEntry> Programs => zip.Entries.Where(ProgramFile.IsProgram);
 
-    /// <summary>The files beside the app that are not programs, with their path inside the app's folder.</summary>
-    public IEnumerable<(string Name, ZipArchiveEntry Entry)> OtherFiles =>
+    /// <summary>Every file beside the app, programs included, with its path inside the app's folder.</summary>
+    public IEnumerable<(string Name, ZipArchiveEntry Entry)> AppFiles =>
         from entry in zip.Entries
-        where entry.FullName.StartsWith(UpdateTrust.AppFolder, StringComparison.Ordinal) && entry.Name.Length > 0 && !ProgramFile.IsProgram(entry)
+        where entry.FullName.StartsWith(UpdateTrust.AppFolder, StringComparison.Ordinal) && entry.Name.Length > 0
         select (entry.FullName[UpdateTrust.AppFolder.Length..], entry);
 
     /// <summary>A file directly in the app's folder, by name.</summary>
@@ -195,8 +206,8 @@ internal static class ProgramFile
 }
 
 /// <summary>
-/// The publisher's list of the files that ship beside the app: one version and one SHA-256 per
-/// file. It travels as a PowerShell data file only because Windows can sign and check those;
+/// The publisher's list of the files that ship beside the app, programs included: one version
+/// and one SHA-256 per file. It travels as a PowerShell data file only because Windows can sign and check those;
 /// it is read as text and never run.
 /// </summary>
 internal sealed record SignedFileList(Version? Version, IReadOnlyDictionary<string, string> Hashes)
