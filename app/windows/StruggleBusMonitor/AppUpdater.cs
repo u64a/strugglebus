@@ -1,5 +1,7 @@
+using System.IO;
 using System.Reflection;
 using Velopack;
+using Velopack.Locators;
 using Velopack.Sources;
 
 namespace StruggleBusMonitor;
@@ -37,6 +39,15 @@ internal interface IUpdateEngine
     Task<UpdatePackage?> CheckAsync();
     Task DownloadAsync(UpdatePackage package, CancellationToken cancellationToken);
 
+    /// <summary>
+    /// Why the downloaded package must not be installed, or null when its files are signed by
+    /// this app's publisher. See <see cref="UpdateTrust"/>.
+    /// </summary>
+    string? Problem(UpdatePackage package);
+
+    /// <summary>Removes a downloaded package so that nothing installs it later.</summary>
+    void Discard(UpdatePackage package);
+
     /// <summary>Closes the app, installs the package and starts the new version.</summary>
     void ApplyAndRestart(UpdatePackage package);
 
@@ -55,6 +66,20 @@ internal sealed class VelopackEngine(UpdateManager manager) : IUpdateEngine
 
     public Task DownloadAsync(UpdatePackage package, CancellationToken cancellationToken) =>
         manager.DownloadUpdatesAsync(package.Source!, null, cancellationToken);
+
+    public string? Problem(UpdatePackage package) => PackageProblem(PackagePath(package), UpdateTrust.Problem);
+
+    public void Discard(UpdatePackage package)
+    {
+        if (PackagePath(package) is { } path) File.Delete(path);
+    }
+
+    private static string? PackagePath(UpdatePackage package) =>
+        VelopackLocator.Current.PackagesDir is { } folder ? Path.Combine(folder, package.Asset!.FileName) : null;
+
+    /// <summary>A package that cannot be found cannot be checked, so it is refused.</summary>
+    internal static string? PackageProblem(string? path, Func<string, string?> check) =>
+        path is not null && File.Exists(path) ? check(path) : "The update was not installed: its file could not be found to check its signature.";
 
     public void ApplyAndRestart(UpdatePackage package) => manager.ApplyUpdatesAndRestart(package.Asset!);
 
@@ -132,8 +157,37 @@ public sealed class AppUpdater
     /// <summary>The status when an update is already downloaded, by this run or an earlier one.</summary>
     private UpdateStatus? ReadyStatus(IUpdateEngine engine)
     {
-        _ready ??= engine.PendingRestart;
+        _ready ??= Accept(engine, engine.PendingRestart);
         return _ready is null ? null : new UpdateStatus(UpdateState.ReadyToRestart, _ready.Version);
+    }
+
+    /// <summary>
+    /// Lets a downloaded package through only if its signatures check out. One that fails is
+    /// removed, so that nothing installs it later, and the reason is reported as a failed update.
+    /// </summary>
+    private static UpdatePackage? Accept(IUpdateEngine engine, UpdatePackage? package)
+    {
+        if (package is null || engine.Problem(package) is not { } problem) return package;
+        engine.Discard(package);
+        throw new InvalidOperationException(problem);
+    }
+
+    /// <summary>
+    /// At startup, installs an update that an earlier run downloaded, after checking it. Each
+    /// version is tried this way once: <paramref name="lastAttempt"/> is the version tried before
+    /// and <paramref name="remember"/> records this one, so an install that keeps failing cannot
+    /// restart the app in a loop. It is still installed on exit or from Settings.
+    /// </summary>
+    public void ApplyPendingAtStartup(string? lastAttempt, Action<string> remember)
+    {
+        if (!CanUpdate) return;
+        try
+        {
+            if (Accept(_engine!, _engine!.PendingRestart) is not { } pending || pending.Version == lastAttempt) return;
+            remember(pending.Version);
+            _engine.ApplyAndRestart(pending);
+        }
+        catch (Exception) { /* The window reports it at the next check. */ }
     }
 
     private async Task<UpdateStatus> FindUpdateAsync(IUpdateEngine engine, IProgress<UpdateStatus>? progress, bool download, CancellationToken cancellationToken)
@@ -144,7 +198,7 @@ public sealed class AppUpdater
 
         progress?.Report(new UpdateStatus(UpdateState.Downloading, update.Version));
         await engine.DownloadAsync(update, cancellationToken);
-        _ready = update;
+        _ready = Accept(engine, update);
         return new UpdateStatus(UpdateState.ReadyToRestart, update.Version);
     }
 

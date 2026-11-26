@@ -42,6 +42,9 @@ public sealed class AppSettings
 
     public const int MaximumClearedWaiting = 500;
 
+    /// <summary>The update version last installed at startup, so one that fails is not retried in a loop.</summary>
+    public string? StartupUpdateAttempt { get; set; }
+
     /// <summary>
     /// The site's signer lines, repository locations and fleet source, as last used to add a
     /// worker host. Public values only: an allowed_signers line holds a public key.
