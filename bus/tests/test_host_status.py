@@ -159,6 +159,20 @@ def test_a_missing_top_level_field_is_refused() -> None:
     assert host_status.refusal(short, HOST) == "missing-field"
 
 
+@pytest.mark.parametrize("pwsh", ["7.5.4", None])
+def test_a_field_added_later_is_accepted_with_or_without_it_and_checked_when_sent(hosts, pwsh) -> None:
+    """A host and its bus are not updated at the same moment: neither order may break reporting."""
+    client, secret, grant, key, *_ = hosts
+
+    assert host_status.refusal(snapshot(), HOST) is None
+    assert report(client, key, pwsh=pwsh).status_code == 201
+
+    shown = client.get(HOSTS, headers=_auth(secret)).json()["hosts"][0]["snapshot"]
+    assert shown["pwsh"] == pwsh
+    assert host_status.refusal(snapshot(pwsh=7), HOST) == "bad-value:pwsh"
+    assert host_status.refusal(snapshot(pwsh="x" * 33), HOST) == "bad-value:pwsh"
+
+
 def test_fields_that_may_be_empty_are_accepted_empty() -> None:
     quiet = snapshot(
         update=None, last_command=None, problem=None, model=None, ghcp_ok=None, warnings=[],
