@@ -417,7 +417,9 @@ def test_step_11_shows_paths_at_the_console_only_and_gives_the_host_counts():
     text = SCRIPT.read_text(encoding="ascii")
     step = text.split("function Invoke-IsolationCheck")[1].split("function Remove-DataFileOffer")[0]
     assert "setup\\Get-WorkerIsolationHits.ps1" in step and "-Account $account -Exclude" in step
-    assert "exec_hits = $exec.Count" in step and "Path" not in step.split("$record")[1]
+    record = step.split("$record = ")[1].split("}")[0]
+    assert "exec_hits = $exec.Count" in record and "info_hits = $info.Count" in record
+    assert "$h" not in record and ".Path" not in record and ".Source" not in record  # counts only, never a path
 
 
 def test_still_ascii_and_lf_only():
