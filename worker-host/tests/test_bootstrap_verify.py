@@ -506,6 +506,27 @@ def test_the_winget_root_is_checked_before_any_reset():
     assert repair.index("Assert-WingetRootSafe") < repair.index("/reset")
 
 
+@pytest.mark.parametrize("shell", SHELLS)
+def test_the_installed_release_record_is_what_the_host_updates_from(shell, tmp_path):
+    from workerhost import update
+
+    rel = {"version": "2026.11.28", "serial": 11, "commit": "86cb1bd3e20178673fd835eca8367f0aa2c4bcd0",
+           "tree_sha256": "a" * 64}
+    items = "; ".join(f"{k} = '{v}'" for k, v in rel.items())
+    got = run(f"ConvertTo-Json @(Get-ReleaseRecordText @{{ {items} }})", shell)
+    app = tmp_path / "app"
+    app.mkdir()
+    (app / update.INSTALLED).write_text(got[0], encoding="utf-8")
+    inst = update.installed(app)  # the host's own reader
+    assert (inst["version"], inst["serial"], inst["commit"]) == ("2026.11.28", 11, rel["commit"])
+    assert inst["moved_to"] == ("https://github.com/u64a/strugglebus", "worker-host")
+
+
+def test_the_release_record_is_written_right_after_the_install():
+    main = SCRIPT.read_text(encoding="ascii").split("InvocationName -eq '.') { return }")[1]
+    assert main.index("Invoke-Install") < main.index("Write-ReleaseRecord $hostHome $verified.release") < main.index("Start-Host")
+
+
 def test_still_ascii_and_lf_only():
     raw = SCRIPT.read_bytes()
     assert max(raw) < 128 and b"\r" not in raw
