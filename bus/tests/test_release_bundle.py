@@ -265,11 +265,11 @@ def test_manifest_records_required_compatibility_without_private_data(
     manifest = json.loads(content)
 
     assert manifest["compatibility"]["database"] == {
-        "current_schema": 24,
+        "current_schema": 25,
         "downgrade_supported": False,
         "minimum_upgrade_schema": 1,
         "requires_verified_pre_migration_backup": True,
-        "rollback_previous_schema": 23,
+        "rollback_previous_schema": 24,
         "rollback_strategy": "restore-verified-backup-and-select-compatible-release",
     }
     assert manifest["protocol"] == {
@@ -333,7 +333,7 @@ def test_release_bundle_rejects_unexpected_asset(
         (("release", "source_commit"), "3" * 40, "source commit"),
         (("release", "source_tree"), "4" * 40, "source tree"),
         (("release", "tag"), "v0.2.1", "tag and package"),
-        (("compatibility", "database", "current_schema"), 25, "schema"),
+        (("compatibility", "database", "current_schema"), 26, "schema"),
         (("protocol", "coordination_protocol_version"), 2, "protocol"),
         (("protocol", "capabilities"), [], "capability"),
         (("manifest_version",), 2, "unsupported"),

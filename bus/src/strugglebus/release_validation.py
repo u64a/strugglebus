@@ -54,13 +54,13 @@ SUPPORT_INDEX_NAME = "deployment-support-files-v1.json"
 REPOSITORY_ID = "NZCypher819/strugglebus"
 
 
-CURRENT_SCHEMA = 24
+CURRENT_SCHEMA = 25
 
 
 MINIMUM_UPGRADE_SCHEMA = 1
 
 
-ROLLBACK_PREVIOUS_SCHEMA = 23
+ROLLBACK_PREVIOUS_SCHEMA = 24
 
 
 # Upper bound on a candidate schema; matches the maintenance helper.

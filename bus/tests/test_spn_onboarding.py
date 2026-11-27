@@ -539,7 +539,7 @@ def test_schema_sixteen_upgrades_with_backup_and_preserves_existing_data(
             ("legacy-agent", "legacy-agent", datetime.now(UTC).isoformat()),
         )
     store = SQLiteStore(path, backup_dir=backups)
-    assert store.initialize() == LATEST_SCHEMA_VERSION == 24
+    assert store.initialize() == LATEST_SCHEMA_VERSION == 25
     with sqlite3.connect(path) as database:
         assert database.execute(
             "SELECT name FROM agents WHERE id = 'legacy-agent'"

@@ -17,7 +17,7 @@ import sys
 from urllib.parse import quote
 
 FREEZE_SCHEMA_VERSION = 6
-MAX_SUPPORTED_SCHEMA_VERSION = 24
+MAX_SUPPORTED_SCHEMA_VERSION = 25
 MAX_REASON_CHARACTERS = 256
 MAX_REASON_BYTES = 1024
 # Fixed, reviewed sqlite_schema fingerprints, not candidate release metadata.
@@ -50,6 +50,8 @@ MAX_REASON_BYTES = 1024
 # Schema 24 adds worker host enrolment codes and the site document store, and
 # lets the operator author post one fixed-shape signed host command outside
 # #humans. It does not change agent_access_state or its audit contract.
+# Schema 25 adds the host marks, host status and the stored event log. It does
+# not change agent_access_state or its audit contract.
 # Widened on the same terms: a reviewed fingerprint, never a relaxed gate. An
 # unrecognised schema must keep failing closed - that refusal is what stops an
 # unreviewed layout being declared freeze-capable.
@@ -70,6 +72,7 @@ SCHEMA_FINGERPRINTS = {
     22: "4090cf543120b58881014f63ebebf4df26a8ec94dc383009c67fceffec51c941",
     23: "40480404f87bf7945a038c156598b0aaa9054b488d5a9d2b32e9ad0dc1b3f6ff",
     24: "7f998570da1b8eb0ab8ea732c9c9263e5240624e2f6c4be529fbb30b8f25b1eb",
+    25: "125331e20446c99b9b8141eb87634ad4629ff98bd6ba9ce1bff8171ef115fa70",
 }
 _SQL_TOKENS = re.compile(
     r"""'(?:[^']|'')*'|"(?:[^"]|"")*"|`(?:[^`]|``)*`|\[[^\]]*\]|\S"""

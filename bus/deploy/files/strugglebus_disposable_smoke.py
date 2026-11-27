@@ -87,7 +87,7 @@ PHASE_TIMEOUT_SECONDS = 60
 # untouched. Schema 16 retains keyed posts (schema 23: until the operator's
 # retention period has passed): cleanup must refuse
 # keyed artifacts before containment or artifact mutation, not bypass guards.
-CLEANUP_SCHEMA_VERSIONS = {11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24}
+CLEANUP_SCHEMA_VERSIONS = {11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25}
 SESSION_ROOT = Path("/run")
 SESSION_COOKIE = "__Host-strugglebus-operator"
 LOGIN_COOKIE = "__Host-strugglebus-login"

@@ -452,6 +452,59 @@ class MobileAgentControlRequest(StrictModel):
     grant_secret: str = Field(min_length=1, max_length=256)
 
 
+class HostReportResponse(StrictModel):
+    """A host's report was stored. ``received_at`` is the bus's own time for it."""
+
+    received_at: str
+
+
+class MobileHostStatus(StrictModel):
+    """One marked host. ``snapshot`` is null until it has reported.
+
+    The snapshot is the host's own claim about itself, checked for shape and
+    nothing more. Show every value in it as plain text.
+    """
+
+    agent_id: str
+    agent: str
+    marked_at: str
+    received_at: str | None
+    snapshot: dict[str, Any] | None
+
+
+class MobileHostsResponse(StrictModel):
+    """Every marked host. ``now`` is the bus's clock: work out a report's age from it."""
+
+    now: str
+    hosts: list[MobileHostStatus]
+
+
+class MobileHostHistoryResponse(StrictModel):
+    """Up to twelve hours of one host's samples, oldest first."""
+
+    now: str
+    agent_id: str
+    samples: list[dict[str, Any]]
+
+
+class MobileGrantRequest(StrictModel):
+    """A read that only an administrator may make: the device's grant, and nothing else."""
+
+    grant_secret: str = Field(min_length=1, max_length=256)
+
+
+class MobileHostMarkRequest(StrictModel):
+    """Mark an agent as a worker host, or take the mark away, naming the agent displayed."""
+
+    request_id: str = Field(
+        pattern=r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+    )
+    action: Literal["mark", "unmark"]
+    expected_name: str = Field(min_length=1, max_length=128)
+    reason: str = Field(min_length=1, max_length=256)
+    grant_secret: str = Field(min_length=1, max_length=256)
+
+
 class MobileServicePrincipalControlRequest(StrictModel):
     """Act on one service principal, naming exactly the one displayed."""
 

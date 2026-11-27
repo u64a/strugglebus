@@ -43,6 +43,7 @@ MIGRATION_FILES = (
     "0022_spn_identity_expiry.sql",
     "0023_retention.sql",
     "0024_worker_hosts.sql",
+    "0025_hosts_and_events.sql",
 )
 LATEST_SCHEMA_VERSION = len(MIGRATION_FILES)
 _MIGRATION_NAME = re.compile(r"^(?P<version>[0-9]{4})_[a-z0-9_]+\.sql$")

@@ -45,7 +45,7 @@ def set_nested(document, path, value):
     (("release", "repository"), "Other/repository", "candidate identity"),
     (("release", "candidate_id"), "unbound", "candidate identity"),
     (("compatibility", "database"), [], "must be an object"),
-    (("compatibility", "database", "current_schema"), 25, "schema compatibility"),
+    (("compatibility", "database", "current_schema"), 26, "schema compatibility"),
     (("compatibility", "database", "minimum_upgrade_schema"), True, "schema compatibility"),
     (("protocol", "coordination_protocol_version"), True, "protocol"),
     (("build", "uv"), [], "must be an object"),

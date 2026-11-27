@@ -199,7 +199,7 @@
     - source: "{{ role_path }}/files/strugglebus-inspect-access-freeze.py"
       destination: /usr/local/libexec/strugglebus-inspect-access-freeze
       destination_python: /usr/bin/python3.13
-      sha256: 6dc98305ef1326235803e79ea2b629ec5a3ac180159768d194fdf53c7e2ff9d9
+      sha256: 2da1eda5b0b908f2953f07f0f699cae3dda45d98e656f3ec1850cf55639f205f
       owner: root
       group: root
       mode: "0755"

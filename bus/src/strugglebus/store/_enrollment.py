@@ -22,6 +22,7 @@ from strugglebus.models import (
     IdentityCreationProvenancePage,
     LifecycleActor,
 )
+from strugglebus.store._hosts import mark_enrolled_host
 from strugglebus.store._common import (
     _AGENT_SELECT,
     _CREDENTIAL_SELECT,
@@ -725,6 +726,13 @@ class EnrollmentMixin:
                     request_id=request_id,
                     timestamp=timestamp,
                 )
+                if row["spn_id"] is not None:
+                    # The one moment the new agent, the principal that registered it and that
+                    # principal's host enrolment are all in hand.
+                    mark_enrolled_host(
+                        connection, agent_id=agent_id, agent_name=claimed_name,
+                        spn_id=row["spn_id"], timestamp=timestamp,
+                    )
                 agent_row = connection.execute(
                     _AGENT_SELECT + " WHERE id = ?", (agent_id,)
                 ).fetchone()

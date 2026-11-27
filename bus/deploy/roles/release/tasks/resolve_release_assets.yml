@@ -62,7 +62,7 @@
       - --expected-repository
       - NZCypher819/strugglebus
       - --expected-current-schema
-      - "24"
+      - "25"
       - --required-protocol
       - "1"
       - --required-capability

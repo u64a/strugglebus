@@ -61,13 +61,13 @@
     strugglebus_maintenance_helpers:
       - source: "{{ role_path }}/../guest_base/files/strugglebus-maintenance.py"
         name: strugglebus-maintenance
-        sha256: b14ff2da4f13071fa75c511b5ca4acc35159897de230d22584a8e809f65b9834
+        sha256: 33966407cdf1928eb43389ac26a911178729a626098e91cf22f2662f74966240
       - source: "{{ role_path }}/../guest_base/files/strugglebus-validate-maintenance-config.py"
         name: strugglebus-validate-maintenance-config
         sha256: 3bda153a3b502b33452aa15d1a0ba01443592a4ee5ce0a3fd690b6b6de0fd58c
       - source: "{{ role_path }}/../guest_base/files/strugglebus-inspect-access-freeze.py"
         name: strugglebus-inspect-access-freeze
-        sha256: 6dc98305ef1326235803e79ea2b629ec5a3ac180159768d194fdf53c7e2ff9d9
+        sha256: 2da1eda5b0b908f2953f07f0f699cae3dda45d98e656f3ec1850cf55639f205f
       - source: "{{ role_path }}/../systemd/templates/sqlite_backup.py.j2"
         name: strugglebus-sqlite-backup
         sha256: 88f3d71550b147b3cdb26c201b5e60bd156d914a68687e75bb3d6cb85c4dd5b3

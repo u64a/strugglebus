@@ -38,7 +38,7 @@ def test_schema_twenty_upgrades_an_existing_database(tmp_path) -> None:
             )
     store = SQLiteStore(database_path, backup_dir=tmp_path / "backups")
 
-    assert store.initialize() == LATEST_SCHEMA_VERSION == 24
+    assert store.initialize() == LATEST_SCHEMA_VERSION == 25
     assert list((tmp_path / "backups").iterdir())
     claim, created = store.claim_message(
         message_seq=1, agent_id="host", claimed_at=datetime(2026, 1, 2, tzinfo=UTC)

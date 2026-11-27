@@ -151,7 +151,7 @@ def test_schema_twenty_one_upgrades_an_existing_database(tmp_path) -> None:
         )
     store = SQLiteStore(database_path, backup_dir=tmp_path / "backups")
 
-    assert store.initialize() == LATEST_SCHEMA_VERSION == 24
+    assert store.initialize() == LATEST_SCHEMA_VERSION == 25
     assert list((tmp_path / "backups").iterdir())
     assert store.list_satellite_sites() == ()
     with sqlite3.connect(database_path) as database:

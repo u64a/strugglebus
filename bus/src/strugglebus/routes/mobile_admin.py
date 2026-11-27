@@ -44,6 +44,11 @@ from strugglebus.routes.schemas import (
     MobileAdminActionOption,
     MobileAdminControlResponse,
     MobileAgentControlRequest,
+    MobileGrantRequest,
+    MobileHostHistoryResponse,
+    MobileHostMarkRequest,
+    MobileHostsResponse,
+    MobileHostStatus,
     MobileLogEntry,
     MobileLogResponse,
     MobileManagedAgentResponse,
@@ -285,6 +290,123 @@ def add_mobile_admin_routes(router: APIRouter) -> None:
                 store.end_operator_operation(token)
 
         return await asyncio.to_thread(run)
+
+    # ---- Worker hosts ----------------------------------------------------
+
+    def _hosts(request: Request, *, admin: bool) -> MobileHostsResponse:
+        service = request.app.state.host_status_service
+        return MobileHostsResponse(
+            now=service.now(),
+            hosts=[
+                MobileHostStatus(
+                    agent_id=host.agent_id, agent=host.agent, marked_at=host.marked_at,
+                    received_at=host.received_at, snapshot=host.snapshot,
+                )
+                for host in service.latest(admin=admin)
+            ],
+        )
+
+    @router.get("/api/mobile/hosts/status", response_model=MobileHostsResponse)
+    async def mobile_hosts_status(request: Request) -> MobileHostsResponse:
+        """What every worker host last reported, for any enrolled device.
+
+        The account a host runs as, whether that account is its own, its
+        warnings and its channel are left out: those are for an administrator,
+        on ``POST /api/mobile/admin/hosts/status``.
+        """
+
+        _identity(request)
+        try:
+            return await asyncio.to_thread(_hosts, request, admin=False)
+        except StorageError as error:
+            raise HTTPException(status_code=503, detail=str(error)) from None
+
+    @router.post("/api/mobile/admin/hosts/status", response_model=MobileHostsResponse)
+    async def mobile_admin_hosts_status(
+        request: Request, payload: MobileGrantRequest, response: Response,
+    ) -> MobileHostsResponse:
+        """What every worker host last reported, whole, for an administrator.
+
+        A read, sent as a POST so the grant travels in the body and never in an
+        address or a header that a log might keep.
+        """
+
+        identity = _identity(request)
+        await _require_write_grant(request, identity, payload.grant_secret)
+        _secret_response_headers(response)
+        try:
+            return await asyncio.to_thread(_hosts, request, admin=True)
+        except StorageError as error:
+            raise HTTPException(status_code=503, detail=str(error)) from None
+
+    @router.get(
+        "/api/mobile/hosts/{agent_id}/status/history",
+        response_model=MobileHostHistoryResponse,
+        responses={404: {"description": "Not a marked worker host"}},
+    )
+    async def mobile_host_history(
+        request: Request,
+        agent_id: str,
+        since: Annotated[datetime | None, Query()] = None,
+    ) -> MobileHostHistoryResponse:
+        """Up to twelve hours of one host's samples, oldest first, for charts."""
+
+        _identity(request)
+        if since is not None and since.tzinfo is None:
+            raise HTTPException(status_code=422, detail="since must name its time zone")
+        service = request.app.state.host_status_service
+        try:
+            samples = await asyncio.to_thread(service.history, agent_id, since)
+        except StorageError as error:
+            raise HTTPException(status_code=503, detail=str(error)) from None
+        if samples is None:
+            raise HTTPException(status_code=404, detail="not a worker host")
+        return MobileHostHistoryResponse(now=service.now(), agent_id=agent_id, samples=samples)
+
+    @router.post(
+        "/api/mobile/admin/agents/{agent_id}/host",
+        response_model=MobileAdminControlResponse,
+        responses=_CONTROL_RESPONSES,
+    )
+    async def mobile_admin_host_mark(
+        request: Request,
+        agent_id: str,
+        payload: MobileHostMarkRequest,
+        response: Response,
+    ) -> MobileAdminControlResponse:
+        """Mark an agent as a worker host, or take the mark away.
+
+        Only a marked agent may report host status and host events. A host
+        enrolled with a host code is marked by the bus when it registers; this
+        is for a host enrolled before that, and for one that is a host no
+        longer. Taking the mark away also removes its stored status. Both work
+        during a freeze: the mark lets a machine report, and gives it no access.
+        """
+
+        identity = _identity(request)
+        await _require_write_grant(request, identity, payload.grant_secret)
+        actor = _device_actor(request, identity)
+        store = request.app.state.agent_service.store
+        marked = payload.action == "mark"
+
+        def run():
+            return store.set_host_mark(
+                agent_id, marked=marked, expected_name=payload.expected_name,
+                reason=payload.reason, request_id=payload.request_id, actor=actor,
+                changed_at=datetime.now(UTC),
+            )
+
+        try:
+            name, applied = await _operator_operation(request, actor, run)
+        except _CONTROL_ERRORS as error:
+            raise _failure(error) from None
+        _secret_response_headers(response)
+        state = "a worker host" if marked else "not a worker host"
+        return MobileAdminControlResponse(
+            action=payload.action, target_id=agent_id, target_label=name,
+            applied=applied, state=state,
+            detail=f"Agent is now {state}." if applied else f"Nothing changed. Agent is {state}.",
+        )
 
     # ---- Lists -----------------------------------------------------------
 

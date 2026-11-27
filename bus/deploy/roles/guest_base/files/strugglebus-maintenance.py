@@ -40,7 +40,9 @@ RELEASE = re.compile(r"[0-9]+\.[0-9]+\.[0-9]+")
 # older than the operator's period; no layout observed here changes.
 # Schema 24 adds worker host enrolment codes and the site document store; no
 # layout observed here changes.
-SUPPORTED_CANDIDATE_SCHEMAS = (10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24)
+# Schema 25 adds the host marks, host status and the stored event log; no
+# layout observed here changes.
+SUPPORTED_CANDIDATE_SCHEMAS = (10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25)
 OPERATOR_CONTROL = ".operator-password.control"
 OPERATOR_AUTHORIZATION = ".operator-password.authorization"
 PROJECTED_CREDENTIAL_DIRECTORY = "/run/credentials/strugglebus.service"

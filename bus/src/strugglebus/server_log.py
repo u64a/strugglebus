@@ -67,6 +67,10 @@ def _server_entry(record: logging.LogRecord) -> dict[str, object]:
     }
 
 
+#: Requests that are routine when they succeed, so only their refusals are kept for the device.
+_ROUTINE = frozenset({"POST /api/hosts/status", "POST /api/hosts/events"})
+
+
 def _request_entry(line: str) -> dict[str, object] | None:
     # Committed table rows also pass through the audit logger; they are read
     # from the tables instead, so only gateway request lines are kept here.
@@ -77,6 +81,10 @@ def _request_entry(line: str) -> dict[str, object] | None:
         return None
     status = record.get("status")
     refused = isinstance(status, int) and status >= 400
+    if not refused and record.get("event") in _ROUTINE:
+        # A host reports every minute. Kept here, the reports that worked would push out the
+        # lines an operator opens this log to find. They still go to the audit feed.
+        return None
     return {
         "ts": datetime.fromisoformat(str(record["ts"])),
         "source": "request",

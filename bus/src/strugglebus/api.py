@@ -110,6 +110,8 @@ _AUDITED_CAPABILITIES = frozenset({
     capabilities.HOST_ENROLLMENT,
 })
 _AUDITED_REFUSALS = frozenset({401, 403, 429})
+# What a worker host reports about itself. Each report gets an audit line, stored or refused.
+_HOST_REPORT_TEMPLATES = frozenset({"/api/hosts/status", "/api/hosts/events"})
 
 # The plane a request belongs to decides which gates apply to it.
 _PLANE_REST = "rest"
@@ -493,7 +495,22 @@ class RequestBodyLimitMiddleware:
             # A signed host command is carried, not interpreted. That it was
             # sent, and from where, is still worth a line.
             or template == "/api/mobile/hosts/commands"
+            # So is every report a worker host makes about itself, stored or refused.
+            or template in _HOST_REPORT_TEMPLATES
         )
+
+    def _host_report(self, scope: dict[str, Any], headers: dict[bytes, bytes]) -> dict[str, Any]:
+        """Who sent a worker host's report and how large they said it was; nothing for other requests."""
+
+        if self._capabilities.template(scope.get("method", ""), scope.get("path", "")) not in _HOST_REPORT_TEMPLATES:
+            return {}
+        agent = scope.get("state", {}).get("authenticated_agent")
+        declared = headers.get(b"content-length", b"")
+        return {
+            "agent_id": getattr(agent, "id", None),
+            "agent_name": getattr(agent, "name", None),
+            "request_bytes": int(declared) if declared.isdigit() and len(declared) <= 12 else None,
+        }
 
     def _audit_template(self, method: str, path: str) -> str:
         """The route template to record, never the raw path of a miss."""
@@ -523,6 +540,7 @@ class RequestBodyLimitMiddleware:
                     scope, headers, state.config.trusted_proxy_sources,
                 ),
                 spn_id=getattr(identity, "spn_id", None),
+                **self._host_report(scope, headers),
             ),
         )
 

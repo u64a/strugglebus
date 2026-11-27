@@ -617,7 +617,7 @@ def test_schema15_migration_preserves_every_historical_table_and_backup(tmp_path
     store = _legacy_database(tmp_path, frozen)
     with sqlite3.connect(store.database_path) as database:
         before = _historical_state(database)
-    assert store.initialize() == 24
+    assert store.initialize() == 25
     with sqlite3.connect(store.database_path) as database:
         after = _historical_state(database)
         assert set(before) <= set(after)
@@ -655,9 +655,9 @@ def test_schema16_failure_rolls_back_and_unknown_or_missing_guards_fail_startup(
         assert "post_request_id" not in {
             row[1] for row in database.execute("PRAGMA table_info(messages)")
         }
-    assert store.initialize() == 24
+    assert store.initialize() == 25
     with sqlite3.connect(store.database_path) as database:
-        database.execute("PRAGMA user_version = 25")
+        database.execute("PRAGMA user_version = 26")
     with pytest.raises(MigrationError):
         store.initialize()
     with sqlite3.connect(store.database_path) as database:

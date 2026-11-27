@@ -30,7 +30,7 @@ def _migrated() -> sqlite3.Connection:
 
 
 def test_schema_thirteen_adds_only_mobile_tables() -> None:
-    assert LATEST_SCHEMA_VERSION == 24
+    assert LATEST_SCHEMA_VERSION == 25
     connection = _migrated()
     names = {
         row[0]

@@ -15,6 +15,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import TYPE_CHECKING
 
+from strugglebus.host_status import HISTORY
 from strugglebus.store._common import utc_now
 
 if TYPE_CHECKING:
@@ -56,6 +57,12 @@ class RetentionSweeper:
             count = self.store.remove_expired_messages(now=now, batch_size=self.batch_size)
             removed += count
             if count < self.batch_size:
+                break
+        # A host that reports trims its own history as it goes. This catches the ones that stopped.
+        for _ in range(MAXIMUM_BATCHES):
+            if self.store.remove_expired_host_status_samples(
+                now=now, keep=HISTORY, batch_size=self.batch_size,
+            ) < self.batch_size:
                 break
         blocked = self.store.block_idle_agents(now=now)
         self.store.record_retention_run(
