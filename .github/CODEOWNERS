@@ -15,3 +15,29 @@ release.toml.sig              @NZCypher819
 /.github/CODEOWNERS           @NZCypher819
 /.github/workflows/           @NZCypher819
 /.gitleaksignore              @NZCypher819
+
+# What an installed bus trusts. These decide which releases a bus will install
+# and how they are published, so a change to any of them is looked at by a
+# person, as a change to the worker host is. Both builds of a release
+# faithfully build whatever is on main; the review happens here.
+#
+# The signature check and the keys it pins.
+/bus/src/strugglebus/release_signature.py            @NZCypher819
+/bus/src/strugglebus/selfhost/fetch_release.py       @NZCypher819
+# The updater on a deployed server, and the root installer.
+/bus/src/strugglebus/update_source.py                @NZCypher819
+/bus/src/strugglebus/update_storage.py               @NZCypher819
+/bus/src/strugglebus/release_validation.py           @NZCypher819
+/bus/src/strugglebus/maintenance_runtime.py          @NZCypher819
+/bus/deploy/roles/self_update/                       @NZCypher819
+/bus/deploy/roles/updater/                           @NZCypher819
+/bus/deploy/roles/guest_base/files/strugglebus-maintenance.py   @NZCypher819
+# The self-hosted updaters, which run as root.
+/bus/src/strugglebus/selfhost/debian/strugglebus-update   @NZCypher819
+/bus/src/strugglebus/selfhost/debian/install.sh           @NZCypher819
+/bus/src/strugglebus/selfhost/docker/update.sh            @NZCypher819
+# Publishing a release.
+/bus/scripts/publish_public_release.py               @NZCypher819
+/bus/scripts/publish_immutable_release.py            @NZCypher819
+/bus/scripts/promote_release.py                      @NZCypher819
+/bus/scripts/release_statement.py                    @NZCypher819
