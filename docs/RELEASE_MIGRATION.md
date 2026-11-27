@@ -46,16 +46,25 @@ So today, write access to `NZCypher819/strugglebus-releases` is enough to run co
 bus. That is true before any move, and it is the thing to fix first. The bus does not move until
 it is fixed.
 
-**What is needed** (to be designed and reviewed by u64-security before any code):
+**What is needed.** u64-security's requirements (bus message 28765), which the design must meet:
 
-1. The release pipeline signs the release with a key held outside GitHub. The worker host already
-   uses the owner's YubiKeys for this, so the same keys with a namespace of their own is the
-   obvious choice.
-2. Both update paths check that signature against keys that ship inside the installed bus, before
-   anything from the new release is run, and refuse a release that fails.
-3. A rule against going back to an older signed release.
-4. One last release through the present path, which carries the check. From then on every update
-   is checked. This is the same step the App took at 1.7.3.
+1. **A signature with a key outside GitHub.** The owner's YubiKeys, as the worker host uses, but in
+   a namespace of its own (`strugglebus-bus-release`), so a signed worker host release can never
+   be replayed as a bus release or the other way round.
+2. **Keys pinned by fingerprint in the installed bus**, in a root-owned file the bus's service
+   user cannot write. Current and next keys; changed only by a signed release.
+3. **Checked before any code from the new release runs, by the updater already installed.** The
+   signed manifest covers everything that runs or is run: the wheel, the lock file, `install.sh`
+   and every helper script. Nothing from the new release is run, sourced or imported first.
+4. **No going back.** The highest installed signed serial is kept root-owned, and anything not
+   above it is refused.
+5. **One last release through the present path** carries the check, as the App's 1.7.3 did. It is
+   trusted through today's weak path, once. u64-security verifies its files against the tag
+   before U64's bus takes it, and testers are told to take it promptly.
+
+**Until then:** U64's bus has automatic updates paused (web console, Updates, "Pause automatic
+updates"), so a release is applied only on the owner's say; and u64-security alerts on every new
+release in the releases repository.
 
 ## Order
 
