@@ -14,7 +14,8 @@
   with "not built yet". Run nothing from this file on a real host until it says otherwise.
 
 .EXAMPLE
-  powershell -ExecutionPolicy Bypass -File .\bootstrap.ps1 -DataFile .\sbhost-enrol.json
+  powershell -NoProfile -ExecutionPolicy Bypass -File .\bootstrap.ps1 -DataFile .\sbhost-enrol.json
+  (-NoProfile: otherwise the operator's own profile.ps1, which any program they run can write, runs elevated first.)
 #>
 [CmdletBinding()]
 param(
@@ -372,6 +373,29 @@ function Install-Pwsh([string]$work) {
     return $exe
 }
 
+$WingetExe = $null   # set by Get-Winget once found and checked
+
+function Get-Winget {
+    # The real winget.exe by full path, never the PATH alias: that lives in the user-writable
+    # %LOCALAPPDATA%\Microsoft\WindowsApps, which any unelevated program of the operator's can replace (u64-security,
+    # #humans 28966). The App Installer package's own folder under Program Files\WindowsApps is admin-protected; the
+    # file must also carry a valid Microsoft signature. Found once, then remembered.
+    if ($script:WingetExe) { return $script:WingetExe }
+    $pkg = Get-AppxPackage -Name 'Microsoft.DesktopAppInstaller' -ErrorAction SilentlyContinue |
+        Sort-Object { [version]$_.Version } -Descending | Select-Object -First 1
+    if (-not $pkg) { throw 'App Installer (winget) is not installed: get "App Installer" from the Microsoft Store, then run this again' }
+    $exe = Join-Path $pkg.InstallLocation 'winget.exe'
+    $programFilesApps = Join-Path $env:ProgramFiles 'WindowsApps'
+    if (-not $exe.StartsWith($programFilesApps + '\', [StringComparison]::OrdinalIgnoreCase) -or -not (Test-Path -LiteralPath $exe)) {
+        throw "winget.exe is not where App Installer keeps it ($exe): refused"
+    }
+    $s = Get-AuthenticodeSignature -LiteralPath $exe
+    if ($s.Status -ne 'Valid' -or -not $s.SignerCertificate -or -not (Test-MicrosoftName $s.SignerCertificate.Subject) -or
+        -not (Test-MicrosoftName $s.SignerCertificate.Issuer)) { throw "winget.exe is not signed by Microsoft ($($s.Status)): refused" }
+    $script:WingetExe = $exe
+    return $exe
+}
+
 function Install-Prereqs($engines, [string]$work) {
     # Step 2: each missing tool from winget, machine-wide (PowerShell 7 from its pinned zip). Returns name -> path;
     # throws if one is still missing.
@@ -385,7 +409,7 @@ function Install-Prereqs($engines, [string]$work) {
             $wingetArgs = @('install', '--id', $id, '--exact', '--scope', 'machine', '--silent', '--accept-package-agreements',
                             '--accept-source-agreements', '--disable-interactivity')
             if ($Prereqs[$name].ContainsKey('skipDeps') -and $Prereqs[$name].skipDeps) { $wingetArgs += '--skip-dependencies' }
-            & winget @wingetArgs | Out-Host
+            & (Get-Winget) @wingetArgs | Out-Host
             $path = Find-Prereq $name
             if (-not $path) { throw "$id did not install where expected ($($Prereqs[$name].paths -join ', '))" }
         }
@@ -409,13 +433,37 @@ function New-AdminOnlyFolder([string]$path) {
     return $path
 }
 
-function Invoke-GitBytes([string]$git, [string[]]$arguments) {
-    # git's stdout as exact bytes (PowerShell's own capture would decode and re-encode it). Throws on failure.
+# Git runs ELEVATED here, but reads the operator's own ~/.gitconfig (and XDG config), which any unelevated program of
+# theirs can write: `url.<ext::cmd>.insteadOf` would run a command as administrator at the clone (u64-security, #humans
+# 28966). So no system or user config at all, HOME pointed at the admin-only work folder, only https, no credential
+# helper, no prompts. $GitTestAllow is for the tests' local clone only and is empty in real use.
+$GitSafeConfig = @('-c', 'protocol.allow=never', '-c', 'protocol.https.allow=always', '-c', 'credential.helper=',
+                   '-c', 'core.askPass=')
+$GitTestAllow = @()
+
+function Invoke-GitBytes([string]$git, [string[]]$arguments, [string]$isolatedHome) {
+    # git's stdout as exact bytes (PowerShell's own capture would decode and re-encode it), with a clean environment
+    # (above): $isolatedHome is the admin-only work folder, holding an empty config file and an empty hooks folder.
+    # Throws on failure.
+    if (-not $isolatedHome) { throw 'git needs the admin-only work folder' }
+    $emptyConfig = Join-Path $isolatedHome 'empty.gitconfig'
+    $noHooks = Join-Path $isolatedHome 'no-hooks'
+    if (-not (Test-Path -LiteralPath $emptyConfig)) { [IO.File]::WriteAllText($emptyConfig, '') }
+    if (-not (Test-Path -LiteralPath $noHooks)) { New-Item -ItemType Directory -Path $noHooks | Out-Null }
     $psi = New-Object Diagnostics.ProcessStartInfo $git
-    $psi.Arguments = ($arguments | ForEach-Object { if ($_ -match '[\s"]') { '"' + $_.Replace('"', '\"') + '"' } else { $_ } }) -join ' '
+    $all = @($GitSafeConfig) + @('-c', "core.hooksPath=$noHooks") + @($GitTestAllow) + @($arguments)
+    $psi.Arguments = ($all | ForEach-Object { if ($_ -match '[\s"]' -or $_ -eq '') { '"' + $_.Replace('"', '\"') + '"' } else { $_ } }) -join ' '
     $psi.UseShellExecute = $false
     $psi.RedirectStandardOutput = $true
     $psi.RedirectStandardError = $true
+    foreach ($kv in @{ GIT_CONFIG_NOSYSTEM = '1'; GIT_CONFIG_GLOBAL = $emptyConfig; GIT_TERMINAL_PROMPT = '0'; GIT_ASKPASS = '';
+                        HOME = $isolatedHome; XDG_CONFIG_HOME = $isolatedHome; GCM_INTERACTIVE = 'never' }.GetEnumerator()) {
+        $psi.EnvironmentVariables[$kv.Key] = $kv.Value
+    }
+    foreach ($name in 'GIT_DIR', 'GIT_WORK_TREE', 'GIT_CONFIG', 'GIT_CONFIG_PARAMETERS', 'GIT_CONFIG_COUNT', 'GIT_EXEC_PATH',
+                      'GIT_SSH', 'GIT_SSH_COMMAND', 'GIT_PROXY_COMMAND', 'GIT_TEMPLATE_DIR', 'HTTPS_PROXY', 'HTTP_PROXY', 'ALL_PROXY') {
+        $psi.EnvironmentVariables.Remove($name)
+    }
     $p = [Diagnostics.Process]::Start($psi)
     $err = $p.StandardError.ReadToEndAsync()
     $ms = New-Object IO.MemoryStream
@@ -430,8 +478,8 @@ function Get-VerifiedRelease([string]$git, [string]$work, [string]$repo = $Relea
     # touch and PIN, not older than $MinReleaseSerial, then tree_sha256 and installer_sha256 over the exact bytes.
     # Returns @{ release; stage } with the staged files (the host's and the installer's) under $work\stage.
     $mirror = Join-Path $work 'release.git'
-    Invoke-GitBytes $git @('clone', '--quiet', '--bare', '--filter=blob:none', '--single-branch', '--branch', 'main', $repo, $mirror) | Out-Null
-    $g = { param([string[]]$a) Invoke-GitBytes $git (@('--git-dir', $mirror) + $a) }
+    Invoke-GitBytes $git @('clone', '--quiet', '--bare', '--filter=blob:none', '--single-branch', '--branch', 'main', $repo, $mirror) $work | Out-Null
+    $g = { param([string[]]$a) Invoke-GitBytes $git (@('--git-dir', $mirror) + $a) $work }
     $data = & $g @('cat-file', 'blob', "main:$folder/release.toml")
     $sig = [Text.Encoding]::ASCII.GetString((& $g @('cat-file', 'blob', "main:$folder/release.toml.sig")))
     $ok, $why = Test-ReleaseSignature $data $sig $Keygen $work

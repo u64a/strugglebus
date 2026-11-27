@@ -351,7 +351,11 @@ Rules for the data file:
 ### 2.2 What the bootstrap does
 
 The bootstrap runs elevated, as the operator, on the target PC:
-`powershell -ExecutionPolicy Bypass -File .\bootstrap.ps1 -DataFile .\sbhost-enrol.json`.
+`powershell -NoProfile -ExecutionPolicy Bypass -File .\bootstrap.ps1 -DataFile .\sbhost-enrol.json`.
+`-NoProfile` matters: without it, the operator's own `profile.ps1` (writable by any program they run) runs elevated
+before any check (u64-security, #humans 28966). Inside, the bootstrap runs git with no user or system config, only
+https and no credential helper, and calls `winget.exe` by its full path in App Installer's admin-protected folder,
+checked as Microsoft-signed, never through the user-writable PATH alias.
 
 1. **Checks and the data file's fingerprint (M2):**
    - checks Windows 11, elevation, the data file's canonical form and every pattern;

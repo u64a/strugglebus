@@ -210,7 +210,7 @@ def test_the_whole_fetch_against_this_repositorys_signed_release(tmp_path):
         pytest.skip("no local main branch to clone (a CI checkout)")
     main_toml = subprocess.run(["git", "show", f"main:{folder}/release.toml"], cwd=top, capture_output=True).stdout
     git = shutil.which("git")
-    body = (f"function Say([string]$t) {{ }}; $Keygen = '{KEYGEN}'; "
+    body = (f"function Say([string]$t) {{ }}; $Keygen = '{KEYGEN}'; $GitTestAllow = @('-c', 'protocol.file.allow=always'); "
             f"try {{ $r = Get-VerifiedRelease '{git}' '{tmp_path}' '{top.as_posix()}' '{folder}'; "
             "ConvertTo-Json @(\"serial $($r.release.serial)\") } catch { ConvertTo-Json @($_.Exception.Message) }")
     out = run(body, PWSH or SHELLS[0])
@@ -285,6 +285,46 @@ def test_the_bootstrap_parses():
                         f"$t = $null; $e = $null; [void][Management.Automation.Language.Parser]::ParseFile('{SCRIPT}', "
                         "[ref]$t, [ref]$e); $e.Count"], capture_output=True, text=True, timeout=60)
     assert r.stdout.strip() == "0", r.stdout + r.stderr
+
+
+@pytest.mark.skipif(shutil.which("git") is None, reason="needs git")
+def test_a_hostile_user_gitconfig_cannot_steer_the_elevated_git(tmp_path):
+    """The operator's ~/.gitconfig is writable by any unelevated program of theirs: an `insteadOf` to `ext::` would run
+    a command as administrator at the clone (u64-security, #humans 28966). The bootstrap's git reads no user or
+    system config and allows only https (here, plus the test's own file transport)."""
+    origin = tmp_path / "origin"
+    subprocess.run(["git", "init", "-q", "--bare", str(origin)], check=True)
+    hostile_home = tmp_path / "hostile-home"
+    hostile_home.mkdir()
+    marker = tmp_path / "PWNED.txt"
+    (hostile_home / ".gitconfig").write_text(
+        f'[url "ext::cmd.exe /c echo pwned > {marker.as_posix()}"]\n\tinsteadOf = {origin.as_posix()}\n'
+        '[protocol "ext"]\n\tallow = always\n[core]\n\tsshCommand = cmd.exe /c echo pwned\n', encoding="ascii")
+    work = tmp_path / "work"
+    work.mkdir()
+    env = dict(os.environ, HOME=str(hostile_home), USERPROFILE=str(hostile_home), XDG_CONFIG_HOME=str(hostile_home))
+    git = shutil.which("git")
+    driver = (f"$ErrorActionPreference = 'Stop'\n. '{SCRIPT}'\n$GitTestAllow = @('-c', 'protocol.file.allow=always')\n"
+              f"try {{ Invoke-GitBytes '{git}' @('clone', '--quiet', '--bare', '{origin.as_posix()}', '{(work / 'm').as_posix()}') "
+              f"'{work}' | Out-Null; 'cloned' }} catch {{ \"failed: $($_.Exception.Message)\" }}\n"
+              f"$c = Invoke-GitBytes '{git}' @('config', '--show-origin', '--list') '{work}'; [Text.Encoding]::UTF8.GetString($c)")
+    r = subprocess.run([PWSH or SHELLS[0], "-NoProfile", "-NonInteractive", "-Command", driver], capture_output=True,
+                       text=True, timeout=120, env=env)
+    assert not marker.exists(), "the hostile config ran a command"
+    assert "cloned" in r.stdout, r.stdout + r.stderr
+    assert "hostile-home" not in r.stdout and "insteadof" not in r.stdout.lower()  # the user's config wasn't read at all
+
+
+def test_winget_is_never_called_through_path():
+    text = SCRIPT.read_text(encoding="ascii")
+    assert "& winget" not in text and "& (Get-Winget)" in text
+    assert "Get-AppxPackage -Name 'Microsoft.DesktopAppInstaller'" in text
+
+
+def test_the_usage_example_skips_the_operators_profile():
+    text = SCRIPT.read_text(encoding="ascii")
+    assert "powershell -NoProfile -ExecutionPolicy Bypass -File .\\bootstrap.ps1" in text
+    assert "powershell -ExecutionPolicy Bypass -File" not in text
 
 
 def test_still_ascii_and_lf_only():
