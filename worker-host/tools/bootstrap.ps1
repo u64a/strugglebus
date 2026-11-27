@@ -261,7 +261,9 @@ $Prereqs = [ordered]@{
     git    = @{ id = 'Git.Git'; paths = @('C:\Program Files\Git\cmd\git.exe') }
     pwsh   = @{ id = ''; paths = @('C:\Program Files\PowerShell\7\pwsh.exe') }   # not winget: see $PwshZip
     gh     = @{ id = 'GitHub.cli'; paths = @('C:\Program Files\GitHub CLI\gh.exe') }
-    ghcp   = @{ id = 'GitHub.Copilot'; paths = @('C:\Program Files\WinGet\Links\copilot.exe') }
+    # Copilot CLI's package declares a dependency on the PowerShell MSIX, which won't install machine-wide (the test
+    # VM): skipped, because PowerShell 7 is already in place from its pinned, checked zip by then.
+    ghcp   = @{ id = 'GitHub.Copilot'; paths = @('C:\Program Files\WinGet\Links\copilot.exe'); skipDeps = $true }
     claude = @{ id = 'Anthropic.ClaudeCode'; paths = @('C:\Program Files\WinGet\Links\claude.exe') }
 }
 
@@ -380,7 +382,10 @@ function Install-Prereqs($engines, [string]$work) {
         if (-not $path) {
             $id = $Prereqs[$name].id
             Say "installing $id (winget, machine-wide)"
-            & winget install --id $id --exact --scope machine --silent --accept-package-agreements --accept-source-agreements --disable-interactivity | Out-Host
+            $wingetArgs = @('install', '--id', $id, '--exact', '--scope', 'machine', '--silent', '--accept-package-agreements',
+                            '--accept-source-agreements', '--disable-interactivity')
+            if ($Prereqs[$name].ContainsKey('skipDeps') -and $Prereqs[$name].skipDeps) { $wingetArgs += '--skip-dependencies' }
+            & winget @wingetArgs | Out-Host
             $path = Find-Prereq $name
             if (-not $path) { throw "$id did not install where expected ($($Prereqs[$name].paths -join ', '))" }
         }
