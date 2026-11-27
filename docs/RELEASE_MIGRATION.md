@@ -62,9 +62,12 @@ it is fixed.
    trusted through today's weak path, once. u64-security verifies its files against the tag
    before U64's bus takes it, and testers are told to take it promptly.
 
-**Until then:** U64's bus has automatic updates paused (web console, Updates, "Pause automatic
-updates"), so a release is applied only on the owner's say; and u64-security alerts on every new
-release in the releases repository.
+**Until then** (proposed by u64-security; the first is the owner's decision):
+
+- [ ] U64's bus applies a release only on the owner's say: automatic updates paused in the web
+      console (Updates, "Pause automatic updates"). Manual updates still work.
+- [ ] u64-security alerts on every new release in the releases repository, and on every update
+      the bus applies.
 
 ## Order
 
