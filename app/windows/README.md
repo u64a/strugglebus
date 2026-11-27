@@ -13,7 +13,7 @@ This is the Windows MVP companion for StruggleApp. It targets the current Strugg
 - **Themes**: the 19 [Omarchy](https://github.com/basecamp/omarchy) palettes. Pick one dark and one light theme; the mode is Dark, Light or Match Windows.
 - **Updates**: an installed copy checks the public releases at startup and every few hours, downloads in the background, and installs when you restart or next close the app.
 
-With operator access saved, the bus log on Settings, Logs is the whole log: it adds what worker hosts reported about themselves (a crash, a failed update, a refused task) and the bus's security events, kept for 30 days by a bus from 0.2.74.
+The bus log on Settings, Logs reloads every half minute while it is showing. With operator access saved it is the whole log: it adds what worker hosts reported about themselves (a crash, a failed update, a refused task) and the bus's security events, kept for 30 days by a bus from 0.2.74.
 
 History features (`#humans` history, one agent's older messages, whole-bus search) and enrollment need a StruggleBus newer than 0.2.61; against an older bus the app detects that and leaves them off, except enrollment, which reports the server's refusal.
 

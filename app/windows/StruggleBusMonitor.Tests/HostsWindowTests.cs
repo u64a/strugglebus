@@ -332,6 +332,38 @@ public sealed class HostsWindowTests(StaWindowAdminFixture sta)
     });
 
     [Fact]
+    public void TheBusLogReloadsEveryHalfMinuteWhileItsTabIsShowingAndStopsWhenItIsNot() => sta.Run(() =>
+    {
+        LogEvents(withGrant: false, whole: null, out var scene);
+        using (scene)
+        {
+            var window = scene.Window;
+            const string route = "GET /api/mobile/admin/logs";
+            StaWindowAdminScene.Until(() => scene.Platform.Delays.Count == 1, "the first wait");
+            Assert.Equal([SettingsLogic.BusLogRefreshEvery], scene.Platform.Delays);
+            var asked = scene.Bus.RequestsTo(route).Count;
+
+            scene.Platform.EndDelay(0);
+            StaWindowAdminScene.Until(() => scene.Bus.RequestsTo(route).Count == asked + 1, "the reload");
+            StaWindowAdminScene.Until(() => scene.Platform.Delays.Count == 2, "the next wait");
+
+            // Showing the tab again while a wait is running does not start a second one.
+            window.SettingsTabGeneral.IsChecked = true;
+            window.SettingsTabLogs.IsChecked = true;
+            StaWindowAdminScene.Until(() => scene.Bus.RequestsTo(route).Count == asked + 2, "the load on showing the tab");
+            Assert.Equal(2, scene.Platform.Delays.Count);
+
+            // Away from the tab, the wait ends and nothing more is asked.
+            window.SettingsTabGeneral.IsChecked = true;
+            scene.Platform.EndDelay(1);
+            var turns = 0;
+            StaWindowAdminScene.Until(() => ++turns > 25, "the ended wait to be noticed");
+            Assert.Equal(asked + 2, scene.Bus.RequestsTo(route).Count);
+            Assert.Equal(2, scene.Platform.Delays.Count);
+        }
+    });
+
+    [Fact]
     public void AnyOtherFailureOfTheWholeLogIsSaid() => sta.Run(() =>
     {
         LogEvents(withGrant: true, _ => StaWindowAdminBus.Fail(503, "unavailable"), out var scene);

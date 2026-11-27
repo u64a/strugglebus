@@ -92,7 +92,7 @@ Afterwards the private repository stays only for `fleet.toml`, until hosts read 
 ### 2. Windows App (bus-dev)
 
 - [ ] Prove the App's updater finds the right release when other releases sit beside it in one repository, reading only `windows/` tags.
-- [ ] Release tags protected here (see "Before or with the move").
+- [x] Release tags protected here (see "Before or with the move").
 - [ ] A signed App release, published at the old place, that reads updates from here.
 - [ ] `release-signed.ps1` publishes here. `NZCypher819/StruggleApp-Privacy` kept read-only.
 
@@ -187,7 +187,14 @@ publish scripts. This needs the owner's yes to add them to `.github/CODEOWNERS`.
 - [ ] "Deployment validation" and "Isolated LAN CA integration" green on GitHub's runners.
 - [x] The build workflow and the second build. GitHub's runner and the owner's PC built the
       same commit to five byte-identical files (pull request 38).
-- [ ] The sign-and-publish script, proved by publishing a release with it.
+- [x] The sign-and-publish script (`bus/scripts/release_here.py`), rehearsed against real GitHub
+      in a scratch repository with the same tag rules and immutable releases, 27 November 2026.
+      The first rehearsal found that an upload with a guessed content type is refused by an
+      installed updater; the script now states each type and checks the draft with the updater's
+      own check before publishing. The second rehearsal's release was found, downloaded and
+      verified by the 0.2.73 updater's code (pull requests 39, 41 and 43).
+- [x] 0.2.73's source fixed: commit `74e2ea6` on `main` (pull request 50) is the move and nothing
+      else. Schema 25 merges after it.
 - [x] The updaters read this repository and find releases by `bus/v*` tag (pull request 37).
 - [ ] That tested on a non-production install: update, rollback, and the feed unavailable.
 - [ ] 0.2.73 published at the old place and installed on the production bus.
@@ -199,7 +206,7 @@ publish scripts. This needs the owner's yes to add them to `.github/CODEOWNERS`.
 These are the owner's to do or approve.
 
 - [ ] **The second organisation owner.** An owner can delete releases, move tags and turn off every rule on this page.
-- [ ] **Release tags cannot be moved or deleted.** A tag ruleset here for `windows/v*` and `bus/v*`, and GitHub's immutable releases setting.
+- [x] **Release tags cannot be moved or deleted.** A tag ruleset here for `windows/v*` and `bus/v*`, and GitHub's immutable releases setting.
 
 ## Feature requests and bug reports
 
