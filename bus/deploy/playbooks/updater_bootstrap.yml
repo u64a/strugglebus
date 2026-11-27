@@ -6,7 +6,7 @@
   gather_subset: [min]
   vars:
     updater_release_root: "/opt/strugglebus-updater/releases/{{ strugglebus_updater_bootstrap_version }}"
-    updater_helper_sha256: c5432d25deba888d9398be9ef4ef1645955530898e8074a0305f1f8b7aa952f8
+    updater_helper_sha256: 224309f67f236e42ba7c0231a2ae2438dc113fec83fb2c7c0ec1c42ef5a9c542
   tasks:
     - name: Require a separately approved exact worker bootstrap
       ansible.builtin.assert:

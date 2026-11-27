@@ -181,10 +181,20 @@ def test_limits_refuse_unknown_invalid_expansion_and_unsafe_floors(limits):
     {"application_data_dir": "/etc"}, {"cache_dir": "/var/lib/strugglebus"},
     {"release_repository": "NZCypher819/strugglebus"},
     {"source_repository": "NZCypher819/strugglebus-releases"},
+    # One half of each place is not a place.
+    {"release_repository": "u64a/strugglebus"},
+    {"source_repository": "u64a/strugglebus"},
+    {"release_repository": "someone/else", "source_repository": "someone/else"},
 ])
 def test_configuration_refuses_ambiguous_or_unbound_inputs(changes):
     with pytest.raises(ERROR):
         parse(config(**changes))
+
+
+def test_configuration_may_name_the_projects_repository_or_the_former_place():
+    assert parse(config()) == M.LIMITS
+    moved = config(release_repository="u64a/strugglebus", source_repository="u64a/strugglebus")
+    assert parse(moved) == M.LIMITS
 
 
 @pytest.mark.parametrize("content", [

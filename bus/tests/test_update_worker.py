@@ -233,6 +233,28 @@ def test_config_exact_bounded_and_no_bypass(change):
         worker_module.config_from_json(config_json() | change)
 
 
+@pytest.mark.parametrize("release,source", [
+    ("u64a/strugglebus", "u64a/strugglebus"),
+    # A file written before the move still starts the updater that carries the move.
+    ("NZCypher819/strugglebus-releases", "NZCypher819/strugglebus"),
+])
+def test_config_may_name_the_projects_repository_or_the_former_place(release, source):
+    named = config_json() | {"release_repository": release, "source_repository": source}
+    config = worker_module.config_from_json(named)
+    assert (config.release_repository, config.source_repository) == (release, source)
+    assert worker_module._source_factory(config) is not None
+
+
+@pytest.mark.parametrize("release,source", [
+    ("u64a/strugglebus", "NZCypher819/strugglebus"),
+    ("NZCypher819/strugglebus-releases", "u64a/strugglebus"),
+])
+def test_config_naming_half_of_each_place_is_refused(release, source):
+    with pytest.raises(UpdateError):
+        worker_module.config_from_json(
+            config_json() | {"release_repository": release, "source_repository": source})
+
+
 def test_config_linux_nonroot_distinct_uid_protected_read(monkeypatch):
     raw = config_json()
     config = worker_module.config_from_json(raw)
