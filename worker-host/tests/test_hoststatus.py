@@ -215,6 +215,20 @@ def test_the_host_asks_pwsh_for_its_version_once_an_hour(pushing, monkeypatch):
     assert h.pwsh_version() is None
 
 
+def test_the_pinned_pwsh_wins_over_one_on_path(pushing, monkeypatch, tmp_path):
+    import subprocess as sp
+
+    h, pushes, logged, answer, clock = pushing
+    pinned = tmp_path / "pwsh.exe"
+    pinned.write_text("")
+    ran = []
+    monkeypatch.setattr("workerhost.host.PWSH_PATHS", (str(pinned),))
+    monkeypatch.setattr("workerhost.host.shutil.which", lambda name: "C:\\Users\\x\\bin\\pwsh.exe")
+    monkeypatch.setattr("workerhost.host.subprocess.run",
+                        lambda cmd, **k: ran.append(cmd[0]) or sp.CompletedProcess(cmd, 0, "7.6.10\n", ""))
+    assert h.pwsh_version() == "7.6.10" and ran == [str(pinned)]
+
+
 def test_a_history_sample_is_small_and_uses_the_bus_clock():
     s = hoststatus.sample(hoststatus.build_v2(V2), RECEIVED_AT)
     assert s["received_at"] == RECEIVED_AT and s["workers"] == {"busy": 2, "max": 12}
