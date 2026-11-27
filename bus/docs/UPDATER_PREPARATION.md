@@ -105,7 +105,10 @@ non-prerelease immutable publication. Draft PRs and local artifacts are ineligib
 Prepare reobserves that identity, downloads exactly the wheel, production lock,
 support archive, manifest and `SHA256SUMS` into a private quarantine, validates
 canonical structure/limits/hashes/source/compatibility and reobserves publication
-afterward. Hashes are byte integrity, not independent publisher authentication.
+afterward. Hashes are byte integrity, not independent publisher authentication. From 0.2.72 the
+publisher's identity is established separately: a release is prepared only if its files are the
+ones in a statement signed by a pinned hardware release key, and the root installer checks that
+signature again itself. See [RELEASE_SIGNING.md](RELEASE_SIGNING.md).
 Retain the installed verifier's exact reviewed schema/guide/protocol/Python/uv
 policy; unknown policy needs a trusted verifier update, not a bypass checkbox.
 Historical published releases do not require current-main equality or a still

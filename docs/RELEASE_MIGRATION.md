@@ -27,7 +27,8 @@ with a key that is not in GitHub, and refuse anything else.
 |---|---|---|---|
 | Worker host | an SSH signature over `release.toml`, against keys pinned on each host; a serial that only goes up | the owner's YubiKeys | Yes |
 | Windows App, from 1.7.3 | every file against a list signed for that version; the signer's thumbprint; a newer version (`app/windows/StruggleBusMonitor/UpdateTrust.cs`) | the code-signing certificate, in the certificate authority's cloud, usable only on the owner's PC | Yes |
-| Bus | checksums and a manifest that come from the same release | none | **No** |
+| Bus, up to 0.2.71 | checksums and a manifest that come from the same release | none | **No** |
+| Bus, from 0.2.72 | every file against a statement signed for that version; a newer version (`bus/docs/RELEASE_SIGNING.md`) | the owner's YubiKeys | Yes, once 0.2.72 is installed |
 
 ## The bus does not meet the rule yet
 
@@ -99,8 +100,8 @@ Copies older than that release keep reading the old place, so it must stay up.
 
 ### 3. Bus (bus-dev, after the signature check)
 
-- [ ] Design for the signature check, reviewed by u64-security.
-- [ ] The check shipped and released through the present path.
+- [x] Design for the signature check, reviewed by u64-security (bus messages 28770 to 28772).
+- [ ] The check shipped and released through the present path (0.2.72).
 - [ ] The release pipeline moved here from the private repository.
 - [ ] A signed release that tells installed buses the new address. `NZCypher819/strugglebus-releases` kept read-only.
 
