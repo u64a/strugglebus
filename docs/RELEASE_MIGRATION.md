@@ -111,18 +111,27 @@ Windows App's.
 
 **The pipeline, all in this repository**
 
-1. A tag `bus/vX.Y.Z` on `main` starts a workflow on GitHub's own runners. It runs the tests,
-   builds the wheel once, normalises it, makes the five release files, validates them and keeps
-   them as an artifact. It publishes nothing and holds no secrets.
-2. On the owner's PC a script builds the same five files again, in a container whose base image is
-   pinned by digest, from a clean checkout of the tagged commit, with dependencies installed by
-   hash from `requirements.lock`. Neither build shares files or caches with the other.
+1. The owner starts the "Bus release build" workflow for a commit on `main`. It runs on GitHub's
+   own runners, in a container image pinned by digest, and runs `bus/scripts/build_release.sh`:
+   the wheel is built once and normalised, the five release files are made and validated, and
+   they are kept as an artifact. It publishes nothing and holds no secrets.
+2. On the owner's PC, `bus/scripts/release_here.py compare` builds the same five files again from
+   a fresh clone of that commit, with the same script in the same image. uv is fetched and
+   checked against the hash in the source, the exact Python version is named so uv checks its
+   hash too, and dependencies are installed by hash from the lock. Neither build shares files or
+   caches with the other.
 3. The script refuses to go on unless all five files from the two builds are byte for byte the
    same, and says which differ. A compromised runner alone can then not get a bad release signed.
 4. It prints the commits since the previous `bus/v*` tag that touch `bus/`, one line each, for the
-   owner to read, then the statement, and waits for the hardware key.
-5. It publishes the release here, with the statement and signature in the annotated tag, and
-   refuses unless the signature is valid for those files.
+   owner to read, and writes the statement. The owner signs it with a hardware key.
+5. `release_here.py publish` refuses unless the signature is by a release key for those files.
+   It then makes the annotated tag `bus/vX.Y.Z` carrying the statement and signature, publishes
+   the release, and checks that GitHub holds exactly the signed files, immutably.
+
+**The tag comes last, not first.** The first plan had the tag start the build. But the tag's
+message carries the signature, the signature covers the hashes of the built files, and a
+`bus/v*` tag can never be moved once made. So the build is started for a commit, and the tag is
+made at publishing, already signed.
 
 **No self-hosted runner on this repository.** `prox-runner` builds and qualifies today. On a
 public repository it would run code from anyone's pull request on the owner's network. The two
@@ -176,8 +185,11 @@ publish scripts. This needs the owner's yes to add them to `.github/CODEOWNERS`.
 - [x] The owner's yes to CODEOWNERS for the bus's trust files (pull request 35).
 - [x] Tag rules: `windows/v*` and `bus/v*` tags cannot be moved or deleted, by anyone.
 - [ ] "Deployment validation" and "Isolated LAN CA integration" green on GitHub's runners.
-- [ ] The build workflow, the second build, and the sign-and-publish script.
-- [ ] The updaters read this repository and `bus/v*` tags; tested on a non-production install.
+- [x] The build workflow and the second build. GitHub's runner and the owner's PC built the
+      same commit to five byte-identical files (pull request 38).
+- [ ] The sign-and-publish script, proved by publishing a release with it.
+- [x] The updaters read this repository and find releases by `bus/v*` tag (pull request 37).
+- [ ] That tested on a non-production install: update, rollback, and the feed unavailable.
 - [ ] 0.2.73 published at the old place and installed on the production bus.
 - [ ] 0.2.74 published here. `NZCypher819/strugglebus-releases` kept read-only.
 - [ ] `worker.json` on the production bus changed to name this repository.

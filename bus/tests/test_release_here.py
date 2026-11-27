@@ -3,9 +3,7 @@
 from __future__ import annotations
 
 import hashlib
-import io
 import json
-import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -34,14 +32,6 @@ def fill(directory: Path, changed: str | None = None) -> dict[str, str]:
     return {name: hashlib.sha256((directory / name).read_bytes()).hexdigest() for name in NAMES}
 
 
-def archive(files: dict[str, bytes]) -> bytes:
-    data = io.BytesIO()
-    with zipfile.ZipFile(data, "w") as bundle:
-        for name, content in files.items():
-            bundle.writestr(name, content)
-    return data.getvalue()
-
-
 class Commands:
     """Stands in for git, gh and docker: records each command and answers the ones it knows."""
 
@@ -52,8 +42,12 @@ class Commands:
         self.on_main = True
         self.tags = ""
         self.log = "abc1234 2026-11-27 A change\n"
-        self.artifacts: list[dict] = [{"id": 7, "expired": False}, {"id": 9, "expired": False}, {"id": 11, "expired": True}]
-        self.zip = archive({name: name.encode() for name in NAMES})
+        self.artifacts: list[dict] = [
+            {"id": 7, "expired": False, "workflow_run": {"id": 70}},
+            {"id": 9, "expired": False, "workflow_run": {"id": 90}},
+            {"id": 11, "expired": True, "workflow_run": {"id": 110}},
+        ]
+        self.github_changed: str | None = None
         self.local_changed: str | None = None
         self.release = {
             "id": 81, "tag_name": TAG, "target_commitish": COMMIT, "draft": False, "prerelease": False,
@@ -81,8 +75,8 @@ class Commands:
             return self.log
         if "actions/artifacts?name=" in text:
             return json.dumps({"artifacts": self.artifacts})
-        if "/zip" in text:
-            Path(command[-1]).write_bytes(self.zip)
+        if text.startswith("gh run download"):
+            fill(Path(command[-1]), self.github_changed)
         if text.startswith("docker run"):
             work = Path(command[command.index("-v") + 3].rsplit(":/out", 1)[0])
             fill(work / "local", self.local_changed)
@@ -126,7 +120,8 @@ def test_compare_builds_twice_and_writes_the_statement_to_sign(commands, tmp_pat
     assert "first bus release from this repository" in said
     assert "ssh-keygen -Y sign" in said and "strugglebus-bus-release" in said
     # The newest unexpired artifact is the one compared.
-    assert any("actions/artifacts/9/zip" in " ".join(call) for call in commands.calls)
+    download = next(call for call in commands.calls if call[:3] == ("gh", "run", "download"))
+    assert download[3] == "90" and f"bus-release-{COMMIT}" in download
     docker = next(call for call in commands.calls if call[0] == "docker")
     assert here.IMAGE in docker and f"bash bus/scripts/build_release.sh {COMMIT} /out/local" in docker[-1]
     assert not (work / "clone").exists()
@@ -188,7 +183,7 @@ def test_an_existing_work_folder_is_refused(commands, tmp_path):
 
 
 def test_without_githubs_build_there_is_nothing_to_compare(commands, tmp_path):
-    commands.artifacts = [{"id": 11, "expired": True}]
+    commands.artifacts = [{"id": 11, "expired": True, "workflow_run": {"id": 110}}]
 
     with pytest.raises(here.ReleaseError, match="Start the 'Bus release build' workflow"):
         here.compare(commands, COMMIT, tmp_path / "work")
@@ -196,11 +191,10 @@ def test_without_githubs_build_there_is_nothing_to_compare(commands, tmp_path):
     assert not any(call[0] == "docker" for call in commands.calls)
 
 
-@pytest.mark.parametrize("member", ["folder/file", "../escape"])
-def test_githubs_build_may_hold_only_plain_files(commands, tmp_path, member):
-    commands.zip = archive({member: b"x"})
+def test_a_difference_in_githubs_build_is_caught_the_same(commands, tmp_path):
+    commands.github_changed = "SHA256SUMS"
 
-    with pytest.raises(here.ReleaseError, match="other than plain files"):
+    with pytest.raises(here.ReleaseError, match="THE TWO BUILDS DIFFER.*SHA256SUMS"):
         here.compare(commands, COMMIT, tmp_path / "work")
 
 

@@ -26,7 +26,6 @@ import re
 import shutil
 import subprocess  # nosec B404 - fixed commands, no shell
 import sys
-import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
@@ -136,15 +135,11 @@ def githubs_build(run: Run, commit: str, work: Path) -> Path:
             f"GitHub has no build of {commit}. Start the 'Bus release build' workflow for it and let it finish."
         )
     newest = max(offered, key=lambda item: int(item["id"]))
-    archive = work / "github.zip"
-    run("gh", "api", f"repos/{REPOSITORY}/actions/artifacts/{newest['id']}/zip", "--output", str(archive))
     output = work / "github"
-    output.mkdir()
-    with zipfile.ZipFile(archive) as bundle:
-        for member in bundle.infolist():
-            if member.is_dir() or Path(member.filename).name != member.filename:
-                raise ReleaseError("GitHub's build holds something other than plain files")
-            (output / member.filename).write_bytes(bundle.read(member))
+    run(
+        "gh", "run", "download", str(int(newest["workflow_run"]["id"])), "--repo", REPOSITORY,
+        "--name", f"bus-release-{commit}", "--dir", str(output),
+    )
     return output
 
 
