@@ -81,7 +81,11 @@ ERROR_MESSAGES = MappingProxyType({
     "cleanup_pending": "Owned cache cleanup remains pending. New work is blocked.",
     "internal_error": "The updater could not complete the request. Check operation status before retrying.",
     "invalid_metadata": "The release metadata does not match the supported format.",
-    "rate_limited": "The fixed release source is limiting requests. Try again later.",
+    "rate_limited": (
+        "GitHub is limiting requests from this network. Anyone not signed in gets 60 an hour, shared by "
+        "everything behind the same address. Nothing is wrong with the bus: it tries again at the next w"
+        "indow, or check again by hand in an hour."
+    ),
     "incomplete": "The bounded release query did not produce complete results.",
     "unsupported_release": "The release is not supported by the installed verification policy.",
 })

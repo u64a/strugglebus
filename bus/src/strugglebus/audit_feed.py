@@ -219,6 +219,11 @@ _FIELDS = (
 _HOST_FIELDS = ("host_prefix", "document", "serial", "signer_fingerprint")
 
 
+#: A stored event (the ``bus_events`` table) adds these; null on every other line. ``fields``
+#: is the event's few checked values, never free text.
+_EVENT_FIELDS = ("source", "level", "subject", "fields")
+
+
 def _fields(row) -> dict[str, object]:
     """The allow-listed values of one audit row; a column a table lacks is null."""
 
@@ -226,7 +231,22 @@ def _fields(row) -> dict[str, object]:
     return {
         **{name: row[name] for name in _FIELDS},
         **{name: row[name] if name in present else None for name in _HOST_FIELDS},
+        **{name: None for name in _EVENT_FIELDS},
     }
+
+
+def event_line(stored) -> str:
+    """One stored event, for the SIEM. A host's event names the host in ``subject``."""
+
+    event = stored.event
+    record: dict[str, object] = {name: None for name in _FIELDS + _HOST_FIELDS}
+    record.update(
+        table="bus_events", ts=stored.received_at.strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
+        event=event.type, source=event.source, level=event.level, subject=event.subject,
+        fields={**event.fields, **({} if event.reported_at is None else {"at": event.reported_at})},
+        remote_address=None, outcome="ok", status=None, request_bytes=None,
+    )
+    return _line(record)
 #: Request lines carry these too; table rows have them as null and "ok".
 #: ``request_bytes`` is the size the caller declared, on a worker host's reports.
 _REQUEST_FIELDS = ("remote_address", "outcome", "status", "request_bytes")
@@ -249,7 +269,7 @@ def request_line(
     logins and the caller's address reach the SIEM.
     """
 
-    record: dict[str, object] = {name: None for name in _FIELDS + _HOST_FIELDS}
+    record: dict[str, object] = {name: None for name in _FIELDS + _HOST_FIELDS + _EVENT_FIELDS}
     record.update(
         table="request", ts=ts, event=event, spn_id=spn_id,
         agent_id=agent_id, agent_name=agent_name,
@@ -280,6 +300,7 @@ class AuditFeed:
         self.store = store
         self.emit = emit if emit is not None else LOGGER.info
         self.last: dict[str, int] | None = None
+        self.last_event = 0
 
     def start_at_end(self) -> None:
         with self.store._read_transaction() as connection:
@@ -287,6 +308,7 @@ class AuditFeed:
                 table: int(connection.execute(query).fetchone()[0])
                 for table, query in _END_QUERIES.items()
             }
+        self.last_event = self.store.last_bus_event_seq()
 
     def poll_once(self) -> None:
         if self.last is None:
@@ -305,6 +327,9 @@ class AuditFeed:
         for table, row_id, line in lines:
             self.emit(line)
             self.last[table] = row_id
+        for seq, stored in self.store.bus_events_after(self.last_event, 500):
+            self.emit(event_line(stored))
+            self.last_event = seq
 
     async def run(self) -> None:
         delay = POLL_SECONDS

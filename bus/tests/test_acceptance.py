@@ -239,7 +239,7 @@ async def test_v01_end_to_end_acceptance(
                     headers=writer_headers,
                 )
                 assert server_info.structured_content == rest_server_info.json()
-                assert server_info.structured_content["application_version"] == "0.2.73"
+                assert server_info.structured_content["application_version"] == "0.2.74"
                 assert (
                     server_info.structured_content["integration_guide_version"]
                     == "1.19.0"

@@ -450,7 +450,7 @@ def test_server_info_requires_agent_and_separates_version_fields(
     assert missing.status_code == 401
     assert response.status_code == 200
     assert response.json() == {
-        "application_version": "0.2.73",
+        "application_version": "0.2.74",
         "release_id": "development",
         "integration_guide_version": "1.19.0",
         "coordination_protocol_version": 1,

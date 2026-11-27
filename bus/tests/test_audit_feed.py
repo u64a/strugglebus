@@ -9,6 +9,7 @@ ALLOWED_KEYS = {
     "ts", "table", "event", "agent_id", "agent_name", "credential_id", "spn_id",
     "actor_type", "actor_id", "request_id", "identity_expires_at",
     "remote_address", "outcome", "status", "request_bytes",
+    "source", "level", "subject", "fields",
     "host_prefix", "document", "serial", "signer_fingerprint",
 }
 
