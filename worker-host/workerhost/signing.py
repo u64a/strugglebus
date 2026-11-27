@@ -97,7 +97,8 @@ def read_signers(path: Path) -> list[Signer]:
 @dataclass(frozen=True)
 class Verified:
     ok: bool
-    reason: str  # "good", or why not: no-signers, no-ssh-keygen, sig-shape, bad-signature, ssh-keygen-failed
+    reason: str  # "good", or why not: no-signers, no-ssh-keygen, sig-shape, bad-signature, ssh-keygen-failed,
+    #              sk-no-pin (a security key signed without both the touch and the PIN)
     fingerprint: str = ""
     principal: str = ""  # who signed: the allowed_signers principal whose key verified it
 
@@ -140,6 +141,8 @@ def verify(data: bytes, sig: bytes, namespace: str, allowed_signers: Path, ssh_k
             out = _verify_as(ssh_keygen, allowed_signers, principal, namespace, sig_file, data_file)
             if out is not None:
                 fp = next((t for t in out.split() if t.startswith("SHA256:")), "")
+                if not touch_and_pin(sig):
+                    return Verified(False, "sk-no-pin", fp, principal)
                 return Verified(True, "good", fp, principal)
     except (OSError, subprocess.TimeoutExpired):
         return Verified(False, "ssh-keygen-failed")
@@ -150,6 +153,52 @@ def verify(data: bytes, sig: bytes, namespace: str, allowed_signers: Path, ssh_k
             except OSError:
                 pass
     return Verified(False, "bad-signature")
+
+
+# A security key's signature carries the authenticator's flags, and they are inside what it signs:
+# 0x01 the user touched it, 0x04 the user was verified (the PIN). ssh-keygen -Y verify requires the touch but has no
+# way to require the PIN: OpenSSH's allowed_signers takes no verify-required option ("unknown key option", Windows'
+# OpenSSH 10.0, tested 27 Nov 2026). So the host checks the flags itself, after ssh-keygen has verified the
+# signature (which is what makes the flags genuine). Every release and fleet signature made so far carries 0x05.
+SK_TOUCH, SK_PIN = 0x01, 0x04
+
+
+def sk_flags(sig: bytes) -> int | None:
+    """The flags byte of a security-key SSHSIG signature, None for any other key type. Raises ValueError on a
+    signature it can't take apart."""
+    lines = sig.decode("ascii").strip().splitlines()
+    blob = base64.b64decode("".join(line for line in lines if not line.startswith("-----")), validate=True)
+
+    def field(buf: bytes, i: int) -> tuple[bytes, int]:
+        if i + 4 > len(buf):
+            raise ValueError("short")
+        n = int.from_bytes(buf[i:i + 4], "big")
+        if i + 4 + n > len(buf):
+            raise ValueError("short")
+        return buf[i + 4:i + 4 + n], i + 4 + n
+
+    if blob[:6] != b"SSHSIG":
+        raise ValueError("not SSHSIG")
+    i = 10  # magic and version
+    for _ in range(4):  # public key, namespace, reserved, hash algorithm
+        _, i = field(blob, i)
+    inner, _ = field(blob, i)
+    sig_type, j = field(inner, 0)
+    if not sig_type.startswith(b"sk-"):
+        return None
+    _, j = field(inner, j)  # the signature itself
+    if j >= len(inner):
+        raise ValueError("no flags")
+    return inner[j]
+
+
+def touch_and_pin(sig: bytes) -> bool:
+    """True unless a security key signed without both the touch and the PIN."""
+    try:
+        flags = sk_flags(sig)
+    except (ValueError, UnicodeDecodeError):
+        return False
+    return flags is None or flags & (SK_TOUCH | SK_PIN) == SK_TOUCH | SK_PIN
 
 
 def _verify_as(ssh_keygen: str, allowed_signers: Path, principal: str, namespace: str, sig_file: Path,

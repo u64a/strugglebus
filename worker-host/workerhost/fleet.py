@@ -344,7 +344,8 @@ class FleetSync:
         v = self.verify(data, sig)
         if not v.ok:
             # no-signers / no-ssh-keygen / ssh-keygen-failed are this host's problem, not the file's.
-            status = {"sig-shape": "fleet-unsigned", "bad-signature": "fleet-bad-signature"}.get(
+            status = {"sig-shape": "fleet-unsigned", "bad-signature": "fleet-bad-signature",
+              "sk-no-pin": "fleet-bad-signature"}.get(
                 v.reason, "fleet-cannot-verify")
             return Outcome(status, detail=v.reason, commit=commit)
         try:
