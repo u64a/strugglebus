@@ -491,10 +491,15 @@ def _published(version: str) -> _Release | None:
 
 def _newest_here(installed: tuple[int, int, int]) -> _Release | None:
     """The newest bus release in the project's repository that is newer than the installed one."""
-    for version in _tagged_versions(installed)[:TAGS_TRIED]:
+    versions = _tagged_versions(installed)
+    for version in versions[:TAGS_TRIED]:
         release = _published(version)
         if release is not None:
             return release
+    if len(versions) > TAGS_TRIED:
+        # The newest tags have no release and older ones were left untried. Tags with no release
+        # are easy to make and cannot be deleted, so this must never pass for "up to date".
+        raise Problem(INVALID, "the newest release tags have no release, so updates cannot be checked")
     return None
 
 

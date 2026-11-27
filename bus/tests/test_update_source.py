@@ -312,7 +312,7 @@ def test_more_tags_than_can_be_read_with_no_update_among_them_fails_the_check(fi
     api, reader = fixture_api
     for answer in range(1, source._TAG_ANSWERS + 1):
         api.routes[tag_answer(answer)] = tag_refs(*(f"bus/v0.1.{i}" for i in range(100)))
-    with pytest.raises(UpdateError, match="invalid_metadata"):
+    with pytest.raises(UpdateError, match="incomplete"):
         reader.check("0.2.27", deadline=220)
     assert not any(f"page={source._TAG_ANSWERS + 1}" in path for _, path in api.requests)
 
@@ -368,9 +368,18 @@ def test_only_the_newest_few_tags_are_tried(fixture_api):
     api, reader = fixture_api
     stray = [f"bus/v9.9.{n}" for n in range(source._TAGS_TRIED)]
     api.routes[tag_answer()] = tag_refs(PUBLISHED_TAG, *stray)
-    result = reader.check("0.2.27", deadline=220)
-    assert result.candidate is None and result.blocked_reason is None
+    # Never "nothing newer": the real update was left untried behind tags that have no release.
+    with pytest.raises(UpdateError, match="incomplete"):
+        reader.check("0.2.27", deadline=220)
     assert ("GET", release_for(PUBLISHED_TAG)) not in api.requests
+
+
+def test_a_few_tags_with_no_release_and_nothing_behind_them_is_nothing_newer(fixture_api):
+    """A tag is made a moment before its release is published; that is not a problem."""
+    api, reader = fixture_api
+    api.routes[tag_answer()] = tag_refs(*(f"bus/v9.9.{n}" for n in range(source._TAGS_TRIED)))
+    result = reader.check("0.2.27", deadline=220)
+    assert result.candidate is None and result.blocked_reason is None and result.complete
 
 
 def test_a_release_that_cannot_be_reached_is_not_taken_for_a_missing_one(fixture_api):

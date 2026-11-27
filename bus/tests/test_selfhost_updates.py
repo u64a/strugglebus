@@ -296,8 +296,21 @@ def test_only_the_newest_few_tags_are_tried(monkeypatch):
         _release_address("bus/v0.2.73"): _record("bus/v0.2.73"),
     })
 
-    assert fetch_release._newest_here(INSTALLED) is None
+    # Never "nothing newer": the real update was left untried behind tags that have no release.
+    with pytest.raises(fetch_release.Problem, match="have no release") as raised:
+        fetch_release._newest_here(INSTALLED)
+    assert raised.value.code == fetch_release.INVALID
     assert len(asked) == 1 + fetch_release.TAGS_TRIED
+
+
+def test_a_few_tags_with_no_release_and_nothing_behind_them_is_nothing_newer(monkeypatch):
+    """A tag is made a moment before its release is published; that is not a problem."""
+    _serve(monkeypatch, {fetch_release.TAGS: _tags("bus/v0.2.72", "bus/v0.2.73")})
+    assert fetch_release._newest_here(INSTALLED) is None
+
+    every = [f"bus/v9.9.{n}" for n in range(fetch_release.TAGS_TRIED)]
+    _serve(monkeypatch, {fetch_release.TAGS: _tags(*every)})
+    assert fetch_release._newest_here(INSTALLED) is None
 
 
 def _answer(number: int) -> str:

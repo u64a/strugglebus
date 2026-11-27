@@ -349,10 +349,12 @@ def _discover(session: _Session, running: str, limits: UpdateLimits) -> UpdateDi
                 raise
             return UpdateDiscovery(None, complete, inspected, text, error.code)
         return UpdateDiscovery(candidate, complete, inspected, None, None)
-    if not complete:
-        # Not every tag could be read and none of those read is an update. "Nothing newer" could
-        # be wrong, so the check fails where it can be seen.
-        raise UpdateError("invalid_metadata")
+    if not complete or len(versions) > _TAGS_TRIED:
+        # Either not every tag could be read, or the newest tags tried have no release and older
+        # ones were left untried. "Nothing newer" could be wrong either way, so the check fails
+        # where it can be seen. Tags with no release are easy to make and cannot be deleted, so
+        # this must never pass for "up to date".
+        raise UpdateError("incomplete")
     return UpdateDiscovery(None, complete, inspected, None, None)
 
 
