@@ -32,7 +32,7 @@ def test_package_version_has_one_canonical_source() -> None:
     with (REPOSITORY / "pyproject.toml").open("rb") as stream:
         project = tomllib.load(stream)
 
-    assert __version__ == "0.2.72"
+    assert __version__ == "0.2.73"
     assert "version" not in project["project"]
     assert project["project"]["dynamic"] == ["version"]
     assert project["tool"]["setuptools"]["dynamic"]["version"] == {

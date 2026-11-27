@@ -104,12 +104,32 @@ public partial class MainWindow
 
     internal async void BusLogRefresh_Click(object sender, RoutedEventArgs e) => await RunBusy(LoadBusLogAsync, sender);
 
+    /// <summary>
+    /// The whole log when this PC holds operator access and the bus offers it: that adds what worker
+    /// hosts reported and the bus's security events. Otherwise the log any enrolled device may read.
+    /// </summary>
+    private async Task<BusLog> ReadBusLogAsync()
+    {
+        if (_api.HasOperatorGrant())
+        {
+            try
+            {
+                return await _api.GetFullBusLogAsync(BusLogLimit, CancellationToken.None);
+            }
+            catch (BusApiException error) when (SettingsLogic.FullLogUnavailable(error.StatusCode))
+            {
+                // An older bus, or operator access that is no longer good: the ordinary log still is.
+            }
+        }
+        return await _api.GetBusLogAsync(BusLogLimit, CancellationToken.None);
+    }
+
     private async Task LoadBusLogAsync()
     {
         if (!IsEnrolled) return;
         try
         {
-            _busLog = await _api.GetBusLogAsync(BusLogLimit, CancellationToken.None);
+            _busLog = await ReadBusLogAsync();
             BusLogStatus.Text = SettingsLogic.BusLogStatus(_busLog, DateTime.Now);
         }
         catch (BusApiException error) when (AdminFlow.IsLegacyBus(error))
