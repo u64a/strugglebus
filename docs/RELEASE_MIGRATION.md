@@ -196,11 +196,15 @@ publish scripts. This needs the owner's yes to add them to `.github/CODEOWNERS`.
 - [x] 0.2.73's source fixed: commit `74e2ea6` on `main` (pull request 50) is the move and nothing
       else. Schema 25 merges after it.
 - [x] The updaters read this repository and find releases by `bus/v*` tag (pull request 37).
-- [ ] That tested on a non-production install: update, rollback, and the feed unavailable.
+- [ ] That tested on a real install: update, rollback, and the feed unavailable. The owner chose
+      to skip the non-production rehearsal for 0.2.73, so the production bus is the first real
+      install to make the step. The updater's code was run against a scratch repository only.
 - [x] 0.2.73 built and released privately by the old pipeline (private commit `013595a`, the same
       tree as `74e2ea6` here), 27 November 2026.
-- [ ] 0.2.73 signed, tested on a non-production install, then published at the old place and
-      installed on the production bus.
+- [x] 0.2.73 signed by the owner and published at the old place, 27 November 2026 (UTC): tag
+      `v0.2.73` in `NZCypher819/strugglebus-releases`, immutable. Four agents checked the
+      signature and the five files before it was published.
+- [ ] 0.2.73 installed on the production bus, then 0.2.74 from here.
 - [x] 0.2.74 published here, 27 November 2026: `bus/v0.2.74` at commit `f6175d6`. GitHub's
       runner (run 45987005482) and the owner's PC built the same five files; the owner signed;
       u64-security and sbworkerhost-project each verified the published release. No production
