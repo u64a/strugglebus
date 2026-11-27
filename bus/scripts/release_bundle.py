@@ -74,6 +74,11 @@ from strugglebus.release_validation import (
 )
 
 
+# Where a release may say it was built: the former private repository, which buses up to 0.2.72
+# expect, and the project's own repository, which buses from 0.2.73 expect.
+SOURCE_REPOSITORIES = (REPOSITORY_ID, "u64a/strugglebus")
+
+
 def _git(repository: Path, *arguments: str) -> str:
     try:
         result = subprocess.run(  # nosec B603
@@ -262,7 +267,13 @@ def build_bundle(
     expected_tree: str | None = None,
     uv_binary: Path | None = None,
     pre_tag: bool = False,
+    source_repository: str | None = None,
 ) -> dict[str, Any]:
+    # The repository the release says it was built from. An installed updater accepts only the
+    # one it expects, so this is chosen by the pipeline that builds, never taken from the source.
+    source_repository = source_repository or REPOSITORY_ID
+    if source_repository not in SOURCE_REPOSITORIES:
+        raise ReleaseBundleError("release source repository is not one a bus accepts")
     repository = repository.resolve(strict=True)
     distribution_directory = distribution_directory.resolve(strict=True)
     output_directory.mkdir(parents=True, exist_ok=True)
@@ -372,8 +383,8 @@ def build_bundle(
             "integration_guide_version": GUIDE_VERSION,
         },
         "release": {
-            "candidate_id": f"{REPOSITORY_ID}@{tag}:{commit}:{tree}",
-            "repository": REPOSITORY_ID,
+            "candidate_id": f"{source_repository}@{tag}:{commit}:{tree}",
+            "repository": source_repository,
             "source_commit": commit,
             "source_tree": tree,
             "tag": tag,
@@ -389,7 +400,7 @@ def build_bundle(
     (output_directory / CHECKSUMS_NAME).write_text(checksums, encoding="ascii")
     validate_bundle(
         output_directory,
-        expected_repository=REPOSITORY_ID,
+        expected_repository=source_repository,
         expected_tag=tag,
         expected_commit=commit,
         expected_tree=tree,
@@ -411,6 +422,11 @@ def _build_parser() -> argparse.ArgumentParser:
     build.add_argument("--expected-commit")
     build.add_argument("--expected-tree")
     build.add_argument("--uv-binary", type=Path)
+    build.add_argument(
+        "--source-repository",
+        choices=SOURCE_REPOSITORIES,
+        help="the repository the release is built from; defaults to the former private one",
+    )
     build.add_argument(
         "--pre-tag",
         action="store_true",
@@ -453,6 +469,7 @@ def main() -> int:
             expected_tree=args.expected_tree,
             uv_binary=args.uv_binary,
             pre_tag=args.pre_tag,
+            source_repository=args.source_repository,
         )
         print(_canonical_json(manifest).decode("ascii"), end="")
         return 0
