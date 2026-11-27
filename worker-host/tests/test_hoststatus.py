@@ -139,7 +139,7 @@ V2 = replace(
              {"slot": "w02", "engine": "claude", "model": "claude-sonnet-5.5", "minutes": 7}],
     machine={"cpu_pct": 37.25, "ram_free_gb": 21.04, "disk_free_gb": 812.6, "commit_pct": 48.0},
     bus_state="ok", channel="worker-hosts", channel_state="ok", model="claude-opus-5.5", ghcp_ok=True,
-    tasks={"finished": 17, "failed": 2, "timed-out": 1, "refused": 3})
+    tasks={"finished": 17, "failed": 2, "timed-out": 1, "refused": 3}, pwsh="7.6.10")
 RECEIVED_AT = "2026-11-27T04:00:00Z"  # the bus's clock, in the history vector
 
 
@@ -165,7 +165,8 @@ def test_v2_is_v1_plus_the_panels_facts():
     v1, v2 = build(), hoststatus.build_v2(BASE)
     assert v2["v"] == 2
     assert all(v2[k] == v1[k] for k in v1 if k not in ("v", "workers"))  # every v1 field, unchanged
-    assert set(v2) - set(v1) == {"machine", "bus", "model", "ghcp_ok", "tasks"}
+    assert set(v2) - set(v1) == {"machine", "bus", "model", "ghcp_ok", "tasks", "pwsh"}
+    assert v2["pwsh"] is None  # not found: null, never a guess
     assert v2["workers"] == {"busy": 0, "max": 12, "claiming": 0, "running": []}
     assert v2["machine"] == {"cpu_pct": None, "ram_free_gb": None, "disk_free_gb": None, "commit_pct": None}
     assert list(v2["tasks"]) == list(hoststatus.TASK_OUTCOMES) and set(v2["tasks"].values()) == {0}
@@ -179,6 +180,39 @@ def test_a_device_without_the_operator_grant_never_sees_the_admin_fields():
     assert dev["bus"] == {"state": "ok"}  # channel and channel_state are admin only (bus-dev, 28832)
     assert dev["workers"]["running"][0] == {"slot": "w01", "engine": "ghcp", "model": "claude-opus-5.5", "minutes": 42}
     assert hoststatus.build_v2(V2)["account"] == "sbworker"  # the host sends it; the bus filters on read
+
+
+@pytest.mark.parametrize("value, sent", [("7.6.10", "7.6.10"), ("7.7.0-preview.3", "7.7.0-preview.3"), ("", None),
+                                         ("7.6.10; rm -rf", None), ("x" * 40, None), (None, None)])
+def test_the_powershell_version_is_sent_only_when_it_looks_like_one(value, sent):
+    assert hoststatus.build_v2(replace(V2, pwsh=value))["pwsh"] == sent
+
+
+def test_pwsh_is_not_in_the_history_sample():
+    """A version doesn't chart, and the latest snapshot shows it (bus-dev, #humans 28936)."""
+    assert "pwsh" not in hoststatus.sample(hoststatus.build_v2(V2), RECEIVED_AT)
+
+
+def test_the_host_asks_pwsh_for_its_version_once_an_hour(pushing, monkeypatch):
+    import subprocess as sp
+
+    h, pushes, logged, answer, clock = pushing
+    calls = []
+    monkeypatch.setattr("workerhost.host.shutil.which", lambda name: "C:\\pwsh.exe")
+
+    def fake_run(cmd, **k):
+        calls.append(cmd)
+        return sp.CompletedProcess(cmd, 0, "7.6.10\n", "")
+
+    monkeypatch.setattr("workerhost.host.subprocess.run", fake_run)
+    assert h.pwsh_version() == "7.6.10" and h.pwsh_version() == "7.6.10" and len(calls) == 1
+    clock["t"] += 3601
+    h.pwsh_version()
+    assert len(calls) == 2
+    monkeypatch.setattr("workerhost.host.shutil.which", lambda name: None)
+    monkeypatch.setattr("workerhost.host.PWSH_PATHS", ())
+    clock["t"] += 3601
+    assert h.pwsh_version() is None
 
 
 def test_a_history_sample_is_small_and_uses_the_bus_clock():

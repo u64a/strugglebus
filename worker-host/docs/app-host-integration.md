@@ -139,6 +139,7 @@ v2 is the whole v1 object (section 1), with `v: 2` and these additions:
 | `model` | str | The default model |
 | `ghcp_ok` | bool or null | Whether the last Copilot CLI update worked (`null`: none tried) |
 | `tasks` | obj | How this host process's tasks have ended since `started_at`: `finished`, `failed`, `timed-out`, `interrupted`, `refused`, `yielded`, `cancelled`, always all seven. Running totals: a chart takes the differences, and a new `started_at` means they started again |
+| `pwsh` | str or null; **may be absent** | PowerShell 7's version (`7.6.10`), asked once an hour; `null` if it can't be found or run. Added after v2 was agreed (u64-security, #humans 28927; bus-dev 28936). The bootstrap installs PowerShell from a pinned zip that Wazuh can't see, so monitoring needs its version here. "May be absent": the bus accepts a snapshot with or without it, so hosts and buses can be updated in either order. For every device; not in the history sample |
 
 **A history sample** is what the history call returns per push, about 200 bytes: `received_at`, `state`,
 `workers` (`busy`, `max`), `machine`, `outbox`, `held_clones`, `tasks`.

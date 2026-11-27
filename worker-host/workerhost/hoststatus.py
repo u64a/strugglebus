@@ -13,6 +13,7 @@ credential, path or message text: the App shows it as untrusted plain text.
 from __future__ import annotations
 
 import json
+import re
 import time
 from dataclasses import dataclass, field
 
@@ -87,6 +88,7 @@ class Facts:
     model: str = ""                                    # the default model
     ghcp_ok: bool | None = None                        # the last Copilot CLI update worked (None: not tried)
     tasks: dict = field(default_factory=dict)          # outcome -> count since started_at (TASK_OUTCOMES)
+    pwsh: str | None = None                            # PowerShell 7's version (a zip install Wazuh can't see)
 
 
 def state_of(f: Facts) -> str:
@@ -172,6 +174,7 @@ def build(f: Facts) -> dict:
 
 
 MACHINE = ("cpu_pct", "ram_free_gb", "disk_free_gb", "commit_pct")
+PWSH_RE = re.compile(r"[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,5}(?:[-.][0-9A-Za-z.]{1,16})?")  # at most 32
 
 
 def build_v2(f: Facts) -> dict:
@@ -186,6 +189,9 @@ def build_v2(f: Facts) -> dict:
     s["model"] = f.model
     s["ghcp_ok"] = f.ghcp_ok
     s["tasks"] = {k: int(f.tasks.get(k, 0)) for k in TASK_OUTCOMES}
+    # pwsh: added after v2 was agreed (u64-security, #humans 28927; bus-dev 28936): the bus accepts it with or
+    # without, so hosts and buses can be updated in either order. Not in the history sample.
+    s["pwsh"] = f.pwsh if f.pwsh and PWSH_RE.fullmatch(f.pwsh) else None
     return s
 
 

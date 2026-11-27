@@ -56,8 +56,8 @@ PINNED = {
     "host-events/batch-wrong-agent.json": "7d28fc908d328aabd9b7d19c1940436dd279071a4d9ed79efc3575a8b72b3c9a",
     "host-events/expected.json": "fdded42ff4c8d4eee4654a8917cc5c143edf23c577ec7400cff0d3389be5fa55",
     "host-status/sample-v2.json": "f0377cc9142d2c9a2382d18ae9d9c5eaeb2d89a5815077964f45b238fa1e3ca3",
-    "host-status/snapshot-v2-device.json": "aadb5bca41c1dac6c7538a8aefe3f99951928be07016360f9965d5b49ce93d4a",
-    "host-status/snapshot-v2.json": "07261a78e8724a173d0d9482db4ed109711dd29a8d012e15ffd134220036f2fb",
+    "host-status/snapshot-v2-device.json": "4ede2b330023e0179b2a62ebbf577d8dcacd8ef025f19ea354a7755faaee0e3a",
+    "host-status/snapshot-v2.json": "dfdd19e0aa5ae9e4a02ce41eb192067c1df17030894f7beca9388eb352d55555",
 }
 
 
