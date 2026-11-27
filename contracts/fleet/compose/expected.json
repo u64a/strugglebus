@@ -16,6 +16,6 @@
   "_about": "The flags byte of an SSHSIG by a security key; the App and the hosts require 0x05 (touch and PIN). These are structurally real SSHSIGs with made-up key and signature bytes: for the flags reader only, they verify against nothing.",
   "sk-touch-pin.sig": 5,
   "sk-touch-only.sig": 1,
-  "plain-key.sig": null
+  "plain-ed25519.sig": null
  }
 }

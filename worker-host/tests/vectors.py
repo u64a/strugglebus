@@ -20,8 +20,8 @@ PINNED = {
     "fleet/compose/before.toml": "bc1ace56aca1c25b0431de9d0a0cc7425b2eb8f76a46acbae24825ee5184fc16",
     "fleet/compose/duplicate-id.toml": "9628751f094bc74a2a97efe48002fffbb1f6344bf3063996e5ee11f510d8d968",
     "fleet/compose/duplicate-name.toml": "5b8090ed8c1993eb700b14eed9faf74118abd8315f263754c0692ec742a33512",
-    "fleet/compose/expected.json": "d1171781df4274c464db0b040e67bdae96bfdf392b0d5b55b87948d59f1b445a",
-    "fleet/compose/plain-key.sig": "36dce4345960e7e5efdca2189c3274a7b6ad1fd1442d09f2d6da623dec569794",  # gitleaks:allow
+    "fleet/compose/expected.json": "2c582f8eb7db70776a17e786e1df70fee08d697388322bdbf4da8ae6a069c82e",
+    "fleet/compose/plain-ed25519.sig": "36dce4345960e7e5efdca2189c3274a7b6ad1fd1442d09f2d6da623dec569794",
     "fleet/compose/serial-missing.toml": "e84c5aba79bb43de44d301937ac9a4d0d38df52886052e29d1562df432fc83e3",
     "fleet/compose/serial-twice.toml": "ac3e34c8b0583e73dc3b06c70112161aa841218dc99349abd75cfacc9d91542f",
     "fleet/compose/sk-touch-only.sig": "8c9b80e9be772c2473b56716761145f72ea30b732956191ff73e8c65867ce449",
