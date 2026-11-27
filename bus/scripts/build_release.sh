@@ -66,6 +66,8 @@ echo "$uv_hash  $archive" | sha256sum --check --status || {
 mkdir "$work/uv"
 tar -xzf "$archive" -C "$work/uv" --strip-components=1
 uv="$work/uv/uv"
+# The release scripts run uv themselves, and must get this one.
+export PATH="$work/uv:$PATH"
 
 # Nothing the build writes may land in the checkout, or the clean check inside it would fail.
 export UV_PROJECT_ENVIRONMENT="$work/venv"
