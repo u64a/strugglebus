@@ -197,8 +197,15 @@ publish scripts. This needs the owner's yes to add them to `.github/CODEOWNERS`.
       else. Schema 25 merges after it.
 - [x] The updaters read this repository and find releases by `bus/v*` tag (pull request 37).
 - [ ] That tested on a non-production install: update, rollback, and the feed unavailable.
-- [ ] 0.2.73 published at the old place and installed on the production bus.
-- [ ] 0.2.74 published here. `NZCypher819/strugglebus-releases` kept read-only.
+- [x] 0.2.73 built and released privately by the old pipeline (private commit `013595a`, the same
+      tree as `74e2ea6` here), 27 November 2026.
+- [ ] 0.2.73 signed, tested on a non-production install, then published at the old place and
+      installed on the production bus.
+- [x] 0.2.74 published here, 27 November 2026: `bus/v0.2.74` at commit `f6175d6`. GitHub's
+      runner (run 45987005482) and the owner's PC built the same five files; the owner signed;
+      u64-security and sbworkerhost-project each verified the published release. No production
+      bus could see it at the time: all were on 0.2.72, which reads the old place.
+- [ ] `NZCypher819/strugglebus-releases` kept read-only, with 0.2.73 as its last release.
 - [ ] `worker.json` on the production bus changed to name this repository.
 
 ## Before or with the move
