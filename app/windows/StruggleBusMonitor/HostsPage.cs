@@ -168,22 +168,33 @@ internal static class HostsPageLogic
     public static HostCard Card(HostReport report, DateTimeOffset now)
     {
         var (label, tone) = Badge(report, now);
-        var snapshot = report.Snapshot;
-        return new HostCard
+        var card = new HostCard
         {
             AgentId = report.AgentId,
             Name = Name(report),
             StateLabel = label,
             Tone = tone,
-            Seen = Seen(report.ReceivedAt, now),
-            Workers = snapshot is null ? string.Empty : $"{snapshot.Basic.Busy} of {snapshot.Basic.Max} workers busy",
-            Running = snapshot is null ? string.Empty : string.Join(Environment.NewLine, snapshot.Running.Select(WorkerLine)),
-            Machine = snapshot is null ? string.Empty : MachineLine(snapshot.Machine),
-            Tasks = snapshot is null ? string.Empty : TasksLine(snapshot.Tasks),
-            Details = snapshot is null ? string.Empty : Joined(Details(snapshot)),
-            Alerts = snapshot is null ? string.Empty : string.Join(Environment.NewLine, Alerts(snapshot))
+            Seen = Seen(report.ReceivedAt, now)
         };
+        return report.Snapshot is { } snapshot ? Filled(card, snapshot) : card;
     }
+
+    /// <summary>The card with what the host reported about itself.</summary>
+    private static HostCard Filled(HostCard card, HostSnapshot snapshot) => new()
+    {
+        AgentId = card.AgentId,
+        Name = card.Name,
+        StateLabel = card.StateLabel,
+        Tone = card.Tone,
+        Seen = card.Seen,
+        // A host that has stopped reporting is not known to be doing this now.
+        Workers = (card.Tone == "Off" ? "When it last reported: " : string.Empty) + $"{snapshot.Basic.Busy} of {snapshot.Basic.Max} workers busy",
+        Running = string.Join(Environment.NewLine, snapshot.Running.Select(WorkerLine)),
+        Machine = MachineLine(snapshot.Machine),
+        Tasks = TasksLine(snapshot.Tasks),
+        Details = Joined(Details(snapshot)),
+        Alerts = string.Join(Environment.NewLine, Alerts(snapshot))
+    };
 
     /// <summary>The PC's own name when it has reported one; otherwise its bus name.</summary>
     internal static string Name(HostReport report)
@@ -251,13 +262,22 @@ internal static class HostsPageLogic
     public static string Summary(IReadOnlyCollection<HostCard> cards, bool whole)
     {
         if (cards.Count == 0) return "No worker hosts are marked on this bus yet. Mark one on Admin, Worker hosts.";
-        var silent = cards.Count(card => card.Tone == "Off");
-        var attention = cards.Count(card => card.Tone == "Warn" || (card.HasAlerts && card.Tone == "Ok"));
-        var hosts = $"{cards.Count} host{(cards.Count == 1 ? "" : "s")}{Note(silent, "not reporting")}{Note(attention, "needing attention")}.";
+        var hosts = Counted(cards);
         return whole ? hosts : hosts + " Save operator access on Admin to also see each host's account, warnings and channel.";
     }
 
+    private static string Counted(IReadOnlyCollection<HostCard> cards)
+    {
+        var silent = cards.Count(card => card.Tone == "Off");
+        var attention = cards.Count(NeedsAttention);
+        return $"{cards.Count} host{(cards.Count == 1 ? "" : "s")}{Note(silent, "not reporting")}{Note(attention, "needing attention")}.";
+    }
+
+    private static bool NeedsAttention(HostCard card) => card.Tone == "Warn" || (card.HasAlerts && card.Tone == "Ok");
+
     private static string Note(int count, string what) => count > 0 ? $", {count} {what}" : string.Empty;
+
+    public const string Unsupported = "This bus does not keep worker host reports yet. It needs StruggleBus 0.2.74 or newer.";
 
     /// <summary>The page shows what it last loaded for this long before asking the bus again.</summary>
     public static bool IsStale(DateTimeOffset? loadedAt, DateTimeOffset now) =>
@@ -287,9 +307,13 @@ internal static class HostsPageLogic
         card.CpuLine = Line(samples.Select(sample => (sample.At, sample.CpuPct)), now, 100);
         card.HasHistory = card.BusyLine.Count > 1;
         card.HistoryLabel = card.HasHistory
-            ? $"Last 12 hours: workers busy (of {most}) and processor use"
-            : "Not enough reports yet to draw the last 12 hours.";
+            ? $"Last 12 hours: workers busy of {most} (bright line) and processor use (faint line)"
+            : NoHistoryYet(card);
     }
+
+    /// <summary>A host that has never reported has said so already; one that has gets told why there is no chart.</summary>
+    private static string NoHistoryYet(HostCard card) =>
+        card.Workers.Length == 0 ? string.Empty : "Not enough reports yet to draw the last 12 hours.";
 
     private static PointCollection Frozen(IEnumerable<Point> points)
     {
@@ -308,4 +332,8 @@ internal static class HostsPageLogic
         mark ? $"Mark {agentName} as a worker host" : $"Unmark {agentName} as a worker host";
 
     public static string MarkLabel(bool marked) => marked ? "No longer a host" : "Mark as host";
+
+    /// <summary>What the bus records as the reason. The action says what it is; the App says where it came from.</summary>
+    public static string MarkReason(bool mark) =>
+        mark ? "marked as a worker host from the Windows app" : "worker host mark removed from the Windows app";
 }

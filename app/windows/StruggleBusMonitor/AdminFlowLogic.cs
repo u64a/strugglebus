@@ -76,12 +76,14 @@ internal static class AdminFlow
 
     public static string KindNoun(AdminRowKind kind) => kind == AdminRowKind.Agent ? "agent" : "service principal";
 
+    public const string GrantNeeded = "Save operator access on the Access tab first.";
+
     /// <summary>The trimmed audit reason for a direct action, once it and the operator grant are in place.</summary>
     public static string RequireControl(string reasonText, bool hasGrant)
     {
         var reason = reasonText.Trim();
         if (reason.Length == 0) throw new InvalidOperationException("Enter an audit reason before requesting an action.");
-        if (!hasGrant) throw new InvalidOperationException("Save operator access on the Access tab first.");
+        if (!hasGrant) throw new InvalidOperationException(GrantNeeded);
         return reason;
     }
 

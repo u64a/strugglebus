@@ -98,15 +98,15 @@ public sealed class HostsPageLogicTests
     }
 
     [Theory]
-    [InlineData("2026-11-27T04:00:00Z", "ONLINE", "Ok", "reported less than a minute ago")]
-    [InlineData("2026-11-27T03:58:30Z", "ONLINE", "Ok", "last reported 2 minutes ago")]
-    [InlineData("2026-11-27T03:58:29Z", "NOT REPORTING", "Off", "last reported 2 minutes ago")]
-    [InlineData("2026-11-27T01:01:00Z", "NOT REPORTING", "Off", "last reported 3 hours ago")]
-    public void WhetherAHostIsReportingComesFromTheBusClock(string receivedAt, string label, string tone, string seen)
+    [InlineData("2026-11-27T04:00:00Z", "ONLINE", "Ok", "reported less than a minute ago", "2 of 12 workers busy")]
+    [InlineData("2026-11-27T03:58:30Z", "ONLINE", "Ok", "last reported 2 minutes ago", "2 of 12 workers busy")]
+    [InlineData("2026-11-27T03:58:29Z", "NOT REPORTING", "Off", "last reported 2 minutes ago", "When it last reported: 2 of 12 workers busy")]
+    [InlineData("2026-11-27T01:01:00Z", "NOT REPORTING", "Off", "last reported 3 hours ago", "When it last reported: 2 of 12 workers busy")]
+    public void WhetherAHostIsReportingComesFromTheBusClock(string receivedAt, string label, string tone, string seen, string workers)
     {
         var card = HostsPageLogic.Card(Report(receivedAt: receivedAt), Now);
 
-        Assert.Equal((label, tone, seen), (card.StateLabel, card.Tone, card.Seen));
+        Assert.Equal((label, tone, seen, workers), (card.StateLabel, card.Tone, card.Seen, card.Workers));
     }
 
     [Fact]
@@ -196,13 +196,17 @@ public sealed class HostsPageLogicTests
         Assert.Equal(3, card.BusyLine.Count);
         Assert.Equal(2, card.CpuLine.Count);
         Assert.Equal(new Point(260, 0), card.BusyLine[2]);
-        Assert.Equal("Last 12 hours: workers busy (of 12) and processor use", card.HistoryLabel);
+        Assert.Equal("Last 12 hours: workers busy of 12 (bright line) and processor use (faint line)", card.HistoryLabel);
 
         HostsPageLogic.Draw(card, [samples[0]], Now);
         Assert.False(card.HasHistory);
         Assert.Equal("Not enough reports yet to draw the last 12 hours.", card.HistoryLabel);
         HostsPageLogic.Draw(card, [], Now);
         Assert.Empty(card.BusyLine);
+
+        var never = HostsPageLogic.Card(new HostReport("a-2", "host-new-host", null, null), Now);
+        HostsPageLogic.Draw(never, [], Now);
+        Assert.Equal(string.Empty, never.HistoryLabel);
     }
 
     [Fact]

@@ -69,6 +69,7 @@
                             <TextBlock x:Name="HumansBadgeText" FontFamily="{StaticResource Mono}" FontSize="10" FontWeight="Bold" Foreground="{DynamicResource OnAccent}"/>
                         </Border>
                     </Grid>
+                    <RadioButton x:Name="HostsNav" DockPanel.Dock="Top" GroupName="Nav" Style="{StaticResource NavItem}" Content="Hosts" Tag="{StaticResource IconHosts}" IsEnabled="False" Checked="Nav_Checked"/>
                     <RadioButton x:Name="AdminNav" DockPanel.Dock="Top" GroupName="Nav" Style="{StaticResource NavItem}" Content="Admin" Tag="{StaticResource IconAdmin}" IsEnabled="False" Checked="Nav_Checked"/>
                 </DockPanel>
             </Border>
@@ -354,6 +355,114 @@
                         </Border>
                     </Grid>
 
+                    <!-- Hosts -->
+                    <ScrollViewer x:Name="HostsPage" Visibility="Collapsed" VerticalScrollBarVisibility="Auto">
+                        <StackPanel MaxWidth="940" Margin="28,22">
+                            <DockPanel>
+                                <Button x:Name="HostsReload" DockPanel.Dock="Right" Content="Reload" Style="{StaticResource BtnGhost}" Click="HostsReload_Click"/>
+                                <TextBlock Text="WORKER HOSTS" Style="{StaticResource Label}" VerticalAlignment="Center"/>
+                            </DockPanel>
+                            <TextBlock x:Name="HostsSummary" Style="{StaticResource MutedText}" TextWrapping="Wrap" Margin="0,8,0,0"/>
+                            <TextBlock Text="What each PC that runs agent workers last told the bus about itself, refreshed every half minute. Whether a host is reporting comes from the bus's own clock. Everything else is the host's own word." Style="{StaticResource MutedText}" TextWrapping="Wrap" Margin="0,4,0,14"/>
+                            <ItemsControl x:Name="HostsList" Focusable="False">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <Border Style="{StaticResource Card}">
+                                            <StackPanel>
+                                                <StackPanel Orientation="Horizontal">
+                                                    <TextBlock Text="{Binding Name}" FontFamily="{StaticResource Mono}" FontSize="15" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                                                    <Border Style="{StaticResource KindBadge}" Margin="10,0,0,0">
+                                                    <TextBlock Text="{Binding StateLabel}" FontFamily="{StaticResource Mono}" FontSize="11">
+                                                        <TextBlock.Style>
+                                                            <Style TargetType="TextBlock">
+                                                                <Setter Property="Foreground" Value="{DynamicResource Muted}"/>
+                                                                <Style.Triggers>
+                                                                    <DataTrigger Binding="{Binding Tone}" Value="Ok"><Setter Property="Foreground" Value="{DynamicResource Ok}"/></DataTrigger>
+                                                                    <DataTrigger Binding="{Binding Tone}" Value="Warn"><Setter Property="Foreground" Value="{DynamicResource Warn}"/></DataTrigger>
+                                                                </Style.Triggers>
+                                                            </Style>
+                                                        </TextBlock.Style>
+                                                    </TextBlock>
+                                                </Border>
+                                                    <TextBlock Text="{Binding Seen}" Style="{StaticResource MutedText}" VerticalAlignment="Center" Margin="12,0,0,0"/>
+                                                </StackPanel>
+                                                <TextBlock Text="{Binding Alerts}" Foreground="{DynamicResource Warn}" FontSize="12" TextWrapping="Wrap" Margin="0,8,0,0">
+                                                    <TextBlock.Style>
+                                                    <Style TargetType="TextBlock">
+                                                        <Style.Triggers>
+                                                            <DataTrigger Binding="{Binding HasAlerts}" Value="False"><Setter Property="Visibility" Value="Collapsed"/></DataTrigger>
+                                                        </Style.Triggers>
+                                                    </Style>
+                                                </TextBlock.Style>
+                                                </TextBlock>
+                                                <TextBlock Text="{Binding Workers}" FontWeight="SemiBold" Margin="0,10,0,0">
+                                                    <TextBlock.Style>
+                                                        <Style TargetType="TextBlock">
+                                                            <Style.Triggers>
+                                                                <Trigger Property="Text" Value=""><Setter Property="Visibility" Value="Collapsed"/></Trigger>
+                                                            </Style.Triggers>
+                                                        </Style>
+                                                    </TextBlock.Style>
+                                                </TextBlock>
+                                                <TextBlock Text="{Binding Running}" FontFamily="{StaticResource Mono}" FontSize="12" TextWrapping="Wrap" Margin="0,4,0,0">
+                                                    <TextBlock.Style>
+                                                    <Style TargetType="TextBlock">
+                                                        <Style.Triggers>
+                                                            <DataTrigger Binding="{Binding HasRunning}" Value="False"><Setter Property="Visibility" Value="Collapsed"/></DataTrigger>
+                                                        </Style.Triggers>
+                                                    </Style>
+                                                </TextBlock.Style>
+                                                </TextBlock>
+                                                <TextBlock Text="{Binding Machine}" TextWrapping="Wrap" Margin="0,8,0,0">
+                                                    <TextBlock.Style>
+                                                        <Style TargetType="TextBlock">
+                                                            <Style.Triggers>
+                                                                <Trigger Property="Text" Value=""><Setter Property="Visibility" Value="Collapsed"/></Trigger>
+                                                            </Style.Triggers>
+                                                        </Style>
+                                                    </TextBlock.Style>
+                                                </TextBlock>
+                                                <TextBlock Text="{Binding Tasks}" TextWrapping="Wrap" Margin="0,4,0,0">
+                                                    <TextBlock.Style>
+                                                        <Style TargetType="TextBlock">
+                                                            <Style.Triggers>
+                                                                <Trigger Property="Text" Value=""><Setter Property="Visibility" Value="Collapsed"/></Trigger>
+                                                            </Style.Triggers>
+                                                        </Style>
+                                                    </TextBlock.Style>
+                                                </TextBlock>
+                                                <TextBlock Text="{Binding Details}" TextWrapping="Wrap" Margin="0,6,0,0">
+                                                    <TextBlock.Style>
+                                                        <Style TargetType="TextBlock" BasedOn="{StaticResource MutedText}">
+                                                            <Style.Triggers>
+                                                                <Trigger Property="Text" Value=""><Setter Property="Visibility" Value="Collapsed"/></Trigger>
+                                                            </Style.Triggers>
+                                                        </Style>
+                                                    </TextBlock.Style>
+                                                </TextBlock>
+                                                <Border BorderBrush="{DynamicResource Line}" BorderThickness="0,0,0,1" Width="260" Height="34" HorizontalAlignment="Left" Margin="0,12,0,0" Visibility="{Binding HasHistory, Converter={StaticResource BoolToVisibility}}">
+                                                    <Grid>
+                                                        <Polyline Points="{Binding CpuLine}" Stroke="{DynamicResource Muted}" StrokeThickness="1"/>
+                                                        <Polyline Points="{Binding BusyLine}" Stroke="{DynamicResource Accent}" StrokeThickness="1.5"/>
+                                                    </Grid>
+                                                </Border>
+                                                <TextBlock Text="{Binding HistoryLabel}" FontSize="11" Margin="0,4,0,0">
+                                                    <TextBlock.Style>
+                                                        <Style TargetType="TextBlock" BasedOn="{StaticResource MutedText}">
+                                                            <Style.Triggers>
+                                                                <Trigger Property="Text" Value=""><Setter Property="Visibility" Value="Collapsed"/></Trigger>
+                                                            </Style.Triggers>
+                                                        </Style>
+                                                    </TextBlock.Style>
+                                                </TextBlock>
+                                            </StackPanel>
+                                        </Border>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                        </StackPanel>
+                    </ScrollViewer>
+
                     <!-- Admin -->
                     <ScrollViewer x:Name="AdminPage" Visibility="Collapsed" VerticalScrollBarVisibility="Auto">
                         <ScrollViewer.Resources>
@@ -508,6 +617,7 @@
                                                             </Border>
                                                         </StackPanel>
                                                         <TextBlock Text="{Binding Meta}" Style="{StaticResource MutedText}" TextWrapping="Wrap" Margin="0,3,0,0"/>
+                                                        <Button Content="{Binding MarkLabel}" Tag="{Binding}" Style="{StaticResource BtnOutline}" HorizontalAlignment="Left" Margin="0,6,0,0" Click="HostMark_Click" Visibility="{Binding CanMark, Converter={StaticResource BoolToVisibility}}"/>
                                                         <TextBlock Text="{Binding Joined}" FontFamily="{StaticResource Mono}" FontSize="12" TextWrapping="Wrap" Margin="0,4,0,0">
                                                             <TextBlock.Style>
                                                                 <Style TargetType="TextBlock">
