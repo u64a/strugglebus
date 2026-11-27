@@ -24,7 +24,7 @@ from typing import Annotated
 from fastapi import APIRouter, HTTPException, Query, Request, status
 from fastapi.responses import Response
 
-from strugglebus import __version__, audit_feed, server_log
+from strugglebus import __version__, audit_feed, bus_events, server_log
 from strugglebus.errors import (
     AgentAccessFrozenError,
     AgentNotFoundError,
@@ -44,6 +44,7 @@ from strugglebus.routes.schemas import (
     MobileAdminActionOption,
     MobileAdminControlResponse,
     MobileAgentControlRequest,
+    MobileFullLogRequest,
     MobileGrantRequest,
     MobileHostHistoryResponse,
     MobileHostMarkRequest,
@@ -165,6 +166,17 @@ def _audit_subject(row: dict[str, object]) -> str | None:
         row["host_prefix"], _document_subject(row),
     )
     return next((str(value) for value in candidates if value), None)
+
+
+def _event_entry(stored: bus_events.StoredEvent) -> MobileLogEntry:
+    """A stored event as a log row. Its source says where it came from; a host's are its own claims."""
+
+    event = stored.event
+    return MobileLogEntry(
+        ts=stored.received_at, source=event.source, level=event.level, event=event.type,
+        subject=event.subject or None, actor=None, status=None, remote_address=None,
+        detail=bus_events.detail(event),
+    )
 
 
 def _audit_entry(row: dict[str, object]) -> MobileLogEntry:
@@ -484,6 +496,20 @@ def add_mobile_admin_routes(router: APIRouter) -> None:
 
     # ---- Logs ------------------------------------------------------------
 
+    def _log(request: Request, limit: int, *, admin: bool) -> MobileLogResponse:
+        store = request.app.state.agent_service.store
+        entries = [_audit_entry(row) for row in audit_feed.recent(store, limit)]
+        entries += [MobileLogEntry(**entry) for entry in server_log.RECENT.recent(limit)]
+        # Stored events outlast a restart, which the two sources above do not.
+        entries += [_event_entry(stored) for stored in request.app.state.event_log.recent(limit, admin=admin)]
+        entries.sort(key=lambda entry: entry.ts, reverse=True)
+        installed = server_log.RECENT in server_log.AUDIT_LOGGER.handlers
+        return MobileLogResponse(
+            version=__version__,
+            started_at=server_log.RECENT.started_at if installed else None,
+            entries=entries[:limit],
+        )
+
     @router.get("/api/mobile/admin/logs", response_model=MobileLogResponse)
     async def mobile_admin_logs(
         request: Request,
@@ -498,17 +524,24 @@ def add_mobile_admin_routes(router: APIRouter) -> None:
         """
 
         _identity(request)
-        store = request.app.state.agent_service.store
-        audit = await asyncio.to_thread(audit_feed.recent, store, limit)
-        entries = [_audit_entry(row) for row in audit]
-        entries += [MobileLogEntry(**entry) for entry in server_log.RECENT.recent(limit)]
-        entries.sort(key=lambda entry: entry.ts, reverse=True)
-        installed = server_log.RECENT in server_log.AUDIT_LOGGER.handlers
-        return MobileLogResponse(
-            version=__version__,
-            started_at=server_log.RECENT.started_at if installed else None,
-            entries=entries[:limit],
-        )
+        return await asyncio.to_thread(_log, request, limit, admin=False)
+
+    @router.post("/api/mobile/admin/logs/full", response_model=MobileLogResponse)
+    async def mobile_admin_logs_full(
+        request: Request, payload: MobileFullLogRequest, response: Response,
+    ) -> MobileLogResponse:
+        """The same log with everything in it, for an administrator.
+
+        It adds what worker hosts reported about themselves and the bus's
+        security events. A read, sent as a POST so the grant travels in the
+        body. What a host reports is its own claim: it helps find a fault and
+        proves nothing.
+        """
+
+        identity = _identity(request)
+        await _require_write_grant(request, identity, payload.grant_secret)
+        _secret_response_headers(response)
+        return await asyncio.to_thread(_log, request, payload.limit, admin=True)
 
     # ---- Site documents --------------------------------------------------
 

@@ -3136,6 +3136,39 @@ that log to find.
 
 ### The event log
 
-`bus_events` is in this schema and is filled by the next change: a fixed type
-with a few checked fields per event, no free text from a host or an upstream
-server, each event id stored once, deleted by age and by per-source limits.
+The device's short log is held in memory and shows what is happening now. A
+failed update last night, or a host that crashed and recovered, has left it by
+morning. `bus_events` keeps an event for thirty days.
+
+- **An event is a fixed type with a few checked fields**: a version, a short
+  code, an exception's type name, a small number. Nothing that is free text
+  from a host or from an upstream server is stored, so the log can be shown
+  and searched without ever carrying a token, a path or someone's message.
+  The types, their fields and their levels are in `bus_events.py`.
+- **Sources:** `host` (what a worker host reports about itself), `update` (the
+  bus's own updates), `security` (a release or request refused on a security
+  check) and `bus` (starting, the database changing).
+- **A host reports with `POST /api/hosts/events`**: one to twenty events, 16 KB,
+  once every five seconds, the same identity rule as its status. The batch is
+  refused whole for an unknown type, an unknown field, a value of the wrong
+  kind, a repeated id, too many events or the wrong `agent`. The bus gives
+  each type its level; a host sends none.
+- **Each event id is stored once.** A batch sent again after a lost answer
+  makes no duplicate.
+- **Limits:** thirty days, and a most each source may hold (host 5000, update
+  2000, security 5000, bus 1000), with 500 per host inside the host source's
+  share. One noisy host cannot push out another's events, and hosts together
+  cannot push out the bus's own. Nothing ages out during an access freeze.
+- **Order** is by the bus's `received_at`. The time a host gave is shown beside
+  it (`at=`) and never sorted by.
+- **Who reads:** `GET /api/mobile/admin/logs`, which any enrolled device may
+  read, now includes the `update` and `bus` sources.
+  `POST /api/mobile/admin/logs/full`, with the device's grant, adds `host` and
+  `security`. What a host reports is its own claim: it helps find a fault and
+  proves nothing.
+- **Every stored event also goes to the audit feed**, as a line with
+  `table: "bus_events"` and four more keys that are null on every other line:
+  `source`, `level`, `subject` and `fields`.
+
+This change stores and serves events and takes them from hosts. The bus's own
+update and security events are recorded by the change after it.

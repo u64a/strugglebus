@@ -83,6 +83,20 @@ def parse_version(text: str) -> tuple[int, int, int]:
     return int(match[1]), int(match[2]), int(match[3])
 
 
+LIMITED = (
+    "GitHub is limiting requests from this network. Anyone not signed in gets 60 an hour, shared "
+    "by everything behind the same address. Nothing is wrong with the bus: the next check will "
+    "try again."
+)
+
+
+def _limited(error: Exception) -> bool:
+    """Whether the release page refused because of its request limit, which passes by itself."""
+    code = getattr(error, "code", None)
+    headers = getattr(error, "headers", None)
+    return code == 429 or (code == 403 and headers is not None and headers.get("x-ratelimit-remaining") == "0")
+
+
 def _read(url: str, limit: int) -> bytes:
     if not url.startswith(("https://", "http://127.0.0.1:", "http://localhost:")):
         raise Problem(INVALID, f"refusing to download from {url}")
@@ -93,6 +107,8 @@ def _read(url: str, limit: int) -> bytes:
         with urllib.request.urlopen(request, timeout=60) as response:  # noqa: S310  # nosec B310
             data = response.read(limit + 1)
     except (urllib.error.URLError, OSError, ValueError) as error:
+        if _limited(error):
+            raise Problem(UNREACHABLE, LIMITED) from None
         kind = Missing if getattr(error, "code", None) == 404 else Problem
         raise kind(UNREACHABLE, f"could not download {url}: {error}") from None
     if len(data) > limit:

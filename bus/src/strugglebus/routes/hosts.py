@@ -20,6 +20,7 @@ from strugglebus.models import Agent
 from strugglebus.routes.dependencies import _secret_response_headers, require_agent
 from strugglebus.routes.schemas import (
     HostRedemptionRequest,
+    HostEventsResponse,
     HostReportResponse,
     RedeemedHostResponse,
     SiteDocumentResponse,
@@ -150,6 +151,39 @@ def add_host_routes(router: APIRouter) -> None:
             credential=redeemed.credential,
             request_id=payload.request_id,
         )
+
+    @router.post(
+        "/api/hosts/events",
+        response_model=HostEventsResponse,
+        status_code=status.HTTP_201_CREATED,
+        responses={
+            400: {"description": "The batch is refused whole; the detail is the reason"},
+            403: {"description": "not-a-host"},
+            413: {"description": "too-large"},
+            429: {"description": "too-soon"},
+            503: {"description": "unavailable"},
+        },
+    )
+    async def report_host_events(
+        request: Request,
+        agent: Annotated[Agent, Depends(require_agent)],
+    ) -> HostEventsResponse:
+        """A worker host reports things that happened on it, for the bus's event log.
+
+        One to twenty events, at most 16 KB, at most once every five seconds.
+        Each event is a fixed type with a few checked fields; the bus stores no
+        free text from a host. An event id is stored once, so sending a batch
+        again after a lost answer makes no duplicate.
+        """
+
+        body = await request.body()
+        try:
+            stored = await asyncio.to_thread(
+                request.app.state.event_log.record_from_host, agent.id, agent.name, body,
+            )
+        except (DomainValidationError, StorageError) as error:
+            raise _report_refusal(error) from None
+        return HostEventsResponse(stored=stored)
 
     @router.get(
         "/api/site-documents/{name}",

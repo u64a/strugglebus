@@ -149,7 +149,7 @@ def test_overview_empty_state_landmarks_versions_and_security_headers(
     assert 'aria-labelledby="summary-heading">' in response.text
     assert re.search(r'aria-current="page">.*?<span>Overview</span></a>', response.text)
     assert "No recent activity" in response.text
-    assert "Application 0.2.73" in response.text
+    assert "Application 0.2.74" in response.text
     assert "Release development" in response.text
     assert "Protocol 1" in response.text
     assert "Enabled agents</span><span class=\"summary-value\">0" in response.text
@@ -702,7 +702,7 @@ def test_system_page_shows_versions_and_separate_operator_authority(
 
     assert response.status_code == 200
     assert 'aria-labelledby="system-heading"' in response.text
-    assert "Application 0.2.73" in response.text
+    assert "Application 0.2.74" in response.text
     assert "Release development" in response.text
     assert "Coordination protocol" in response.text
     assert "You sign in here with the operator password" in response.text
