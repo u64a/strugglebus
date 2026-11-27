@@ -1,0 +1,9 @@
+serial = 5
+owner = "Alex"
+
+[[host]]
+agent_name = "host-office1-host"
+agent_id   = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+
+[extra]
+note = "a table the App does not know"

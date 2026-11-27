@@ -16,6 +16,17 @@ NAMES = ("host-command", "fleet", "host-enrol", "host-status", "host-events")
 
 PINNED = {
     "fleet/allowed_signers": "ce7633fea544aca440d9e3bf8f8e59bacbfc67f3883109af2f9883e4e18a6e84",
+    "fleet/compose/after.toml": "4d3204e326ae634fa138b626259316d6c40b428e279d8b413be4cb683d03037e",
+    "fleet/compose/before.toml": "bc1ace56aca1c25b0431de9d0a0cc7425b2eb8f76a46acbae24825ee5184fc16",
+    "fleet/compose/duplicate-id.toml": "9628751f094bc74a2a97efe48002fffbb1f6344bf3063996e5ee11f510d8d968",
+    "fleet/compose/duplicate-name.toml": "5b8090ed8c1993eb700b14eed9faf74118abd8315f263754c0692ec742a33512",
+    "fleet/compose/expected.json": "d1171781df4274c464db0b040e67bdae96bfdf392b0d5b55b87948d59f1b445a",
+    "fleet/compose/plain-key.sig": "36dce4345960e7e5efdca2189c3274a7b6ad1fd1442d09f2d6da623dec569794",
+    "fleet/compose/serial-missing.toml": "e84c5aba79bb43de44d301937ac9a4d0d38df52886052e29d1562df432fc83e3",
+    "fleet/compose/serial-twice.toml": "ac3e34c8b0583e73dc3b06c70112161aa841218dc99349abd75cfacc9d91542f",
+    "fleet/compose/sk-touch-only.sig": "8c9b80e9be772c2473b56716761145f72ea30b732956191ff73e8c65867ce449",
+    "fleet/compose/sk-touch-pin.sig": "df3dbb96b295c554e2aa263f113e9e2d4b26fce089a0b219a4a7b813211aa7fd",
+    "fleet/compose/unknown-table.toml": "e1958803207854461e5d2507f6749ea7056a5518868b5c32da0fe78a0e910219",
     "fleet/expected.json": "5fd7b05843345af4c6438aba36a8f7ac5db8eb36a457926892c691597665bfc8",
     "fleet/fleet-changed-byte.toml": "0c8cb19ff53329b19d1cadef4ddfd08453533d16a8573fc006ef905d61d109dc",
     "fleet/fleet-changed-byte.toml.sig": "c7a16db52385e014545cb3f9a48f660815480f861a21adbaff366960de93c377",
