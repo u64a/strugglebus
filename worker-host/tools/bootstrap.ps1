@@ -892,6 +892,20 @@ function Invoke-IsolationCheck([string]$stage, [string]$account, [string]$hostHo
     [IO.File]::WriteAllText((Join-Path $state 'isolation.json'), ((ConvertTo-Json $record) + "`n"), (New-Object Text.UTF8Encoding($false)))
 }
 
+function Show-SignInResult([string]$python, [string]$hostHome, [string]$account, $password) {
+    # After the sign-ins, still able to run as the account: its probe, so a skipped or failed sign-in shows now
+    # (on the test VM a cancelled Claude sign-in otherwise went unnoticed).
+    try {
+        $r = Invoke-AsAccount $python @('-I', (Join-Path $hostHome 'app\wh.py'), '--home', $hostHome, 'probe') $account $password
+        $lines = @($r.out -split "`r?`n" | Where-Object { $_ -match 'signed in|gh auth|copilot' })
+        Say 'sign-ins, as the host sees them:'
+        foreach ($l in $lines) { Say "  $($l.Trim())" }
+        if ($lines -match '^\s*FAIL') { Say 'A sign-in is missing: the host runs without it (that engine is not offered) until it is added.' }
+    } catch {
+        Say "could not check the sign-ins ($($_.Exception.Message))"
+    }
+}
+
 function Remove-DataFileOffer([string]$dataFile, [bool]$yes) {
     # Step 12: the data file's code is spent and blanked; offer to delete it.
     if ($yes) { Say "the data file $dataFile is no longer needed (its code is spent); delete it when you like"; return }
@@ -934,6 +948,7 @@ Invoke-IsolationCheck $verified.stage $account.Name $hostHome 'C:\sb-workers'   
 try {
     $enrolled = Invoke-Enrol $tools.python $hostHome $account.Name $password $bytes $DataFile   # step 8
     Invoke-SignIn $account.Name $password $SB.engines $tools $mode               # step 7
+    Show-SignInResult $tools.python $hostHome $account.Name $password
 } finally {
     $password = $null
     Set-HostLogonRights $account.SID.Value                                       # step 7's denials
