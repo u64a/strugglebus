@@ -113,6 +113,40 @@ def test_a_real_sign_and_verify_with_a_throwaway_key(tmp_path):
     assert "this PC can sign" in r.stdout
 
 
+def test_no_script_variable_is_a_parameter_under_another_case():
+    """PowerShell names are case-insensitive: `$signers = ...` overwrote the -Signers parameter, and the first real
+    run (27 Nov) failed copying a temp path onto itself. A script-level parameter is never assigned."""
+    import re
+
+    text = SCRIPT.read_text(encoding="utf-8")
+    block = re.search(r"(?ms)^param\((.*?)^\)", text)
+    params = {p.lower() for p in re.findall(r"\]\$(\w+)", block.group(1))}
+    assert {"pr", "test", "keyfile", "nomerge", "path", "firstserial", "signers"} <= params
+    assigned = [m.group(1) for m in re.finditer(r"\$(\w+)\s*=(?!=)", text[block.end():]) if m.group(1).lower() in params]
+    assert assigned == []
+
+
+def test_a_real_sign_and_verify_with_a_signers_file_given(tmp_path):
+    """-Signers: the file given is the one checked against (the repository has none at keys/)."""
+    keygen = next((k for k in signing.KEYGEN_CANDIDATES[:2] if os.path.isfile(k)), None)
+    if keygen is None:
+        pytest.skip("no Windows OpenSSH ssh-keygen")
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    subprocess.run(["git", "init", "-q", str(repo)], check=True)
+    key = tmp_path / "id_test"
+    subprocess.run([keygen, "-q", "-t", "ed25519", "-N", "", "-C", "test", "-f", str(key)], check=True,
+                   capture_output=True)
+    kind, blob = (tmp_path / "id_test.pub").read_text().split()[:2]
+    signers = tmp_path / "elsewhere_signers"
+    signers.write_text(f'bob namespaces="strugglebus-fleet" {kind} {blob} test\n')
+    r = subprocess.run([PWSH, "-NoProfile", "-NonInteractive", "-File", str(SCRIPT), "-Test", "-KeyFile", str(key),
+                        "-Signers", str(signers)], cwd=repo, capture_output=True, text=True, timeout=120,
+                       stdin=subprocess.DEVNULL)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert 'Good "strugglebus-fleet" signature for bob' in r.stdout
+
+
 def test_neither_or_both_modes_is_refused(tmp_path):
     r = subprocess.run([PWSH, "-NoProfile", "-NonInteractive", "-File", str(SCRIPT)], cwd=tmp_path,
                        capture_output=True, text=True, timeout=60, stdin=subprocess.DEVNULL)
