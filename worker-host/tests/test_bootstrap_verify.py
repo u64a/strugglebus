@@ -24,6 +24,10 @@ KEYGEN = next((k for k in signing.KEYGEN_CANDIDATES[:2] if Path(k).is_file()), N
 SHELLS = [s for s in (PWSH, WINPS) if s]
 pytestmark = pytest.mark.skipif(not SHELLS, reason="no PowerShell")
 REAL_TOML, REAL_SIG = ROOT / "release.toml", ROOT / "release.toml.sig"
+# A real release and its real signature (serial 9, YubiKey A, touch and PIN), kept as test data: the live pair above
+# doesn't match while a release PR waits for its signature, and that must not turn every release PR red.
+SIGNED = ROOT / "tests" / "data" / "signed-release"
+SIGNED_TOML, SIGNED_SIG = SIGNED / "release.toml", SIGNED / "release.toml.sig"
 
 
 def run(body: str, shell: str):
@@ -53,9 +57,7 @@ def test_the_signers_file_allows_the_release_namespace_only(shell):
 
 @pytest.mark.parametrize("shell", SHELLS)
 def test_the_flags_of_the_real_release_signature(shell, tmp_path):
-    if not REAL_SIG.is_file():
-        pytest.skip("no release.toml.sig in this layout")
-    out = run(f"ConvertTo-Json @(Get-SkFlags ([IO.File]::ReadAllText('{REAL_SIG}')))", shell)
+    out = run(f"ConvertTo-Json @(Get-SkFlags ([IO.File]::ReadAllText('{SIGNED_SIG}')))", shell)
     assert out == [5]  # touch and PIN, as the host's own check reads it (workerhost/signing.py)
 
 
@@ -111,12 +113,10 @@ def test_a_bad_release_toml_is_refused(text, why):
 @pytest.mark.skipif(KEYGEN is None, reason="no Windows OpenSSH ssh-keygen")
 @pytest.mark.parametrize("shell", SHELLS)
 def test_the_real_release_verifies_and_a_changed_byte_does_not(shell, tmp_path):
-    if not (REAL_TOML.is_file() and REAL_SIG.is_file()):
-        pytest.skip("no signed release in this layout")
     changed = tmp_path / "changed.toml"
-    changed.write_bytes(REAL_TOML.read_bytes().replace(b"serial = ", b"serial =  ", 1))
-    body = (f"$w = '{tmp_path}'; $sig = [IO.File]::ReadAllText('{REAL_SIG}'); "
-            f"$a = Test-ReleaseSignature ([IO.File]::ReadAllBytes('{REAL_TOML}')) $sig '{KEYGEN}' $w; "
+    changed.write_bytes(SIGNED_TOML.read_bytes().replace(b"serial = ", b"serial =  ", 1))
+    body = (f"$w = '{tmp_path}'; $sig = [IO.File]::ReadAllText('{SIGNED_SIG}'); "
+            f"$a = Test-ReleaseSignature ([IO.File]::ReadAllBytes('{SIGNED_TOML}')) $sig '{KEYGEN}' $w; "
             f"$b = Test-ReleaseSignature ([IO.File]::ReadAllBytes('{changed}')) $sig '{KEYGEN}' $w; "
             "ConvertTo-Json @(($a -join ':'), ($b -join ':'))")
     assert run(body, shell) == ["True:good", "False:bad-signature"]
@@ -161,6 +161,16 @@ def test_an_older_release_or_one_without_installer_sha256_is_refused(shell):
     body = "ConvertTo-Json @(" + ", ".join(
         "(Test-ReleaseFloor @{" + "; ".join(f"{k} = '{v}'" for k, v in c.items()) + "})" for c in cases) + ")"
     assert run(body, shell) == [True, False, False]
+
+
+def test_the_signed_test_release_is_a_real_one():
+    """The test data is the real serial 9 (u64a/strugglebus 5ae86d2), byte for byte, and parses as a release."""
+    assert hashlib.sha256(SIGNED_TOML.read_bytes()).hexdigest() == \
+        "c02a2431331fb8cd8b64a63ccd008c1d8154466c95da14be92e3bdbc089492ce"
+    assert hashlib.sha256(SIGNED_SIG.read_bytes()).hexdigest() == \
+        "6c17021d84739891da7e55c4d8f34603e502cfa2331212d62e11cc36d4cff839"
+    rel = update.parse_release(SIGNED_TOML.read_bytes())
+    assert (rel.serial, rel.version) == (9, "2026.11.27.4")
 
 
 def test_still_ascii_and_lf_only():
