@@ -34,9 +34,19 @@ import zipfile
 from collections.abc import Callable, Iterable
 from pathlib import Path
 
-REPOSITORY = "NZCypher819/strugglebus-releases"
-API = f"https://api.github.com/repos/{REPOSITORY}/releases/latest"
+# Where releases are published: the project's own repository, which also holds the releases of
+# its other parts. A bus release there is tagged bus/vX.Y.Z, and nothing else is a bus release.
+REPOSITORY = "u64a/strugglebus"
+TAG_PREFIX = "bus/v"
+API = f"https://api.github.com/repos/{REPOSITORY}/releases?per_page=30"
 DOWNLOAD_PREFIX = f"https://github.com/{REPOSITORY}/releases/download/"
+
+# Where releases were published up to 0.2.73. It is still asked, after the place above, so a bus
+# is never left without updates if it cannot use the new place. A release from either is taken
+# only if a release key signed it, so asking two places trusts nobody new.
+FORMER_REPOSITORY = "NZCypher819/strugglebus-releases"
+FORMER_API = f"https://api.github.com/repos/{FORMER_REPOSITORY}/releases/latest"
+FORMER_DOWNLOAD_PREFIX = f"https://github.com/{FORMER_REPOSITORY}/releases/download/"
 MAXIMUM_BYTES = 64 * 1024 * 1024
 UNREACHABLE = 3
 INVALID = 4
@@ -348,7 +358,7 @@ def require_all_present(digests: dict[str, str], present: Iterable[str]) -> None
 
 def _tag_message(api: str, tag: str) -> str:
     """Reads the annotated tag's message for a release, from the same repository as the release."""
-    root = api.removesuffix("/releases/latest")
+    root = api.split("/releases", 1)[0]
     try:
         ref = json.loads(_read(f"{root}/git/ref/tags/{tag}", 64 * 1024))
         target = ref["object"]
@@ -363,17 +373,85 @@ def _tag_message(api: str, tag: str) -> str:
     return message
 
 
-def _newest_release(api: str) -> tuple[str, dict[str, object]]:
-    """Returns the newest release's tag and its assets as name -> download URL."""
+class _Release:
+    """One published bus release: its tag, its version and where its files are."""
+
+    def __init__(self, tag: str, version: str, assets: dict[str, object], api: str, prefix: str) -> None:
+        self.tag = tag
+        self.version = version
+        self.assets = assets
+        self.api = api
+        self.download_prefix = prefix
+
+
+def _version_of(tag: object, prefixes: tuple[str, ...]) -> str | None:
+    """The version a release tag names, when it is a bus release's tag; otherwise None."""
+    if not isinstance(tag, str):
+        return None
+    for prefix in prefixes:
+        if tag.startswith(prefix) and _VERSION.fullmatch(tag[len(prefix):]):
+            return tag[len(prefix):]
+    return None
+
+
+def _described(record: object, prefixes: tuple[str, ...], api: str, prefix: str) -> _Release | None:
+    """A published bus release from one record of a release page, or None for anything else."""
+    if not isinstance(record, dict) or record.get("draft") or record.get("prerelease"):
+        return None
+    version = _version_of(record.get("tag_name"), prefixes)
+    if version is None:
+        return None
+    assets = {asset["name"]: asset["browser_download_url"] for asset in record["assets"]}
+    return _Release(str(record["tag_name"]), version, assets, api, prefix)
+
+
+def _newest_release(api: str, download_prefix: str) -> _Release | None:
+    """
+    The newest bus release a place offers, or None when it has none.
+
+    The project's repository answers with a list that also holds other parts' releases, so only
+    tags starting bus/v count there. A page that describes a single release (the former place,
+    or a mirror) may name it vX.Y.Z as well.
+    """
     try:
-        release = json.loads(_read(api, 2 * 1024 * 1024))
-        tag = release["tag_name"]
-        assets = {asset["name"]: asset["browser_download_url"] for asset in release["assets"]}
-    except (ValueError, KeyError, TypeError):
+        page = json.loads(_read(api, 2 * 1024 * 1024))
+        if isinstance(page, list):
+            found = [_described(record, (TAG_PREFIX,), api, download_prefix) for record in page]
+        else:
+            found = [_described(page, (TAG_PREFIX, "v"), api, download_prefix)]
+            unnamed = found == [None] and "tag_name" in page and "assets" in page
+    except (ValueError, KeyError, TypeError, AttributeError):
         raise Problem(INVALID, "the release page did not describe a release") from None
-    if not isinstance(tag, str) or not tag.startswith("v"):
-        raise Problem(INVALID, "the newest release has an unexpected name")
-    return tag, assets
+    if not isinstance(page, list) and found == [None]:
+        raise Problem(
+            INVALID,
+            "the newest release has an unexpected name" if unnamed
+            else "the release page did not describe a release",
+        )
+    releases = [release for release in found if release is not None]
+    return max(releases, key=lambda release: parse_version(release.version), default=None)
+
+
+def _newest_anywhere(places: tuple[tuple[str, str], ...]) -> _Release | None:
+    """
+    The newest bus release across the places to ask. A place that cannot be reached or read is
+    passed over while another answers; if none answers, the first problem is reported.
+    """
+    best: _Release | None = None
+    answered = False
+    problem: Problem | None = None
+    for api, download_prefix in places:
+        try:
+            release = _newest_release(api, download_prefix)
+        except Problem as error:
+            problem = problem or error
+            continue
+        answered = True
+        if release is not None and (best is None or parse_version(release.version) > parse_version(best.version)):
+            best = release
+    if not answered and problem is not None:
+        raise problem
+    return best
 
 
 def _download(
@@ -416,19 +494,28 @@ def _unpack_install_files(tag: str, into: Path, wheel: str) -> None:
         raise Problem(INVALID, f"release {tag} does not carry the install files")
 
 
+def _places(api: str, download_prefix: str) -> tuple[tuple[str, str], ...]:
+    """Where to ask. A mirror set by the operator is asked alone; otherwise the former place is asked too."""
+    if (api, download_prefix) != (API, DOWNLOAD_PREFIX):
+        return ((api, download_prefix),)
+    return ((API, DOWNLOAD_PREFIX), (FORMER_API, FORMER_DOWNLOAD_PREFIX))
+
+
 def fetch(installed: str, into: Path, *, api: str, download_prefix: str) -> tuple[str, str]:
     current = parse_version(installed)
-    tag, assets = _newest_release(api)
-    version = tag[1:]
+    release = _newest_anywhere(_places(api, download_prefix))
+    if release is None:
+        return "current", installed
+    tag, version, assets = release.tag, release.version, release.assets
     if parse_version(version) <= current:
         return "current", version
 
     # The publisher's signature comes first: nothing below it is trusted without it.
-    digests = signed_digests(_tag_message(api, tag), version)
+    digests = signed_digests(_tag_message(release.api, tag), version)
     require_all_present(digests, assets)
     wheel = f"strugglebus-{version}-py3-none-any.whl"
     needed = ("SHA256SUMS", "requirements.lock", wheel)
-    _download(tag, assets, needed, into, download_prefix)
+    _download(tag, assets, needed, into, release.download_prefix)
     for name in needed:
         require_signed(digests, name, (into / name).read_bytes())
     _verify_checksums(tag, into, ("requirements.lock", wheel))
