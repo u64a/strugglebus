@@ -726,4 +726,55 @@ public sealed class MonitorWindowTests(StaWindowAdminFixture ui)
         Assert.Equal(["beta needle"], harness.Copied);
         return Task.CompletedTask;
     }, SmallBoard);
+    // ---- Reply and quote, handed to Humans ---------------------------------------------------
+
+    [Fact]
+    public void MessageRow_ReplyToAHumansMessageOpensHumansWithALinkedReply() => Run(harness =>
+    {
+        var window = harness.Window;
+        var entry = window.ActivityList.Items.Cast<ActivityEntry>().Single(item => item.Sequence == 3);
+
+        harness.InvokeRowHandler("ReplyToMessage_Click", "not a message row");
+        Assert.Equal(Visibility.Visible, window.MonitorPage.Visibility);
+        harness.InvokeRowHandler("ReplyToMessage_Click", entry);
+
+        Assert.Equal(Visibility.Visible, window.HumansPage.Visibility);
+        Assert.Equal(Visibility.Visible, window.HumansReplyBanner.Visibility);
+        Assert.StartsWith("Replying to agent-one:", window.HumansReplyText.Text);
+        Assert.Equal("@agent-one ", window.HumansComposer.Text);
+        Assert.Equal(window.HumansComposer.Text.Length, window.HumansComposer.CaretIndex);
+        return Task.CompletedTask;
+    }, SmallBoard);
+
+    [Fact]
+    public void MessageRow_ReplyToAMessageElsewhereSaysWhichMessageBecauseTheBusCannotLinkIt() => Run(harness =>
+    {
+        var window = harness.Window;
+        var entry = window.ActivityList.Items.Cast<ActivityEntry>().Single(item => item.Sequence == 2);
+
+        harness.InvokeRowHandler("ReplyToMessage_Click", entry);
+
+        Assert.Equal(Visibility.Visible, window.HumansPage.Visibility);
+        Assert.Equal(Visibility.Collapsed, window.HumansReplyBanner.Visibility);
+        Assert.Equal("@agent-two about message 2 in #ops: ", window.HumansComposer.Text);
+        return Task.CompletedTask;
+    }, SmallBoard);
+
+    [Fact]
+    public void MessageRow_QuotePutsAMarkedExcerptInTheDraftAndKeepsWhatWasBeingWritten() => Run(harness =>
+    {
+        var window = harness.Window;
+        var entry = window.ActivityList.Items.Cast<ActivityEntry>().Single(item => item.Sequence == 2);
+        window.HumansComposer.Text = "half a thought";
+
+        harness.InvokeRowHandler("QuoteMessage_Click", "not a message row");
+        harness.InvokeRowHandler("QuoteMessage_Click", entry);
+
+        Assert.Equal(Visibility.Visible, window.HumansPage.Visibility);
+        Assert.Equal(Visibility.Collapsed, window.HumansReplyBanner.Visibility);
+        Assert.Equal("half a thought\n@agent-two wrote in #ops (message 2):\n> beta needle\n\n", window.HumansComposer.Text);
+        // Nothing was sent: the hand-off only fills a draft.
+        Assert.DoesNotContain(harness.Bus.Requests, request => request.StartsWith("POST", StringComparison.Ordinal));
+        return Task.CompletedTask;
+    }, SmallBoard);
 }

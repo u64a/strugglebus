@@ -437,6 +437,30 @@ public partial class MainWindow
         if (TagOf<ActivityEntry>(sender) is { } entry) CopyText(entry.Message.Body);
     }
 
+    private void ReplyToMessage_Click(object sender, RoutedEventArgs e)
+    {
+        if (TagOf<ActivityEntry>(sender) is { } entry) HandOffToHumans(entry.Message, quote: false);
+    }
+
+    private void QuoteMessage_Click(object sender, RoutedEventArgs e)
+    {
+        if (TagOf<ActivityEntry>(sender) is { } entry) HandOffToHumans(entry.Message, quote: true);
+    }
+
+    /// <summary>
+    /// Opens Humans with a draft about a message. Monitor stays read-only: this only moves to the
+    /// other page and fills in a draft, and nothing is sent until the operator sends it there.
+    /// </summary>
+    private void HandOffToHumans(BusMessage message, bool quote)
+    {
+        HumansNav.IsChecked = true;
+        // The bus links a reply only to a message in the same channel, and the operator posts in #humans.
+        if (!quote && ReplyHandOff.CanLink(message)) StartReply(message);
+        HumansComposer.Text = ReplyHandOff.Merge(HumansComposer.Text, quote ? ReplyHandOff.QuoteDraft(message) : ReplyHandOff.ReplyDraft(message));
+        HumansComposer.CaretIndex = HumansComposer.Text.Length;
+        HumansComposer.Focus();
+    }
+
     /// <summary>Clears the filters, then selects, expands and scrolls to one message.</summary>
     private void JumpToMessage(BusMessage message)
     {

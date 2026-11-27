@@ -4,6 +4,42 @@ using System.Text.Json.Serialization;
 
 namespace StruggleBusMonitor;
 
+/// <summary>
+/// The draft Humans opens with when the operator replies to, or quotes, a message from Monitor.
+/// A quoted message is someone else's text: it is marked as a quote and nothing in it is acted on.
+/// </summary>
+internal static class ReplyHandOff
+{
+    /// <summary>The most of a message that is quoted. The rest is left behind with a mark.</summary>
+    public const int MaxQuote = 600;
+
+    /// <summary>The bus links a reply only within one channel, and the operator posts only in #humans.</summary>
+    public static bool CanLink(BusMessage message) => message.Channel == HumansLogic.Channel;
+
+    /// <summary>"@name " when the bus would accept the author as a mention; otherwise nothing.</summary>
+    internal static string Address(BusMessage message) =>
+        FeedLogic.IsMentionable(message.AgentName) ? $"@{message.AgentName} " : string.Empty;
+
+    /// <summary>
+    /// A reply to a #humans message is linked by the bus, so the draft is only the author's name.
+    /// A reply to a message anywhere else cannot be linked, so the draft says which message it is about.
+    /// </summary>
+    public static string ReplyDraft(BusMessage message) =>
+        CanLink(message) ? Address(message) : $"{Address(message)}about message {message.Seq} in #{message.Channel}: ";
+
+    public static string QuoteDraft(BusMessage message)
+    {
+        var body = message.Body.Trim();
+        var kept = body.Length <= MaxQuote ? body : body[..MaxQuote].TrimEnd() + " […]";
+        var quoted = string.Join("\n", kept.Replace("\r", string.Empty).Split('\n').Select(line => "> " + line));
+        return $"{Address(message)}wrote in #{message.Channel} (message {message.Seq}):\n{quoted}\n\n";
+    }
+
+    /// <summary>What was already being written is kept, with the new draft after it.</summary>
+    public static string Merge(string existing, string draft) =>
+        string.IsNullOrWhiteSpace(existing) ? draft : existing.TrimEnd() + "\n" + draft;
+}
+
 public enum OutgoingStatus { Sending, Failed }
 
 public sealed class OutgoingPost
