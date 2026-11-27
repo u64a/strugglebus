@@ -148,6 +148,7 @@ ROUTE_CAPABILITIES: dict[tuple[str, str], str] = {
     ("GET", "/api/mobile/snapshot"): MOBILE_READ,
     ("GET", "/api/mobile/search"): MOBILE_READ,
     ("GET", "/api/mobile/channels"): MOBILE_READ,
+    ("GET", "/api/mobile/channels/activity"): MOBILE_READ,
     ("GET", "/api/mobile/agents"): MOBILE_READ,
     ("GET", "/api/mobile/stream"): MOBILE_READ,
     ("POST", "/api/mobile/enrollments/redeem"): MOBILE_ENROLLMENT,

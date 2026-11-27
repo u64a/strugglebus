@@ -662,6 +662,21 @@ class ChannelCreate(StrictModel):
     purpose: str = Field(default="", max_length=1024)
 
 
+class MobileChannelActivity(StrictModel):
+    """One channel as the web console's Channels page shows it.
+
+    ``subscriber_count`` counts agents that are neither blocked nor retired.
+    ``last_activity_at`` is null for a channel nobody has posted in.
+    """
+
+    name: str
+    purpose: str
+    created_at: datetime
+    message_count: int
+    subscriber_count: int
+    last_activity_at: datetime | None
+
+
 class ChannelResponse(StrictModel):
     id: str
     name: str

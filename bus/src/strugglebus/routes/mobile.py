@@ -68,6 +68,7 @@ from strugglebus.routes.schemas import (
     MobileActionResponse,
     MobileStatusResponse,
     ChannelResponse,
+    MobileChannelActivity,
     MessageResponse,
     SearchHitResponse,
 )
@@ -101,6 +102,26 @@ _ACTION_EFFECTS = {
         "stay blocked or revoked; this only lifts the global stop."
     ),
 }
+
+
+#: Channels are read a page at a time. A bus holds few, and the number of pages is bounded so a
+#: mistake in paging can never loop.
+_CHANNEL_PAGE = 100
+_CHANNEL_PAGES = 20
+
+
+def _every_channel(board) -> list:
+    """Every channel's activity, by name, read page by page."""
+
+    found: list = []
+    after: str | None = None
+    for _ in range(_CHANNEL_PAGES):
+        page = board.channel_activity(after=after, limit=_CHANNEL_PAGE)
+        found.extend(page.channels)
+        if not page.has_more or not page.channels:
+            break
+        after = page.channels[-1].name
+    return found
 
 
 def add_mobile_routes(router: APIRouter) -> None:
@@ -1012,6 +1033,26 @@ def add_mobile_routes(router: APIRouter) -> None:
             request.app.state.board_service.list_channels
         )
         return [ChannelResponse.from_domain(channel) for channel in channels]
+
+    @router.get("/api/mobile/channels/activity", response_model=list[MobileChannelActivity])
+    async def mobile_channel_activity(request: Request) -> list[MobileChannelActivity]:
+        """Every channel with what it is for, how busy it is and who is listening.
+
+        The same figures as the web console's Channels page, for a device.
+        Readable while frozen, like the other monitor reads.
+        """
+
+        _mobile_identity(request)
+        channels = await asyncio.to_thread(_every_channel, request.app.state.board_service)
+        return [
+            MobileChannelActivity(
+                name=channel.name, purpose=channel.purpose, created_at=channel.created_at,
+                message_count=channel.message_count,
+                subscriber_count=channel.active_subscriber_count,
+                last_activity_at=channel.last_activity_at,
+            )
+            for channel in channels
+        ]
 
     @router.get("/api/mobile/agents", response_model=list[AgentResponse])
     async def mobile_agents(request: Request) -> list[AgentResponse]:
