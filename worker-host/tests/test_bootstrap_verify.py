@@ -400,7 +400,22 @@ def test_the_one_time_code_never_reaches_a_command_line():
     assert "Clear-EnrolCode $data" in enrol  # blanked in the file straight after
 
 
-ISOLATION_SHA256 = "c3cbc4de552f10a160bd460ee7e5903ba22d161d641d664093a7c9df95cc4995"  # u64-security 5ee2b05, 29003
+@pytest.mark.parametrize("target, want", [
+    (r"C:\Program Files\WinGet\Packages\GitHub.Copilot_x\copilot.exe", r"C:\Program Files\WinGet\Packages\GitHub.Copilot_x"),
+    (r"c:\program files\winget\packages\Anthropic.ClaudeCode_x\bin\claude.exe",
+     r"C:\Program Files\WinGet\Packages\Anthropic.ClaudeCode_x"),
+    (r"C:\Program Files\WinGet\Packages\..\..\Windows\notepad.exe", None),   # never resets outside the root
+    (r"C:\Program Files\WinGet\Packages", None),
+    (r"C:\Program Files\GitHub CLI\gh.exe", None),
+    (r"C:\Program Files\WinGet\PackagesEvil\x\y.exe", None),
+])
+@pytest.mark.parametrize("shell", SHELLS)
+def test_only_a_winget_package_folder_has_its_permissions_reset(target, want, shell):
+    got = run(f"ConvertTo-Json @(Get-WingetPackageDir '{target}' 'C:\\Program Files\\WinGet\\Packages')", shell)
+    assert got == [want]
+
+
+ISOLATION_SHA256 ="c3cbc4de552f10a160bd460ee7e5903ba22d161d641d664093a7c9df95cc4995"  # u64-security 5ee2b05, 29003
 
 
 def test_the_vendored_isolation_check_is_u64_securitys_reviewed_version():

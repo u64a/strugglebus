@@ -396,6 +396,32 @@ function Get-Winget {
     return $exe
 }
 
+$WingetPackages = Join-Path $env:ProgramFiles 'WinGet\Packages'
+
+function Get-WingetPackageDir([string]$target, [string]$root = $WingetPackages) {
+    # Pure: the winget package folder (root\<package>) holding this file, or $null if it isn't under the root.
+    $r = $root.TrimEnd('\') + '\'
+    if (-not $target.StartsWith($r, [StringComparison]::OrdinalIgnoreCase)) { return $null }
+    $package = $target.Substring($r.Length).Split('\')[0]
+    if (-not $package -or $package -eq '..' -or $package -eq '.') { return $null }
+    return $r + $package
+}
+
+function Repair-WingetPackageAcl([string]$path) {
+    # winget unpacks a portable package in the installing user's TEMP and moves it, so its files keep that folder's
+    # ACL: the installer has full control and other users (the host's account) get "Access is denied" (seen on the
+    # test VM, copilot.exe and claude.exe). Reset to what Program Files gives: Users read and run, nobody else writes.
+    $item = Get-Item -LiteralPath $path -ErrorAction SilentlyContinue
+    if (-not $item) { return }
+    $target = if ($item.LinkType -eq 'SymbolicLink') { @($item.Target)[0] } else { $item.FullName }
+    $dir = Get-WingetPackageDir $target
+    if (-not $dir -or -not (Test-Path -LiteralPath $dir)) { return }
+    $icacls = Join-Path $env:SystemRoot 'System32\icacls.exe'
+    & $icacls $dir /reset /T /C /Q | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw "could not reset the permissions of $dir" }
+    Say "permissions of $dir reset to Program Files' (users read and run, administrators write)"
+}
+
 function Install-Prereqs($engines, [string]$work) {
     # Step 2: each missing tool from winget, machine-wide (PowerShell 7 from its pinned zip). Returns name -> path;
     # throws if one is still missing.
@@ -413,6 +439,7 @@ function Install-Prereqs($engines, [string]$work) {
             $path = Find-Prereq $name
             if (-not $path) { throw "$id did not install where expected ($($Prereqs[$name].paths -join ', '))" }
         }
+        Repair-WingetPackageAcl $path
         Say "$name`: $path"
         $found[$name] = $path
     }
