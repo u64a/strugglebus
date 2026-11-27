@@ -415,7 +415,7 @@ def test_only_a_winget_package_folder_has_its_permissions_reset(target, want, sh
     assert got == [want]
 
 
-ISOLATION_SHA256 ="c3cbc4de552f10a160bd460ee7e5903ba22d161d641d664093a7c9df95cc4995"  # u64-security 5ee2b05, 29003
+ISOLATION_SHA256 ="15c089c5da80b693375e5f3bf522afdbe842466eefda45434897031abb962ca4"  # u64-security 08662d3, 29022
 
 
 def test_the_vendored_isolation_check_is_u64_securitys_reviewed_version():

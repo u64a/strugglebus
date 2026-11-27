@@ -866,8 +866,7 @@ function Invoke-IsolationCheck([string]$stage, [string]$account, [string]$hostHo
     if (-not (Test-Path -LiteralPath $check)) { Say 'this release has no isolation check: skipped'; return }
     $execCount = -1; $info = @()
     try {
-        Set-StrictMode -Off   # this function's scope only: the check is written without strict mode
-        . $check
+        . $check   # strict-mode safe from u64-security 08662d3; if it still throws, the catch counts it as weak
         $hits = @(Get-WorkerIsolationHits -Account $account -Exclude @($hostHome, $workersRoot))
         $exec = @($hits | Where-Object { $_.Severity -eq 'exec' })
         $info = @($hits | Where-Object { $_.Severity -ne 'exec' })
