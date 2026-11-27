@@ -136,7 +136,7 @@ public partial class MainWindow
             {
                 return await _api.GetFullBusLogAsync(BusLogLimit, CancellationToken.None);
             }
-            catch (BusApiException error) when (SettingsLogic.FullLogUnavailable(error.StatusCode))
+            catch (BusApiException error) when (SettingsLogic.FullLogUnavailable(error.StatusCode) || AdminFlow.IsLegacyBus(error))
             {
                 // An older bus, or operator access that is no longer good: the ordinary log still is.
             }
