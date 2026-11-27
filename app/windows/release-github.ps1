@@ -147,8 +147,8 @@ function Remove-EarlierDraft {
 
 function Assert-ReleaseHolds {
     # Compares what GitHub holds for the release with the files on this PC:
-    # the same names, each the same size and, where GitHub gives one, the same
-    # hash.
+    # the same names, each the same size and the same SHA-256 as GitHub
+    # records it.
     param([string]$ReleaseId, [string[]]$Files)
     $held = @{}
     foreach ($asset in @(Invoke-Gh @('api', "repos/$Repository/releases/$ReleaseId/assets?per_page=100") | ConvertFrom-Json)) { $held[$asset.name] = $asset }
@@ -160,8 +160,11 @@ function Assert-ReleaseHolds {
         $held.Remove($name)
         if ($asset.state -ne 'uploaded') { $problems += "$name is '$($asset.state)'" }
         if ([long]$asset.size -ne (Get-Item -LiteralPath $file).Length) { $problems += "$name is not the size of the file here" }
+        # No hash from GitHub is a failure, never a pass: the release would be
+        # published without its files having been compared.
         $digest = if ($asset.PSObject.Properties['digest']) { $asset.digest } else { $null }
-        if ($digest -and $digest -ne "sha256:$((Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash.ToLowerInvariant())") { $problems += "$name does not have the hash of the file here" }
+        if (-not $digest) { $problems += "GitHub gave no hash for $name, so it could not be compared" }
+        elseif ($digest -ne "sha256:$((Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash.ToLowerInvariant())") { $problems += "$name does not have the hash of the file here" }
     }
     $problems += $held.Keys | ForEach-Object { "$_ is in the release but is not one of this release's files" }
     if ($problems.Count -gt 0) { throw "The release on GitHub does not match the files here:`n  $($problems -join "`n  ")" }
