@@ -11,6 +11,7 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -325,6 +326,184 @@ def test_the_usage_example_skips_the_operators_profile():
     text = SCRIPT.read_text(encoding="ascii")
     assert "powershell -NoProfile -ExecutionPolicy Bypass -File .\\bootstrap.ps1" in text
     assert "powershell -ExecutionPolicy Bypass -File" not in text
+
+
+@pytest.mark.parametrize("shell", SHELLS)
+def test_the_account_password_is_long_random_and_varied(shell):
+    body = ("$a = @(1..3 | ForEach-Object { $s = New-RandomPassword; "
+            "$b = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($s); "
+            "try { [Runtime.InteropServices.Marshal]::PtrToStringBSTR($b) } finally { [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($b) } }); "
+            "ConvertTo-Json @($a)")
+    pws = run(body, shell)
+    assert len(set(pws)) == 3 and all(len(p) == 32 for p in pws)
+    for p in pws:
+        assert re.search("[A-Z]", p) and re.search("[a-z]", p) and re.search("[0-9]", p) and re.search(r"[^A-Za-z0-9]", p)
+        assert not re.search(r"[\s\"'`$]", p)  # nothing a shell or a quote could break
+
+
+@pytest.mark.parametrize("shell", SHELLS)
+def test_the_pinned_list_is_the_sites_keys_plus_the_release_keys(shell):
+    site = ['coord namespaces="strugglebus-fleet" ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIA test']
+    out = run(f"ConvertTo-Json @(Get-PinnedSignersText @('{site[0]}'))", shell)
+    lines = [ln for ln in out[0].split("\n") if ln]
+    assert lines[0] == site[0] and len(lines) == 4
+    assert all(ln.startswith('release namespaces="strugglebus-release" sk-ssh-ed25519@openssh.com ') for ln in lines[1:])
+
+
+@pytest.mark.parametrize("shell", SHELLS)
+def test_the_generated_site_file_is_one_the_host_accepts(shell, tmp_path):
+    body = ("ConvertTo-Json @(Get-SiteText @{ bus_url = 'https://bus.example.lan'; fleet_source = 'bus'; "
+            "remotes = @('https://github.com/acme/', 'https://forgejo.example.lan/') })")
+    text = run(body, shell)[0]
+    site = tmp_path / "site.toml"
+    site.write_text(text, encoding="ascii")
+    r = subprocess.run([sys.executable, "-I", str(ROOT / "workerhost" / "sitefile.py"), str(site)], capture_output=True,
+                       text=True, timeout=60)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "bus.example.lan" in r.stdout and "acme" in r.stdout
+
+
+def test_steps_4_to_6_keep_the_password_out_of_arguments_and_transcripts():
+    """u64-security, #humans 28966: the password goes to install.ps1 on stdin only; no transcript, no plain-text
+    conversion beyond that one write."""
+    text = SCRIPT.read_text(encoding="ascii")
+    assert "Start-Transcript" not in text and "ConvertFrom-SecureString" not in text
+    assert "'-PasswordStdin'" in text and "-Password $" not in text.split("function Invoke-Install")[1].split("if ($MyInvocation")[0]
+    assert text.count("PtrToStringBSTR") == 1  # the stdin write, nowhere else
+
+
+INF = ("[Unicode]\r\nUnicode=yes\r\n[Privilege Rights]\r\nSeBatchLogonRight = *S-1-5-32-544,*S-1-5-32-551\r\n"
+       "SeDenyNetworkLogonRight = *S-1-5-32-546\r\n[Version]\r\nsignature=\"$CHICAGO$\"\r\nRevision=1\r\n")
+
+
+@pytest.mark.parametrize("shell", SHELLS)
+def test_the_four_logon_denials_are_added_once_and_nothing_else_changes(shell, tmp_path):
+    f = tmp_path / "rights.inf"
+    f.write_text(INF, encoding="ascii", newline="")
+    sid = "S-1-5-21-1-2-3-1001"
+    body = (f"$t = [IO.File]::ReadAllText('{f}'); $a = Update-UserRightsInf $t '{sid}' $DeniedRights; "
+            f"$b = Update-UserRightsInf $a '{sid}' $DeniedRights; ConvertTo-Json @($a, ($a -ceq $b))")
+    out, same = run(body, shell)
+    lines = out.split("\r\n")
+    assert same is True  # running it again changes nothing
+    assert "SeDenyNetworkLogonRight = *S-1-5-32-546,*" + sid in lines  # an existing holder kept, ours added
+    for right in ("SeDenyInteractiveLogonRight", "SeDenyRemoteInteractiveLogonRight", "SeDenyServiceLogonRight"):
+        assert f"{right} = *{sid}" in lines
+    assert "SeBatchLogonRight = *S-1-5-32-544,*S-1-5-32-551" in lines  # the batch right untouched
+    assert lines.index("[Version]") > max(i for i, ln in enumerate(lines) if ln.startswith("SeDeny"))  # inside the section
+
+
+def test_the_one_time_code_never_reaches_a_command_line():
+    text = SCRIPT.read_text(encoding="ascii")
+    enrol = text.split("function Invoke-Enrol")[1].split("function Start-Host")[0]
+    assert "'--code-stdin'" in enrol and "$data.enrol_code)" not in enrol.split("Invoke-AsAccount")[1].split(")")[0]
+    assert "Clear-EnrolCode $data" in enrol  # blanked in the file straight after
+
+
+@pytest.mark.parametrize("target, want", [
+    (r"C:\Program Files\WinGet\Packages\GitHub.Copilot_x\copilot.exe", r"C:\Program Files\WinGet\Packages\GitHub.Copilot_x"),
+    (r"c:\program files\winget\packages\Anthropic.ClaudeCode_x\bin\claude.exe",
+     r"C:\Program Files\WinGet\Packages\Anthropic.ClaudeCode_x"),
+    (r"C:\Program Files\WinGet\Packages\..\..\Windows\notepad.exe", None),   # never resets outside the root
+    (r"C:\Program Files\WinGet\Packages", None),
+    (r"C:\Program Files\GitHub CLI\gh.exe", None),
+    (r"C:\Program Files\WinGet\PackagesEvil\x\y.exe", None),
+])
+@pytest.mark.parametrize("shell", SHELLS)
+def test_only_a_winget_package_folder_has_its_permissions_reset(target, want, shell):
+    got = run(f"ConvertTo-Json @(Get-WingetPackageDir '{target}' 'C:\\Program Files\\WinGet\\Packages')", shell)
+    assert got == [want]
+
+
+ISOLATION_SHA256 ="15c089c5da80b693375e5f3bf522afdbe842466eefda45434897031abb962ca4"  # u64-security 08662d3, 29022
+
+
+def test_the_vendored_isolation_check_is_u64_securitys_reviewed_version():
+    """It's dot-sourced ELEVATED by the bootstrap, so an update is a security change: u64-security posts the new hash
+    and reviews it, and this pin changes with it (#humans 29003)."""
+    script = ROOT / "setup" / "Get-WorkerIsolationHits.ps1"
+    if not script.is_file():
+        pytest.skip("not vendored in this checkout yet (u64a/strugglebus PR 59)")
+    # The COMMITTED bytes (LF), as the bootstrap reads them; a Windows checkout writes .ps1 with CRLF
+    # (.gitattributes), so the working file is compared with its line endings undone.
+    blob = subprocess.run(["git", "cat-file", "blob", "HEAD:./setup/Get-WorkerIsolationHits.ps1"], cwd=ROOT,
+                          capture_output=True)
+    raw = blob.stdout if blob.returncode == 0 else script.read_bytes().replace(b"\r\n", b"\n")
+    assert hashlib.sha256(raw).hexdigest() == ISOLATION_SHA256 and b"\r" not in raw
+
+
+def test_step_11_shows_paths_at_the_console_only_and_gives_the_host_counts():
+    text = SCRIPT.read_text(encoding="ascii")
+    step = text.split("function Invoke-IsolationCheck")[1].split("function Remove-DataFileOffer")[0]
+    assert "setup\\Get-WorkerIsolationHits.ps1" in step and "-Account $account -Exclude" in step
+    record = step.split("$record = ")[1].split("}")[0]
+    assert "exec_hits = $execCount" in record and "info_hits = $info.Count" in record
+    assert "$execCount = -1" in step  # a check that fails counts as weak, never as clean
+    assert "$h" not in record and ".Path" not in record and ".Source" not in record  # counts only, never a path
+
+
+@pytest.mark.parametrize("shell", SHELLS)
+def test_sign_in_commands_for_a_device_code_and_for_a_browser_here(shell):
+    body = ("$r = @{}; foreach ($m in 'device', 'browser') { foreach ($e in 'gh', 'ghcp', 'claude') { "
+            "$r[\"$e-$m\"] = (Get-SignInCommand $e \"C:\\t\\$e.exe\" $m).cmd } }; ConvertTo-Json $r")
+    got = run(body, shell)
+    assert got["ghcp-device"] == '"C:\\t\\ghcp.exe" login --device-code'
+    assert got["ghcp-browser"] == '"C:\\t\\ghcp.exe" login'
+    assert got["gh-device"].startswith('set "GH_BROWSER=') and "auth setup-git" in got["gh-device"]
+    assert "GH_BROWSER" not in got["gh-browser"] and "auth setup-git" in got["gh-browser"]
+    assert got["claude-device"] == got["claude-browser"] == '"C:\\t\\claude.exe"'
+
+
+def test_enrolment_runs_before_the_sign_ins_and_the_denials_always_follow():
+    main = SCRIPT.read_text(encoding="ascii").split("InvocationName -eq '.') { return }")[1]
+    block = main.split("try {")[1].split("} finally {")
+    assert block[0].index("Invoke-Enrol") < block[0].index("Invoke-SignIn")  # the App's code lasts 15 minutes
+    assert "Set-HostLogonRights" in block[1]
+
+
+@pytest.mark.parametrize("shell", SHELLS)
+def test_a_stray_windows_gitconfig_is_refused_before_and_removed_after(shell, tmp_path):
+    stray = tmp_path / ".gitconfig"
+    body = (f"function Say {{ }}; $StrayGitConfig = '{stray}'; $r = @{{}}; "
+            "try { Test-StrayGitConfig; $r.absent = 'ok' } catch { $r.absent = $_.Exception.Message }; "
+            "Set-Content -LiteralPath $StrayGitConfig 'x'; "
+            "try { Test-StrayGitConfig; $r.before = 'ok' } catch { $r.before = 'refused' }; "
+            "Test-StrayGitConfig -Remove; $r.after = (Test-Path -LiteralPath $StrayGitConfig); ConvertTo-Json $r")
+    got = run(body, shell)
+    assert got == {"absent": "ok", "before": "refused", "after": False}
+
+
+def test_the_stray_gitconfig_is_checked_at_the_start_and_after_the_sign_ins():
+    main = SCRIPT.read_text(encoding="ascii").split("InvocationName -eq '.') { return }")[1]
+    assert main.index("Test-StrayGitConfig\n") < main.index("Install-Prereqs")
+    assert main.index("Invoke-SignIn") < main.index("Test-StrayGitConfig -Remove") < main.index("} finally {")
+
+
+ADMINS, SYSTEM_SID, USERS, AUTH_USERS, BOB = "S-1-5-32-544", "S-1-5-18", "S-1-5-32-545", "S-1-5-11", "S-1-5-21-1-2-3-1001"
+FULL, READ_RUN, MODIFY, WRITE_DATA = 2032127, 1179817, 1245631, 2
+
+
+@pytest.mark.parametrize("owner, aces, bad", [
+    (ADMINS, [(ADMINS, FULL, True, False), (SYSTEM_SID, FULL, True, False), (USERS, READ_RUN, True, False),
+              ("S-1-3-0", FULL, True, True)], None),                        # what the test VM's root has
+    (BOB, [(ADMINS, FULL, True, False)], "owned by"),                        # owned by a user
+    (ADMINS, [(USERS, MODIFY, True, False)], "may write"),                   # Users can change it
+    (ADMINS, [(AUTH_USERS, WRITE_DATA, True, False)], "may write"),          # one write bit is enough
+    (ADMINS, [(BOB, FULL, True, False)], "may write"),
+    (ADMINS, [("S-1-3-0", FULL, True, False)], "may write"),                 # CREATOR OWNER on the folder itself
+    (ADMINS, [(USERS, MODIFY, False, False)], None),                         # a deny entry grants nothing
+])
+@pytest.mark.parametrize("shell", SHELLS)
+def test_the_winget_root_must_be_safe_before_a_package_inherits_from_it(owner, aces, bad, shell):
+    items = ", ".join(f"@{{ sid = '{s}'; rights = {r}; allow = ${str(a).lower()}; inheritOnly = ${str(i).lower()} }}"
+                      for s, r, a, i in aces)
+    got = run(f"ConvertTo-Json @(Get-AclProblem '{owner}' @({items}))", shell)
+    assert (got == [None]) if bad is None else (bad in got[0])
+
+
+def test_the_winget_root_is_checked_before_any_reset():
+    repair = SCRIPT.read_text(encoding="ascii").split("function Repair-WingetPackageAcl")[1].split("\n}\n")[0]
+    assert repair.index("Assert-WingetRootSafe") < repair.index("/reset")
 
 
 def test_still_ascii_and_lf_only():

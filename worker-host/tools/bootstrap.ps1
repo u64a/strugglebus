@@ -21,7 +21,8 @@
 param(
     [string]$DataFile = '',
     [switch]$Yes,
-    [switch]$SingleSigner
+    [switch]$SingleSigner,
+    [ValidateSet('', 'device', 'browser')][string]$SignIn = ''   # how the sign-ins are approved; asked if not given
 )
 
 Set-StrictMode -Version Latest
@@ -396,6 +397,65 @@ function Get-Winget {
     return $exe
 }
 
+$WingetPackages = Join-Path $env:ProgramFiles 'WinGet\Packages'
+
+function Get-WingetPackageDir([string]$target, [string]$root = $WingetPackages) {
+    # Pure: the winget package folder (root\<package>) holding this file, or $null if it isn't under the root.
+    $r = $root.TrimEnd('\') + '\'
+    if (-not $target.StartsWith($r, [StringComparison]::OrdinalIgnoreCase)) { return $null }
+    $package = $target.Substring($r.Length).Split('\')[0]
+    if (-not $package -or $package -eq '..' -or $package -eq '.') { return $null }
+    return $r + $package
+}
+
+$TrustedSids = @('S-1-5-32-544', 'S-1-5-18', 'S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464')  # Administrators, SYSTEM, TrustedInstaller
+$CreatorOwner = 'S-1-3-0'
+$WriteRights = [Security.AccessControl.FileSystemRights]'WriteData, AppendData, WriteExtendedAttributes, WriteAttributes, Delete, DeleteSubdirectoriesAndFiles, ChangePermissions, TakeOwnership'
+
+function Get-AclProblem([string]$ownerSid, $aces) {
+    # Pure: why this folder is NOT safe to inherit from, or $null. Owner Administrators, SYSTEM or TrustedInstaller;
+    # write (any of $WriteRights) allowed to nobody else. CREATOR OWNER as an inherit-only entry is what Program Files
+    # itself has: it grants nothing on the folder, only the creator of something inside (here, an administrator).
+    # $aces: @{ sid; rights (int); allow (bool); inheritOnly (bool) }.
+    if ($TrustedSids -notcontains $ownerSid) { return "owned by $ownerSid" }
+    foreach ($a in @($aces)) {
+        if (-not $a.allow -or ($a.rights -band [int]$WriteRights) -eq 0) { continue }
+        if ($TrustedSids -contains $a.sid) { continue }
+        if ($a.sid -eq $CreatorOwner -and $a.inheritOnly) { continue }
+        return "$($a.sid) may write to it"
+    }
+    return $null
+}
+
+function Assert-WingetRootSafe([string]$root = $WingetPackages) {
+    # u64-security (#humans 29070): a reset package folder inherits from the root, which winget created; so the root
+    # must be right first, or the reset would hand its flaw down. Refused, not fixed: an administrator looks at it.
+    $acl = (Get-Item -LiteralPath $root).GetAccessControl('Owner, Access')
+    $owner = $acl.GetOwner([Security.Principal.SecurityIdentifier]).Value
+    $aces = foreach ($r in $acl.GetAccessRules($true, $true, [Security.Principal.SecurityIdentifier])) {
+        @{ sid = $r.IdentityReference.Value; rights = [int]$r.FileSystemRights
+           allow = ($r.AccessControlType -eq 'Allow'); inheritOnly = [bool]($r.PropagationFlags -band 'InheritOnly') }
+    }
+    $problem = Get-AclProblem $owner $aces
+    if ($problem) { throw "$root is not safe to inherit from ($problem): fix its permissions, then run this again" }
+}
+
+function Repair-WingetPackageAcl([string]$path) {
+    # winget unpacks a portable package in the installing user's TEMP and moves it, so its files keep that folder's
+    # ACL: the installer has full control and other users (the host's account) get "Access is denied" (seen on the
+    # test VM, copilot.exe and claude.exe). Reset to what Program Files gives: Users read and run, nobody else writes.
+    $item = Get-Item -LiteralPath $path -ErrorAction SilentlyContinue
+    if (-not $item) { return }
+    $target = if ($item.LinkType -eq 'SymbolicLink') { @($item.Target)[0] } else { $item.FullName }
+    $dir = Get-WingetPackageDir $target
+    if (-not $dir -or -not (Test-Path -LiteralPath $dir)) { return }
+    Assert-WingetRootSafe
+    $icacls = Join-Path $env:SystemRoot 'System32\icacls.exe'
+    & $icacls $dir /reset /T /C /Q | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw "could not reset the permissions of $dir" }
+    Say "permissions of $dir reset to Program Files' (users read and run, administrators write)"
+}
+
 function Install-Prereqs($engines, [string]$work) {
     # Step 2: each missing tool from winget, machine-wide (PowerShell 7 from its pinned zip). Returns name -> path;
     # throws if one is still missing.
@@ -413,6 +473,7 @@ function Install-Prereqs($engines, [string]$work) {
             $path = Find-Prereq $name
             if (-not $path) { throw "$id did not install where expected ($($Prereqs[$name].paths -join ', '))" }
         }
+        Repair-WingetPackageAcl $path
         Say "$name`: $path"
         $found[$name] = $path
     }
@@ -518,6 +579,390 @@ function Get-VerifiedRelease([string]$git, [string]$work, [string]$repo = $Relea
     return @{ release = $release; stage = $stage }
 }
 
+# --- the host's own account, the pinned keys, the install (2.2 steps 4 to 6) ---------------------------------------
+# u64-security's review of the design, #humans 28966: a standard account with a random password held in memory only;
+# recorded so offboarding deletes only an account made here; hidden from the sign-in screen, kept out of the remote
+# groups, and (after the engine sign-in, step 7) denied every logon but the scheduled task's.
+
+$SbRoot = Join-Path $env:ProgramData 'strugglebus'
+$AccountRecord = Join-Path $SbRoot 'host-account.json'
+$PinnedSigners = Join-Path $SbRoot 'allowed_signers'
+$PinnedCa = Join-Path $SbRoot 'bus-ca.crt'
+
+function Protect-SbRoot {
+    # C:\ProgramData\strugglebus: ProgramData lets Users create files and folders by default, so inheritance is cut and
+    # the folder owned by Administrators: Administrators and SYSTEM full, Users read and execute, nothing else.
+    New-Item -ItemType Directory -Force -Path $SbRoot | Out-Null
+    $icacls = Join-Path $env:SystemRoot 'System32\icacls.exe'
+    & $icacls $SbRoot /setowner '*S-1-5-32-544' /Q | Out-Null
+    & $icacls $SbRoot /inheritance:r /grant:r '*S-1-5-32-544:(OI)(CI)F' '*S-1-5-18:(OI)(CI)F' '*S-1-5-32-545:(OI)(CI)RX' /Q | Out-Null
+    if ($LASTEXITCODE -ne 0 -or (Test-UserWritable $SbRoot)) { throw "could not lock down $SbRoot" }
+}
+
+function New-RandomPassword([int]$length = 32) {
+    # A SecureString of random characters (upper, lower, digit and symbol, so any password policy accepts it). It never
+    # exists as a plain string here; the bytes are cleared after use.
+    $sets = 'ABCDEFGHJKLMNPQRSTUVWXYZ', 'abcdefghijkmnopqrstuvwxyz', '23456789', '!#%+-.:=?@^_~'
+    $all = -join $sets
+    $rng = [Security.Cryptography.RandomNumberGenerator]::Create()
+    $bytes = New-Object byte[] ($length * 2)
+    $rng.GetBytes($bytes)
+    $secure = New-Object Security.SecureString
+    for ($i = 0; $i -lt $length; $i++) {
+        $pool = if ($i -lt $sets.Count) { $sets[$i] } else { $all }   # one of each set first, then any
+        $secure.AppendChar($pool[(([int]$bytes[2 * $i] -shl 8) -bor $bytes[2 * $i + 1]) % $pool.Length])
+    }
+    [Array]::Clear($bytes, 0, $bytes.Length)
+    $secure.MakeReadOnly()
+    return $secure
+}
+
+function Get-FreeAccountName([string]$base = 'sbworker') {
+    # Pure on its input: sbworker, else sbworker2, sbworker3 ... (Get-LocalUser decides what exists).
+    for ($n = 1; $n -lt 100; $n++) {
+        $name = if ($n -eq 1) { $base } else { "$base$n" }
+        if (-not (Get-LocalUser -Name $name -ErrorAction SilentlyContinue)) { return $name }
+    }
+    throw 'no free sbworker account name'
+}
+
+function New-HostAccount([string]$hostPrefix, $password) {
+    # Step 4: a standard local user, not an administrator, recorded in host-account.json for offboarding.
+    $name = Get-FreeAccountName
+    $user = New-LocalUser -Name $name -Password $password -PasswordNeverExpires -UserMayNotChangePassword `
+        -AccountNeverExpires -Description "StruggleBus worker host $hostPrefix" -ErrorAction Stop
+    $users = Get-LocalGroup -SID 'S-1-5-32-545'
+    if (-not (Get-LocalGroupMember -Group $users -ErrorAction SilentlyContinue | Where-Object { $_.SID -eq $user.SID })) {
+        Add-LocalGroupMember -Group $users -Member $user -ErrorAction Stop
+    }
+    foreach ($remote in 'S-1-5-32-555', 'S-1-5-32-580', 'S-1-5-32-544') {   # Remote Desktop Users, Remote Management Users, Administrators
+        $g = Get-LocalGroup -SID $remote -ErrorAction SilentlyContinue
+        if ($g -and (Get-LocalGroupMember -Group $g -ErrorAction SilentlyContinue | Where-Object { $_.SID -eq $user.SID })) {
+            Remove-LocalGroupMember -Group $g -Member $user -ErrorAction Stop
+        }
+    }
+    # Hidden from the sign-in screen.
+    $list = 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon\SpecialAccounts\UserList'
+    New-Item -Path $list -Force | Out-Null
+    New-ItemProperty -Path $list -Name $name -Value 0 -PropertyType DWord -Force | Out-Null
+    $record = [ordered]@{ account = $name; sid = $user.SID.Value; created_by_bootstrap = $true; host_prefix = $hostPrefix
+                          created_at = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ') }
+    [IO.File]::WriteAllText($AccountRecord, ((ConvertTo-Json $record) + "`n"), (New-Object Text.UTF8Encoding($false)))
+    Say "created the host's account $name (standard user, hidden from sign-in, password random and never stored)"
+    return $user
+}
+
+function Get-PinnedSignersText($signerLines) {
+    # Pure: the site's keys (fleet and host commands only, as the data file's patterns allow) and the built-in release
+    # keys (releases only).
+    $site = @($signerLines)
+    return (($site + @($ReleaseKeys | ForEach-Object { 'release namespaces="strugglebus-release" ' + $_ })) -join "`n") + "`n"
+}
+
+function Write-PinnedFiles($data) {
+    # Step 5: allowed_signers and the bus CA in the locked-down folder (inherited: Administrators write, Users read).
+    [IO.File]::WriteAllText($PinnedSigners, (Get-PinnedSignersText $data.signers), [Text.Encoding]::ASCII)
+    [IO.File]::WriteAllBytes($PinnedCa, [Convert]::FromBase64String($data.bus_ca_pem))
+    $icacls = Join-Path $env:SystemRoot 'System32\icacls.exe'
+    foreach ($f in $PinnedSigners, $PinnedCa) {
+        & $icacls $f /reset /Q | Out-Null
+        & $icacls $f /setowner '*S-1-5-32-544' /Q | Out-Null
+    }
+    Say "pinned $(@($data.signers).Count) site key(s) and the 3 release keys in $PinnedSigners"
+}
+
+function Get-SiteText($data) {
+    # Pure: the site file install.ps1 reads (workerhost/sitefile.py), from the checked data file.
+    $remotes = (@($data.remotes) | ForEach-Object { '"' + $_ + '"' }) -join ', '
+    return "bus_url = `"$($data.bus_url)`"`nfleet_source = `"$($data.fleet_source)`"`nremotes = [$remotes]`n"
+}
+
+function Invoke-Install([string]$pwsh, [string]$stage, [string]$work, $data, [string]$account, $password, $tools) {
+    # Step 6: the staged, verified install.ps1, by full path, without the operator's profile, for the account; its
+    # password goes on stdin and nowhere else.
+    $site = Join-Path $work 'site.toml'
+    [IO.File]::WriteAllText($site, (Get-SiteText $data), [Text.Encoding]::ASCII)
+    $installer = Join-Path $stage 'install.ps1'
+    $psi = New-Object Diagnostics.ProcessStartInfo $pwsh
+    $parts = @('-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', $installer, '-Account', $account,
+               '-PasswordStdin', '-SiteFile', $site, '-BusCa', $PinnedCa, '-AgentPrefix', $data.host_prefix,
+               '-DefaultEngine', @($data.engines)[0])
+    $psi.Arguments = ($parts | ForEach-Object { if ($_ -match '[\s"]') { '"' + $_ + '"' } else { $_ } }) -join ' '
+    $psi.UseShellExecute = $false
+    $psi.RedirectStandardInput = $true
+    $psi.WorkingDirectory = $stage
+    # A fresh PATH: this process started before step 2 installed the tools, so its own PATH is stale. The machine's
+    # PATH plus the tools' own folders, never the user's PATH (folders the operator can write, run elevated here).
+    $toolDirs = @($tools.Values | ForEach-Object { Split-Path $_ } | Select-Object -Unique)
+    $psi.EnvironmentVariables['Path'] = (@($toolDirs) + @([Environment]::GetEnvironmentVariable('Path', 'Machine') -split ';' |
+        Where-Object { $_ })) -join ';'
+    $p = [Diagnostics.Process]::Start($psi)
+    $bstr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($password)
+    try { $p.StandardInput.WriteLine([Runtime.InteropServices.Marshal]::PtrToStringBSTR($bstr)) }
+    finally { [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($bstr); $p.StandardInput.Close() }
+    $p.WaitForExit()
+    if ($p.ExitCode -ne 0) { throw "install.ps1 failed (exit $($p.ExitCode)): see its output above" }
+}
+
+# --- sign-in, logon rights, enrolment, start (2.2 steps 7 to 9 and 12) ---------------------------------------------
+
+function New-AccountCredential([string]$account, $password) {
+    return New-Object Management.Automation.PSCredential("$env:COMPUTERNAME\$account", $password)
+}
+
+function Stop-AccountProcesses([string]$account) {
+    # Whatever a sign-in left running as the host's account (a browser, mostly): closed, so nothing interactive keeps
+    # running under it. Its scheduled task isn't started yet.
+    $left = @(Get-Process -IncludeUserName -ErrorAction SilentlyContinue |
+        Where-Object { $_.UserName -eq "$env:COMPUTERNAME\$account" })
+    if ($left.Count) {
+        Say "closing what the sign-in left running as ${account}: $(($left.ProcessName | Sort-Object -Unique) -join ', ')"
+        $left | Stop-Process -Force -ErrorAction SilentlyContinue
+    }
+}
+
+function Get-SignInCommand([string]$engine, [string]$exe, [string]$mode) {
+    # Pure: the command a sign-in window runs, and what to tell the operator. 'device': a code shown here, approved
+    # in a browser on ANY PC (a passkey or a signed-in browser elsewhere works; nothing opens here). 'browser': a
+    # browser opens on THIS PC (Copilot's needs the passkey or sign-in to reach this PC).
+    $device = $mode -ne 'browser'
+    switch ($engine) {
+        'gh' {
+            # gh shows the code either way; in device mode GH_BROWSER only prints the link instead of opening it.
+            $quiet = if ($device) { 'set "GH_BROWSER=cmd /c echo Open on any PC:" && ' } else { '' }
+            return @{ cmd = "$quiet`"$exe`" auth login --hostname github.com --git-protocol https --web && `"$exe`" auth setup-git"
+                      hint = 'copy the one-time code, open https://github.com/login/device, approve, then close this window' }
+        }
+        'ghcp' {
+            if ($device) {
+                return @{ cmd = "`"$exe`" login --device-code"
+                          hint = 'open https://github.com/login/device on any PC, enter the code shown, then close this window' }
+            }
+            return @{ cmd = "`"$exe`" login"; hint = 'approve in the browser that opens here, then close this window' }
+        }
+        default {
+            # Claude Code's /login shows a link and takes the code back by paste, so it works from any PC either way.
+            return @{ cmd = "`"$exe`""; hint = 'type /login, open the link it shows, paste the code back, then /exit and close this window' }
+        }
+    }
+}
+
+function Read-SignInMode([string]$given, [bool]$yes) {
+    if ($given) { return $given }
+    if ($yes) { return 'device' }
+    Say 'How will you approve the sign-ins (GitHub, and each engine)?'
+    Say '  1 = a device code: approve on any PC or phone where you are already signed in (recommended; works for VMs)'
+    Say '  2 = a browser on this PC'
+    $a = Read-Host '[bootstrap] 1 or 2 (Enter = 1)'
+    if ($a -eq '2') { return 'browser' }
+    return 'device'
+}
+
+function Invoke-SignIn([string]$account, $password, $engines, $tools, [string]$mode = 'device') {
+    # Step 7: each sign-in must run AS the host's account (its tokens are stored in that profile), so a window opens
+    # under it; the operator approves it (Get-SignInCommand), then closes the window.
+    # Skipped or failed: the host shows needs-sign-in, and `wh signin <engine>` finishes it later.
+    $cred = New-AccountCredential $account $password
+    # gh first: the host uses it (whether a worker's branch was merged before its clone is deleted; the probe checks
+    # `gh auth status`), and `gh auth setup-git` makes it git's GitHub credential for this account.
+    foreach ($engine in @('gh') + @($engines)) {
+        $exe = $tools[$engine]
+        $how = Get-SignInCommand $engine $exe $mode
+        $cmd = $how.cmd
+        $hint = $how.hint
+        Say "signing $engine in as $account in a new window: $hint"
+        try {
+            # HOME: git takes its home from HOME, then HOMEDRIVE+HOMEPATH, which a window opened this way leaves at
+            # C:\Windows (seen on the test VM: gh auth setup-git could not lock C:/WINDOWS/.gitconfig).
+            # Wait for the window only: -Wait also waits for everything it started, and a browser the sign-in opened
+            # as the account keeps running after the window closes (seen on the test VM: the script hung).
+            $p = Start-Process -FilePath (Join-Path $env:SystemRoot 'System32\cmd.exe') `
+                -ArgumentList '/k', "title Sign in $engine as $account && set `"HOME=%USERPROFILE%`" && $cmd" `
+                -Credential $cred -LoadUserProfile -WorkingDirectory $env:SystemRoot -PassThru -ErrorAction Stop
+            $p.WaitForExit()
+            Stop-AccountProcesses $account
+        } catch {
+            Say "the $engine sign-in window could not open ($($_.Exception.Message)): finish later with 'wh signin $engine'"
+        }
+    }
+}
+
+$DeniedRights = 'SeDenyInteractiveLogonRight', 'SeDenyRemoteInteractiveLogonRight', 'SeDenyNetworkLogonRight', 'SeDenyServiceLogonRight'
+
+function Update-UserRightsInf([string]$inf, [string]$sid, [string[]]$rights) {
+    # Pure: a secedit export (its [Privilege Rights] section) with *SID added to each right, once; a missing right is
+    # added. Other rights and other holders are left exactly as they were.
+    $entry = "*$sid"
+    $lines = [Collections.Generic.List[string]]($inf -split "`r?`n")
+    $start = $lines.FindIndex([Predicate[string]] { param($l) $l.Trim() -eq '[Privilege Rights]' })
+    if ($start -lt 0) { $lines.Add('[Privilege Rights]'); $start = $lines.Count - 1 }
+    $end = $start + 1
+    while ($end -lt $lines.Count -and -not $lines[$end].TrimStart().StartsWith('[')) { $end++ }
+    foreach ($right in $rights) {
+        $found = $false
+        for ($i = $start + 1; $i -lt $end; $i++) {
+            if ($lines[$i] -match "^\s*$right\s*=\s*(.*)$") {
+                $holders = @($Matches[1].Split(',') | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+                if ($holders -notcontains $entry) { $holders += $entry }
+                $lines[$i] = "$right = " + ($holders -join ',')
+                $found = $true
+            }
+        }
+        if (-not $found) { $lines.Insert($end, "$right = $entry"); $end++ }
+    }
+    return ($lines -join "`r`n")
+}
+
+function Add-UserRights([string]$sid, [string[]]$rights) {
+    # Adds the SID to these user rights (secedit export, Update-UserRightsInf, import); other holders are kept.
+    $secedit = Join-Path $env:SystemRoot 'System32\secedit.exe'
+    $tag = [guid]::NewGuid().ToString('n')
+    $infFile = Join-Path $work "rights-$tag.inf"
+    $db = Join-Path $work "rights-$tag.sdb"
+    & $secedit /export /cfg $infFile /areas USER_RIGHTS /quiet | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw 'could not read the user rights (secedit /export)' }
+    $updated = Update-UserRightsInf ([IO.File]::ReadAllText($infFile)) $sid $rights
+    [IO.File]::WriteAllText($infFile, $updated, [Text.Encoding]::Unicode)
+    & $secedit /configure /db $db /cfg $infFile /areas USER_RIGHTS /quiet | Out-Null
+    $code = $LASTEXITCODE
+    Remove-Item -LiteralPath $infFile, $db, ([IO.Path]::ChangeExtension($db, '.jfm')) -Force -ErrorAction SilentlyContinue
+    if ($code -ne 0) { throw "could not set $($rights -join ', ') (secedit /configure)" }
+}
+
+function Grant-BatchLogon([string]$sid) {
+    # Step 4: a standard user doesn't hold "log on as a batch job", and registering a task doesn't grant it: without it
+    # the scheduled task's logon is refused (0xC000015B, seen on the test VM). The existing hosts run as administrators,
+    # who hold it already.
+    Add-UserRights $sid @('SeBatchLogonRight')
+    Say "the host's account may log on as a batch job (its scheduled task)"
+}
+
+function Set-HostLogonRights([string]$sid) {
+    # After the sign-in and the enrolment: the account may run its scheduled task and nothing else: no sign-in at the
+    # PC, no Remote Desktop, no network logon (SMB, WinRM), no services (u64-security, #humans 28966).
+    Add-UserRights $sid $DeniedRights
+    Say "the host's account is now denied sign-in at the PC, Remote Desktop, network and service logon"
+}
+
+function Invoke-AsAccount([string]$exe, [string[]]$arguments, [string]$account, $password, [string]$stdinLine = '') {
+    # Runs a program as the host's account (its profile loaded), with an optional stdin line; returns its output.
+    $psi = New-Object Diagnostics.ProcessStartInfo $exe
+    $psi.Arguments = ($arguments | ForEach-Object { if ($_ -match '[\s"]') { '"' + $_ + '"' } else { $_ } }) -join ' '
+    $psi.UserName = $account
+    $psi.Domain = $env:COMPUTERNAME
+    $psi.Password = $password
+    $psi.LoadUserProfile = $true
+    $psi.UseShellExecute = $false
+    $psi.RedirectStandardInput = $true
+    $psi.RedirectStandardOutput = $true
+    $psi.RedirectStandardError = $true
+    $psi.WorkingDirectory = $env:SystemRoot
+    $p = [Diagnostics.Process]::Start($psi)
+    $err = $p.StandardError.ReadToEndAsync()
+    if ($stdinLine) { $p.StandardInput.WriteLine($stdinLine) }
+    $p.StandardInput.Close()
+    $out = $p.StandardOutput.ReadToEnd()
+    $p.WaitForExit()
+    return @{ code = $p.ExitCode; out = $out; err = $err.Result }
+}
+
+function Invoke-Enrol([string]$python, [string]$hostHome, [string]$account, $password, [byte[]]$bytes, [string]$dataFile) {
+    # Step 8: `wh enrol --code-stdin` as the account (its credentials are stored as that account): the one-time code
+    # goes on stdin, never on a command line or in a log, and is blanked in the data file straight after (Q1).
+    $data = Read-SbData $bytes -SingleSigner:$SingleSigner
+    if (-not $data.enrol_code) { throw 'the data file has no enrolment code left (already used): get a new one from the App' }
+    $wh = Join-Path $hostHome 'app\wh.py'
+    $r = Invoke-AsAccount $python @('-I', $wh, '--home', $hostHome, 'enrol', '--code-stdin') $account $password $data.enrol_code
+    [IO.File]::WriteAllText((Resolve-Path -LiteralPath $dataFile).Path, (Clear-EnrolCode $data), [Text.Encoding]::ASCII)
+    Say 'the one-time code is blanked in the data file'
+    $r.out -split "`r?`n" | Where-Object { $_ } | ForEach-Object { Say "  $_" }
+    if ($r.code -ne 0) { throw "enrolment failed (exit $($r.code)): get a new code from the App and run this again" }
+    $m = [regex]::Match($r.out, 'CONFIRMATION CODE ([0-9a-f]{8})')
+    $id = [regex]::Match($r.out, 'host identity (\S+)')
+    if (-not $m.Success) { throw 'enrolment printed no confirmation code' }
+    return @{ code = $m.Groups[1].Value; identity = $id.Groups[1].Value }
+}
+
+function Start-Host([string]$python, [string]$hostHome) {
+    # Step 9: `wh start` (enables and starts the scheduled task), then wait for the host's first status.
+    & $python -I (Join-Path $hostHome 'app\wh.py') --home $hostHome start | ForEach-Object { Say "  $_" }
+    $status = Join-Path $hostHome 'state\status.json'
+    $deadline = (Get-Date).AddMinutes(3)
+    while ((Get-Date) -lt $deadline -and -not (Test-Path -LiteralPath $status)) { Start-Sleep -Seconds 5 }
+    if (Test-Path -LiteralPath $status) { Say 'the host is running and reporting' }
+    else { Say 'the host has not reported within 3 minutes: check Task Scheduler and its log under the home folder' }
+}
+
+function Invoke-IsolationCheck([string]$stage, [string]$account, [string]$hostHome, [string]$workersRoot) {
+    # Step 11 (u64-security's check, vendored as setup\Get-WorkerIsolationHits.ps1, so it arrives in the verified stage
+    # under installer_sha256): anything the host's account could change that runs as someone else. The paths are shown
+    # here only; the host gets the counts (state\isolation.json), which raise its standing "isolation-weak" warning.
+    $check = Join-Path $stage 'setup\Get-WorkerIsolationHits.ps1'
+    if (-not (Test-Path -LiteralPath $check)) { Say 'this release has no isolation check: skipped'; return }
+    $execCount = -1; $info = @()
+    try {
+        . $check   # strict-mode safe from u64-security 08662d3; if it still throws, the catch counts it as weak
+        $hits = @(Get-WorkerIsolationHits -Account $account -Exclude @($hostHome, $workersRoot))
+        $exec = @($hits | Where-Object { $_.Severity -eq 'exec' })
+        $info = @($hits | Where-Object { $_.Severity -ne 'exec' })
+        $execCount = $exec.Count
+    } catch {
+        # Unknown is not clean: the host shows isolation-weak (exec_hits -1) until the check is run again.
+        Say "ISOLATION CHECK FAILED ($($_.Exception.Message)): the host will show the isolation-weak warning"
+    }
+    if ($execCount -lt 0) {
+    } elseif ($exec.Count) {
+        Say "ISOLATION: $($exec.Count) thing(s) the host's account can change would run as someone else:"
+        foreach ($h in $exec) { Say "  [$($h.Kind)] $($h.Source): $($h.Path) ($($h.Why))" }
+        Say 'Fix their permissions; until then the host shows the isolation-weak warning.'
+    } else {
+        Say 'isolation check: nothing the host''s account can change runs as anyone else'
+    }
+    if ($info.Count) { Say "  (and $($info.Count) writable top-level folder(s), lower severity)" }
+    $record = [ordered]@{ exec_hits = $execCount; info_hits = $info.Count
+                          checked_at = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ') }
+    $state = Join-Path $hostHome 'state'
+    New-Item -ItemType Directory -Force -Path $state | Out-Null
+    [IO.File]::WriteAllText((Join-Path $state 'isolation.json'), ((ConvertTo-Json $record) + "`n"), (New-Object Text.UTF8Encoding($false)))
+}
+
+$StrayGitConfig = Join-Path $env:SystemRoot '.gitconfig'
+
+function Test-StrayGitConfig([switch]$Remove) {
+    # Any git run with no HOME and no profile (SYSTEM, a service, another account's batch job) takes
+    # C:\Windows\.gitconfig as its global config, so a file there quietly steers git for them (u64-security, 29049).
+    # Before the install: refuse (someone else's file; an administrator decides). After the sign-ins: ours, removed.
+    if (-not (Test-Path -LiteralPath $StrayGitConfig)) { Say "checked: no $StrayGitConfig"; return }
+    if (-not $Remove) {
+        throw "$StrayGitConfig exists: git run without a profile (SYSTEM, services) reads it. Look at it, remove it, then run this again."
+    }
+    Remove-Item -LiteralPath $StrayGitConfig -Force
+    Say "removed $StrayGitConfig (left by a sign-in; git without a profile would read it)"
+}
+
+function Show-SignInResult([string]$python, [string]$hostHome, [string]$account, $password) {
+    # After the sign-ins, still able to run as the account: its probe, so a skipped or failed sign-in shows now
+    # (on the test VM a cancelled Claude sign-in otherwise went unnoticed).
+    try {
+        $r = Invoke-AsAccount $python @('-I', (Join-Path $hostHome 'app\wh.py'), '--home', $hostHome, 'probe') $account $password
+        $lines = @($r.out -split "`r?`n" | Where-Object { $_ -match 'signed in|gh auth|copilot' })
+        Say 'sign-ins, as the host sees them:'
+        foreach ($l in $lines) { Say "  $($l.Trim())" }
+        if ($lines -match '^\s*FAIL') { Say 'A sign-in is missing: the host runs without it (that engine is not offered) until it is added.' }
+    } catch {
+        Say "could not check the sign-ins ($($_.Exception.Message))"
+    }
+}
+
+function Remove-DataFileOffer([string]$dataFile, [bool]$yes) {
+    # Step 12: the data file's code is spent and blanked; offer to delete it.
+    if ($yes) { Say "the data file $dataFile is no longer needed (its code is spent); delete it when you like"; return }
+    if ((Read-Host '[bootstrap] delete the data file now? (yes/no)') -ceq 'yes') {
+        Remove-Item -LiteralPath $dataFile -Force
+        Say 'data file deleted'
+    }
+}
+
 if ($MyInvocation.InvocationName -eq '.') { return }
 
 if (-not $DataFile) { throw 'give the App''s data file: bootstrap.ps1 -DataFile .\sbhost-enrol.json' }
@@ -531,9 +976,37 @@ Say "data file digest: $(Get-FileDigest $bytes)"
 foreach ($line in $SB.signers) { Say "signer: $(Get-SignerFingerprint $line)" }
 Say 'compare these with what the App shows for this host.'
 if (-not $Yes) { Read-Host '[bootstrap] press Enter to continue, or close this window to stop' | Out-Null }
+$mode = Read-SignInMode $SignIn $Yes                    # asked now, so the rest runs unattended up to the sign-ins
+Test-StrayGitConfig
 
 $work = New-AdminOnlyFolder (Join-Path $env:ProgramData ('strugglebus\bootstrap-' + [guid]::NewGuid().ToString('n')))
 $tools = Install-Prereqs $SB.engines $work              # step 2
 $verified = Get-VerifiedRelease $tools.git $work        # step 3
 Say "verified host code staged at $($verified.stage)"
-throw 'not built yet: the install steps after the verified fetch (2.2 steps 4 to 12) come in a later change'
+Protect-SbRoot
+$password = New-RandomPassword
+$account = New-HostAccount $SB.host_prefix $password    # step 4
+Grant-BatchLogon $account.SID.Value
+Write-PinnedFiles $SB                                    # step 5
+Invoke-Install $tools.pwsh $verified.stage $work $SB $account.Name $password $tools   # step 6
+$hostHome = Join-Path $SbRoot "host\$($account.Name)"
+Invoke-IsolationCheck $verified.stage $account.Name $hostHome 'C:\sb-workers'   # step 11, straight after the install
+# Steps 8 and 7 run AS the account, which is an interactive logon (CreateProcessWithLogonW), so they come before the
+# denials; the finally applies the denials even when the enrolment or a sign-in fails. Enrolment first: the App's
+# code lasts 15 minutes, and the sign-ins take as long as the operator needs (on the test VM they outlasted it).
+try {
+    $enrolled = Invoke-Enrol $tools.python $hostHome $account.Name $password $bytes $DataFile   # step 8
+    Invoke-SignIn $account.Name $password $SB.engines $tools $mode               # step 7
+    Show-SignInResult $tools.python $hostHome $account.Name $password
+    Test-StrayGitConfig -Remove
+} finally {
+    $password = $null
+    Set-HostLogonRights $account.SID.Value                                       # step 7's denials
+}
+Start-Host $tools.python $hostHome                                                  # step 9
+Say "enrolled as $($enrolled.identity). CONFIRMATION CODE: $($enrolled.code)"
+Say 'In the App, compare this code with the one it shows for this host, then approve the host into the fleet.'
+Say 'Until then the host waits in "needs-fleet" and takes no work (step 10).'
+Say 'Note: this account''s password exists nowhere. A reinstall sets a new one, which makes the saved sign-ins and'
+Say 'secrets unreadable (DPAPI): a reinstall means signing in to the engines and enrolling again.'
+Remove-DataFileOffer $DataFile $Yes                                              # step 12

@@ -1536,7 +1536,10 @@ class Host:
         cached = getattr(self, "_pwsh", None)
         if cached is not None and now - cached[0] < 3600:
             return cached[1]
-        exe = shutil.which("pwsh") or next((p for p in PWSH_PATHS if os.path.isfile(p)), None)
+        # The bootstrap's pinned install first: a pwsh earlier on the account's PATH (a folder it can write) would
+        # otherwise be run instead and make this field, which monitoring alerts on, report the wrong version
+        # (u64-security, #humans 28988). PATH only when the pinned one is absent.
+        exe = next((p for p in PWSH_PATHS if os.path.isfile(p)), None) or shutil.which("pwsh")
         version = None
         if exe:
             try:
