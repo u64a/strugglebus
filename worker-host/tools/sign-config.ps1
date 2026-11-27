@@ -22,6 +22,12 @@
        read; hosts read the signed release.toml, never the release page). Hosts announce it at their next
        check_at (01:00) and apply it in their window (03:00); `wh update now` on a host applies it sooner.
 
+  In a shared repository (u64a/strugglebus) the host's signed files sit in its folder: give -Path worker-host.
+  Then the files are <folder>/release.toml and so on, no GitHub Release page is made (that repository's releases
+  belong to other products, and the App's updater reads them), and the check is against -Signers, since that
+  repository carries no signer list. The first release at a new place starts at -FirstSerial: the old place's
+  serial + 1, as make-release.py --continue-from prints.
+
   -Test: signs a throwaway text and verifies it, to check this PC can sign (after a rebuild).
 
   Nothing secret passes through this script: the private key never leaves the YubiKey, and the PIN
@@ -36,9 +42,17 @@
   else the one id_ed25519_sk_rk_strugglebus-signing_* file in ~\.ssh.
 .PARAMETER NoMerge
   Sign and push the signature, but leave the merge to you.
+.PARAMETER Path
+  The host's folder in a shared repository (e.g. worker-host). Default: the repository's top level.
+.PARAMETER FirstSerial
+  Only when the PR adds a signed file that main does not have yet: the serial it must start at (default 1).
+.PARAMETER Signers
+  The allowed_signers file to check the new signature against. Default: keys/allowed_signers on main (under -Path).
 
 .EXAMPLE
   pwsh -File tools\sign-config.ps1 -Pr 31
+.EXAMPLE
+  pwsh -File worker-host\tools\sign-config.ps1 -Pr 21 -Path worker-host -FirstSerial 8 -Signers <file> -KeyFile <file>
 .EXAMPLE
   pwsh -File tools\sign-config.ps1 -Test
 #>
@@ -47,7 +61,10 @@ param(
     [int]$Pr = 0,
     [switch]$Test,
     [string]$KeyFile = '',
-    [switch]$NoMerge
+    [switch]$NoMerge,
+    [string]$Path = '',
+    [int]$FirstSerial = 0,
+    [string]$Signers = ''
 )
 
 Set-StrictMode -Version Latest
@@ -57,9 +74,20 @@ $Signed = [ordered]@{ 'fleet.toml' = 'strugglebus-fleet'; 'baseline.toml' = 'str
 
 function Say([string]$text) { Write-Host "[sign] $text" }
 
-function Test-PrFiles([string[]]$files) {
+function Get-Prefix([string]$folder) {
+    # Pure: "worker-host/" for -Path worker-host (either slash, no leading or trailing one), "" for the top level.
+    $f = $folder.Replace('\', '/').Trim('/')
+    if (-not $f) { return '' }
+    if ($f -notmatch '^[A-Za-z0-9][A-Za-z0-9._-]*(/[A-Za-z0-9][A-Za-z0-9._-]*)*$' -or $f -match '(^|/)\.\.?(/|$)') {
+        throw "-Path $folder is not a plain folder name"
+    }
+    return "$f/"
+}
+
+function Test-PrFiles([string[]]$files, [string]$prefix = '') {
     # Only the signed files and their signatures may change in a signing PR: code never rides in on a config signature.
-    $allowed = @('fleet.toml', 'fleet.toml.sig', 'baseline.toml', 'baseline.toml.sig', 'release.toml', 'release.toml.sig')
+    $allowed = @('fleet.toml', 'fleet.toml.sig', 'baseline.toml', 'baseline.toml.sig', 'release.toml', 'release.toml.sig') |
+        ForEach-Object { "$prefix$_" }
     return @($files | Where-Object { $allowed -notcontains $_ })
 }
 
@@ -71,10 +99,11 @@ function Get-Serial([string]$text) {
     return $null
 }
 
-function Test-SerialStep($mainSerial, $prSerial) {
-    # A new file starts at 1; every change after that is exactly one more than main (signing-keys.md 8).
+function Test-SerialStep($mainSerial, $prSerial, [int]$first = 0) {
+    # A new file starts at 1, or at -FirstSerial when it continues another place's numbering; every change after that
+    # is exactly one more than main (signing-keys.md 8). -FirstSerial never applies to a file main already has.
     if ($null -eq $prSerial) { return $false }
-    if ($null -eq $mainSerial) { return $prSerial -eq 1 }
+    if ($null -eq $mainSerial) { return $prSerial -eq $(if ($first -gt 0) { $first } else { 1 }) }
     return $prSerial -eq ($mainSerial + 1)
 }
 
@@ -101,6 +130,8 @@ function Get-SignerPrincipals([string]$signersText) {
 
 if ($MyInvocation.InvocationName -eq '.') { return }
 if ($Test -eq ($Pr -gt 0)) { throw 'give either -Pr <number> or -Test' }
+$prefix = Get-Prefix $Path
+if ($Signers -and -not (Test-Path -LiteralPath $Signers -PathType Leaf)) { throw "no signers file $Signers" }
 
 function Invoke-Native([string]$exe, [string[]]$arguments, [byte[]]$stdin = $null, [string]$cwd = (Get-Location).Path) {
     # Runs a program with exact bytes in and out. PowerShell's own pipes and > re-encode text, which
@@ -181,7 +212,7 @@ Set-Location $root
 
 try {
     if ($Test) {
-        $signers = Join-Path $root 'keys\allowed_signers'
+        $signers = if ($Signers) { (Resolve-Path -LiteralPath $Signers).Path } else { Join-Path $root "${prefix}keys\allowed_signers" }
         $data = [Text.Encoding]::UTF8.GetBytes("strugglebus sign-config test $(Get-Date -Format o) on $env:COMPUTERNAME`n")
         $sig = Invoke-Sign $keygen $key 'strugglebus-fleet' $data $work
         Say (Test-Signature $keygen $signers 'strugglebus-fleet' $data $sig $work)
@@ -194,16 +225,22 @@ try {
     if ($info.state -ne 'OPEN') { throw "PR #$Pr is $($info.state)" }
     if ($info.isCrossRepository) { throw "PR #$Pr comes from a fork: refused" }
     $files = @($info.files | ForEach-Object { $_.path })
-    $extra = @(Test-PrFiles $files)  # @(): an empty result must stay an empty list under StrictMode
+    $extra = @(Test-PrFiles $files $prefix)  # @(): an empty result must stay an empty list under StrictMode
     if ($extra.Count) { throw "PR #$Pr changes more than the signed files: $($extra -join ', '). Refused: code never rides in on a config signature." }
-    $toSign = @($Signed.Keys | Where-Object { $files -contains $_ })
-    if (-not $toSign.Count) { throw "PR #$Pr changes neither fleet.toml nor baseline.toml" }
+    $toSign = @($Signed.Keys | ForEach-Object { "$prefix$_" } | Where-Object { $files -contains $_ })
+    if (-not $toSign.Count) { throw "PR #$Pr changes none of ${prefix}fleet.toml, ${prefix}baseline.toml, ${prefix}release.toml" }
 
     $branch = $info.headRefName
     Invoke-Git @('fetch', '-q', 'origin', "+refs/heads/main:refs/remotes/origin/main", "+refs/pull/$Pr/head:refs/remotes/origin/pr/$Pr") | Out-Null
     $head = Invoke-Git @('rev-parse', "refs/remotes/origin/pr/$Pr")
     $signers = Join-Path $work 'allowed_signers'
-    [IO.File]::WriteAllBytes($signers, (Get-Blob 'refs/remotes/origin/main' 'keys/allowed_signers'))
+    if ($Signers) {
+        Copy-Item -LiteralPath $Signers -Destination $signers
+    } else {
+        $listed = Get-Blob 'refs/remotes/origin/main' "${prefix}keys/allowed_signers"
+        if ($null -eq $listed) { throw "main has no ${prefix}keys/allowed_signers: give -Signers <your allowed_signers file>" }
+        [IO.File]::WriteAllBytes($signers, $listed)
+    }
     Say "PR #$Pr '$($info.title)' at $($head.Substring(0, 12)) (branch $branch)"
 
     $plan = @()
@@ -213,13 +250,14 @@ try {
         $mainData = Get-Blob 'refs/remotes/origin/main' $name
         $mainSerial = if ($null -ne $mainData) { Get-Serial ([Text.Encoding]::UTF8.GetString($mainData)) } else { $null }
         $prSerial = Get-Serial ([Text.Encoding]::UTF8.GetString($data))
-        if (-not (Test-SerialStep $mainSerial $prSerial)) {
-            throw "$name serial is $prSerial; main has $(if ($null -eq $mainSerial) { 'no file (so it must be 1)' } else { $mainSerial }). It must be exactly one more."
+        if (-not (Test-SerialStep $mainSerial $prSerial $FirstSerial)) {
+            $start = if ($FirstSerial -gt 0) { $FirstSerial } else { 1 }
+            throw "$name serial is $prSerial; main has $(if ($null -eq $mainSerial) { "no file (so it must be $start)" } else { "$mainSerial. It must be exactly one more" })."
         }
         Write-Host ''
-        Write-Host "=== ${name}: serial $(if ($null -eq $mainSerial) { '(new)' } else { $mainSerial }) -> $prSerial ==="
-        git --no-pager diff --no-color refs/remotes/origin/main $head -- $name | Out-Host
-        $plan += [pscustomobject]@{ Name = $name; Namespace = $Signed[$name]; Data = $data; Serial = $prSerial }
+        Write-Host "=== ${name}: serial $(if ($null -eq $mainSerial) { "(new here, starting at $prSerial)" } else { $mainSerial }) -> $prSerial ==="
+        git --no-pager diff --no-color refs/remotes/origin/main $head -- ":(top)$name" | Out-Host
+        $plan += [pscustomobject]@{ Name = $name; Namespace = $Signed[$name.Substring($prefix.Length)]; Data = $data; Serial = $prSerial }
     }
     Write-Host ''
     if ((Read-Host "Sign $($plan.Name -join ' and ')? Type yes") -cne 'yes') { Say 'not signed: nothing changed'; return }
@@ -259,16 +297,19 @@ try {
         Test-Signature $keygen $signers $item.Namespace $data $sig $work | Out-Null
     }
     Say "merged as $($merged.Substring(0, 12)); main verifies."
-    if ($plan.Name -contains 'fleet.toml') {
+    if ($plan.Name -contains "${prefix}fleet.toml") {
         Say 'Hosts apply fleet.toml within 15 minutes (or at once: wh fleet status --refresh on a host).'
     }
-    $rel = $plan | Where-Object Name -eq 'release.toml' | Select-Object -First 1
+    $rel = $plan | Where-Object Name -eq "${prefix}release.toml" | Select-Object -First 1
     if ($rel) {
         $text = [Text.Encoding]::UTF8.GetString($rel.Data)
         $version = [regex]::Match($text, '(?m)^version\s*=\s*"([^"]+)"').Groups[1].Value
         $commit = [regex]::Match($text, '(?m)^commit\s*=\s*"([0-9a-f]{40})"').Groups[1].Value
         $notes = [regex]::Match($text, '(?m)^notes\s*=\s*"([^"]*)"').Groups[1].Value
-        if ($version -and $commit) {
+        if ($prefix) {
+            # A shared repository: its releases page belongs to the other products (the App's updater reads it).
+            Say 'no GitHub Release page in a shared repository (hosts never read one)'
+        } elseif ($version -and $commit) {
             gh release create "v$version" --target $commit --title "Worker host $version" --notes "$notes`n`nSigned release.toml serial $($rel.Serial). Hosts announce it at check_at and apply it in their maintenance window." | Out-Host
             if ($LASTEXITCODE -ne 0) { Say "the GitHub Release page was not created (hosts do not need it): gh release create v$version --target $commit" }
         }

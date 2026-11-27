@@ -190,6 +190,74 @@ def test_code_in_a_folder_gets_the_same_tree_hash_as_at_the_top(repo, capsys):
     assert released(capsys.readouterr().out).tree_sha256 == top
 
 
+@pytest.fixture
+def shared(repo, monkeypatch):
+    """The shared-repository layout as it really runs: the host's files under worker-host/, another product beside
+    them, and the tool itself running from worker-host/ (ROOT is the host's folder, not the repository's top)."""
+    for path in ("wh.py", "workerhost/__init__.py", "README.md"):
+        target = repo / "worker-host" / path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes((repo / path).read_bytes())
+    run(repo, "add", "-A")
+    run(repo, "commit", "-q", "-m", "the host moves into worker-host/")
+    commit(repo, "bus/server.py", "x = 1\n", "a bus change")
+    push(repo)
+    monkeypatch.setattr(make_release, "ROOT", repo / "worker-host")
+    return repo
+
+
+def test_from_the_hosts_own_folder_the_tree_is_read_and_the_release_written_there(shared, capsys, monkeypatch):
+    asked = {}
+    monkeypatch.setattr(make_release, "open_pr", lambda title, body: asked.update(title=title, body=body) or 0)
+    head = run(shared, "rev-parse", "HEAD")
+    top_tree = update.tree_sha256(update.read_tree("git", None, head, cwd=shared))
+    assert make_release.main(["--path", "worker-host"]) == 0
+    rel = released(capsys.readouterr().out)
+    assert rel.tree_sha256 == top_tree  # the same host files, wherever they sit
+    assert rel.notes == "the host moves into worker-host/"  # the bus change touched another folder: not in the notes
+    branch = run(shared, "branch", "--show-current")
+    assert branch == f"worker-host-release-{rel.version}"
+    origin = str(shared.parent / "origin.git")
+    assert update.parse_release(run(shared, "--git-dir", origin, "show", f"{branch}:worker-host/release.toml")
+                                .encode("utf-8")) == rel
+    assert run(shared, "--git-dir", origin, "show", "--name-only", "--format=", branch) == "worker-host/release.toml"
+    assert asked["title"].startswith("worker-host: release ")
+    assert "-Path worker-host -Signers" in asked["body"] and "-FirstSerial" not in asked["body"]
+
+
+def test_the_first_release_at_a_new_place_continues_the_old_numbering(shared, tmp_path, capsys, monkeypatch):
+    asked = {}
+    monkeypatch.setattr(make_release, "open_pr", lambda title, body: asked.update(body=body) or 0)
+    head = run(shared, "rev-parse", "HEAD")
+    old = tmp_path / "old-release.toml"
+    old.write_text(make_release.release_text(7, day_of(shared, head), "a" * 40, "0" * 64, False, "old place",
+                                             moved_to=("https://github.com/acme/mono", "worker-host")),
+                   encoding="utf-8")
+    assert make_release.main(["--path", "worker-host", "--continue-from", str(old), "--notes", "first here"]) == 0
+    rel = released(capsys.readouterr().out)
+    assert (rel.serial, rel.commit, rel.notes, rel.moved_to) == (8, head, "first here", None)
+    assert rel.version == day_of(shared, head) + ".2"  # the old place's version counts for the same day
+    assert "-Path worker-host -FirstSerial 8 -Signers" in asked["body"]
+
+
+def test_continuing_is_refused_once_a_release_is_here_or_without_notes(shared, tmp_path):
+    old = tmp_path / "old-release.toml"
+    old.write_text("serial = 7\nversion = \"2026.01.01\"\n", encoding="utf-8")
+    with pytest.raises(SystemExit, match="needs --notes"):
+        make_release.main(["--dry-run", "--path", "worker-host", "--continue-from", str(old)])
+    with pytest.raises(SystemExit, match="no serial"):
+        bad = tmp_path / "bad.toml"
+        bad.write_text("version = \"x\"\n", encoding="utf-8")
+        make_release.main(["--dry-run", "--path", "worker-host", "--continue-from", str(bad), "--notes", "n"])
+    first = run(shared, "rev-parse", "HEAD")
+    commit(shared, "worker-host/release.toml",
+           make_release.release_text(8, "2026.01.02", first, "0" * 64, False, "here"), "release (signed)")
+    commit(shared, "worker-host/workerhost/x.py", "y = 1\n", "a host fix")
+    push(shared)
+    with pytest.raises(SystemExit, match="only for the first release here"):
+        make_release.main(["--dry-run", "--path", "worker-host", "--continue-from", str(old), "--notes", "n"])
+
+
 def test_a_failed_pr_is_a_failed_run(repo, monkeypatch, capsys):
     monkeypatch.setattr(make_release, "open_pr", lambda title, body: 1)
     assert make_release.main([]) == 1
