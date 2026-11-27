@@ -148,6 +148,67 @@ def test_a_real_sign_and_verify_with_a_signers_file_given(tmp_path):
 
 
 def test_neither_or_both_modes_is_refused(tmp_path):
-    r = subprocess.run([PWSH, "-NoProfile", "-NonInteractive", "-File", str(SCRIPT)], cwd=tmp_path,
-                       capture_output=True, text=True, timeout=60, stdin=subprocess.DEVNULL)
-    assert r.returncode != 0 and "either -Pr <number> or -Test" in (r.stdout + r.stderr)
+    for extra in ([], ["-Test", "-File", "fleet.toml"]):
+        r = subprocess.run([PWSH, "-NoProfile", "-NonInteractive", "-File", str(SCRIPT), *extra], cwd=tmp_path,
+                           capture_output=True, text=True, timeout=60, stdin=subprocess.DEVNULL)
+        assert r.returncode != 0 and "give one of -Pr <number>, -Test or -File <path>" in (r.stdout + r.stderr)
+
+
+def run_ps(body: str):
+    driver = f"$ErrorActionPreference = 'Stop'\n. '{SCRIPT}'\n{body}"
+    r = subprocess.run([PWSH, "-NoProfile", "-NonInteractive", "-Command", driver], capture_output=True, text=True,
+                       timeout=60, stdin=subprocess.DEVNULL)
+    assert r.returncode == 0, r.stderr
+    return json.loads(r.stdout)
+
+
+def test_a_loose_file_is_signed_in_the_namespace_its_name_gives():
+    got = run_ps("ConvertTo-Json @(foreach ($p in 'fleet.toml', 'C:\\x\\release.toml', 'D:\\y\\baseline.toml', "
+                 "'fleet.toml.txt', 'host.py', 'fleet') { try { Get-FileNamespace $p } catch { 'refused' } })")
+    assert got == ["strugglebus-fleet", "strugglebus-release", "strugglebus-baseline", "refused", "refused", "refused"]
+
+
+def _ssh_string(b: bytes) -> bytes:
+    return len(b).to_bytes(4, "big") + b
+
+
+def _sshsig(key_type: str, flags: int | None) -> str:
+    """A structurally real SSHSIG (made up key and signature bytes): what the flags check reads."""
+    import base64
+
+    inner = _ssh_string(key_type.encode()) + _ssh_string(b"\x01" * 64)
+    if flags is not None:
+        inner += bytes([flags]) + (7).to_bytes(4, "big")  # sk: flags, then the counter
+    blob = (b"SSHSIG" + (1).to_bytes(4, "big") + _ssh_string(b"pubkey") + _ssh_string(b"strugglebus-fleet")
+            + _ssh_string(b"") + _ssh_string(b"sha512") + _ssh_string(inner))
+    return "-----BEGIN SSH SIGNATURE-----\n" + base64.b64encode(blob).decode() + "\n-----END SSH SIGNATURE-----\n"
+
+
+def test_the_flags_are_read_from_the_signature_and_only_a_security_key_has_them():
+    cases = {"pin": _sshsig("sk-ssh-ed25519@openssh.com", 5), "touch": _sshsig("sk-ssh-ed25519@openssh.com", 1),
+             "plain": _sshsig("ssh-ed25519", None)}
+    body = "; ".join(f"$r.{k} = Get-SigFlags '{v}'" for k, v in cases.items())
+    got = run_ps(f"$r = [ordered]@{{}}; {body}; try {{ Get-SigFlags 'bm90IGEgc2ln' | Out-Null; $r.bad = 'read' }} "
+                 "catch { $r.bad = 'refused' }; ConvertTo-Json $r")
+    assert got == {"pin": 5, "touch": 1, "plain": None, "bad": "refused"}
+
+
+def test_file_mode_refuses_a_signature_without_touch_and_pin_and_writes_nothing(tmp_path):
+    """A plain (non-YubiKey) key verifies, but the hosts would refuse it: no .sig is written."""
+    keygen = next((k for k in signing.KEYGEN_CANDIDATES[:2] if os.path.isfile(k)), None)
+    if keygen is None:
+        pytest.skip("no Windows OpenSSH ssh-keygen")
+    key = tmp_path / "id_test"
+    subprocess.run([keygen, "-q", "-t", "ed25519", "-N", "", "-C", "test", "-f", str(key)], check=True,
+                   capture_output=True)
+    kind, blob = (tmp_path / "id_test.pub").read_text().split()[:2]
+    signers = tmp_path / "signers"
+    signers.write_text(f'chris namespaces="strugglebus-fleet" {kind} {blob} test\n')
+    fleet = tmp_path / "fleet.toml"
+    fleet.write_bytes(b'serial = 5\nowner = "x"\n')
+    r = subprocess.run([PWSH, "-NoProfile", "-File", str(SCRIPT), "-File", str(fleet), "-KeyFile", str(key),
+                        "-Signers", str(signers)], cwd=tmp_path, capture_output=True, text=True, timeout=120,
+                       input="yes\n")
+    out = r.stdout + r.stderr
+    assert r.returncode != 0 and 'Good "strugglebus-fleet" signature for chris' in out
+    assert "not 0x05" in out and not (tmp_path / "fleet.toml.sig").exists()
