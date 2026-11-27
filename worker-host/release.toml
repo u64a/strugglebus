@@ -4,7 +4,7 @@ serial = 8
 # strugglebus-release). Made by tools/make-release.py; signed and merged with tools/sign-config.ps1 -Pr <n>.
 # Hosts announce it at check_at (01:00) and apply it in their maintenance window (03:00): docs/design.md 10a.
 
-version = "2026.11.27"
+version = "2026.11.27.3"
 commit = "3713662cf7effe13af11aaf11cf21e0053bb3662"
 tree_sha256 = "1977efad190a2faa438f23409843683976479a7837272ff6316d7c8049521804"
 needs_install = false
