@@ -214,6 +214,34 @@ def test_the_whole_fetch_against_this_repositorys_signed_release(tmp_path):
     assert all(update.wanted(p) or load_make_release().INSTALLER_RE.fullmatch(p) for p in staged)
 
 
+def test_what_the_elevated_scripts_load_is_all_covered_by_the_signed_hashes():
+    """install.ps1 and setup\\*.ps1 run as administrator from the bootstrap. Every file they load from their own
+    folder must be covered by tree_sha256 or installer_sha256 (u64-security, #humans 28905), so a new helper can't
+    run unhashed. Two named exceptions: keys\\allowed_signers (only with -PinSigners, never used by the bootstrap,
+    which pins its own) and the .git existence check."""
+    mr = load_make_release()
+    allowed_exceptions = {"keys/allowed_signers", ".git"}
+    for script in [ROOT / "install.ps1", *sorted((ROOT / "setup").glob("*.ps1"))]:
+        text = script.read_text(encoding="utf-8")
+        assert not re.search(r"Import-Module|\.psm1|\.psd1|^\s*\.\s+\S", text, re.M), script.name
+        for ref in re.findall(r"Join-Path \$(?:Source|PSScriptRoot)\s+'([^']+)'", text, re.I):
+            rel = ref.replace("\\", "/")
+            base = "setup/" if script.parent.name == "setup" else ""
+            path = base + rel
+            if path in allowed_exceptions:
+                continue
+            if path.endswith("/*.py"):
+                assert path == "workerhost/*.py", path  # every one of them is in tree_sha256
+                continue
+            assert update.wanted(path) or mr.INSTALLER_RE.fullmatch(path), f"{script.name} loads {path}, not hashed"
+
+
+def test_setup_holds_only_files_the_installer_hash_covers():
+    mr = load_make_release()
+    extra = [p.name for p in (ROOT / "setup").iterdir() if not mr.INSTALLER_RE.fullmatch(f"setup/{p.name}")]
+    assert extra == []  # the bootstrap refuses a release whose setup\ holds anything else
+
+
 def test_still_ascii_and_lf_only():
     raw = SCRIPT.read_bytes()
     assert max(raw) < 128 and b"\r" not in raw

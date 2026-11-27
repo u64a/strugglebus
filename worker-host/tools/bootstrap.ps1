@@ -302,6 +302,18 @@ function Install-Prereqs($engines) {
 
 # --- the host code: fetched, verified, staged (2.2 step 3) -------------------------------------------------------
 
+function New-AdminOnlyFolder([string]$path) {
+    # A new folder only Administrators and SYSTEM can write (inheritance cut, a fresh ACL), so nothing running as the
+    # operator unelevated can swap a file between the check and the run (u64-security, #humans 28905). Throws if it
+    # exists already: a fresh folder every run.
+    if (Test-Path -LiteralPath $path) { throw "$path exists already" }
+    New-Item -ItemType Directory -Path $path -Force | Out-Null
+    $icacls = Join-Path $env:SystemRoot 'System32\icacls.exe'
+    & $icacls $path /inheritance:r /grant:r '*S-1-5-32-544:(OI)(CI)F' '*S-1-5-18:(OI)(CI)F' | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw "could not restrict $path to Administrators and SYSTEM" }
+    return $path
+}
+
 function Invoke-GitBytes([string]$git, [string[]]$arguments) {
     # git's stdout as exact bytes (PowerShell's own capture would decode and re-encode it). Throws on failure.
     $psi = New-Object Diagnostics.ProcessStartInfo $git
@@ -340,6 +352,11 @@ function Get-VerifiedRelease([string]$git, [string]$work, [string]$repo = $Relea
         $rel = $full.Substring($folder.Length + 1)
         if (Test-InstalledPath $rel) { $hostFiles[$rel] = & $g @('cat-file', 'blob', "$($release.commit):$full") }
         elseif (Test-InstallerPath $rel) { $installerFiles[$rel] = & $g @('cat-file', 'blob', "$($release.commit):$full") }
+        elseif ($rel.StartsWith('setup/')) {
+            # Anything else in setup\ could be loaded by a script run as administrator without being hashed: refused
+            # (u64-security, #humans 28905), so a new helper needs installer_sha256 to cover it first.
+            throw "setup\ holds $rel, which installer_sha256 does not cover: nothing installed"
+        }
     }
     if ((Get-TreeSha256 $hostFiles) -cne $release.tree_sha256) { throw 'the host files do not match the signed tree_sha256: nothing installed' }
     if ((Get-TreeSha256 $installerFiles) -cne $release.installer_sha256) { throw 'install.ps1 or setup\ does not match the signed installer_sha256: nothing installed' }
@@ -369,8 +386,7 @@ foreach ($line in $SB.signers) { Say "signer: $(Get-SignerFingerprint $line)" }
 Say 'compare these with what the App shows for this host.'
 if (-not $Yes) { Read-Host '[bootstrap] press Enter to continue, or close this window to stop' | Out-Null }
 
-$work = Join-Path $env:TEMP ('sbhost-bootstrap-' + [guid]::NewGuid().ToString('n'))
-New-Item -ItemType Directory -Path $work | Out-Null
+$work = New-AdminOnlyFolder (Join-Path $env:ProgramData ('strugglebus\bootstrap-' + [guid]::NewGuid().ToString('n')))
 $tools = Install-Prereqs $SB.engines                    # step 2
 $verified = Get-VerifiedRelease $tools.git $work        # step 3
 Say "verified host code staged at $($verified.stage)"
