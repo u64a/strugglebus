@@ -72,6 +72,15 @@ internal sealed class StaWindowAdminPlatform : IWindowPlatform
         return HostFilePath;
     }
 
+    public List<string> OpenedLinks { get; } = [];
+    public bool BrowserFails { get; set; }
+
+    public void OpenLink(string url)
+    {
+        if (BrowserFails) throw new System.ComponentModel.Win32Exception("no browser");
+        OpenedLinks.Add(url);
+    }
+
     public void SetClipboardText(string text)
     {
         if (ClipboardBusy) throw new COMException("CLIPBRD_E_CANT_OPEN");
