@@ -79,5 +79,6 @@
   "refused": 3,
   "yielded": 0,
   "cancelled": 0
- }
+ },
+ "pwsh": "7.6.10"
 }

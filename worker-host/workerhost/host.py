@@ -11,6 +11,7 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import time
@@ -54,6 +55,7 @@ STATUS_PUSH_PATH = "/api/hosts/status"
 STATUS_PUSH_SECONDS = 60     # at least this often
 STATUS_PUSH_MIN_GAP = 10     # at most this often (the bus refuses more than one push per 10 s)
 STATUS_PUSH_BACKOFF = 3600   # after a refusal (an older bus, or not marked as a host yet)
+PWSH_PATHS = (r"C:\Program Files\PowerShell\7\pwsh.exe",)  # the bootstrap's pinned install, if not on PATH
 # Host events for the bus's event log (section 1b).
 EVENTS_PATH = "/api/hosts/events"
 EVENTS_MIN_GAP = 5           # the bus takes one call per 5 s per host
@@ -1524,8 +1526,29 @@ class Host:
                                              "ram_free_gb": s.free_phys / resources.GB,
                                              "disk_free_gb": s.free_disk / resources.GB},
             "bus_state": self.bus_state, "channel": self.cfg.channel, "channel_state": self.channel_state,
-            "model": self.default_model(), "ghcp_ok": self.ghcp_ok, "tasks": tasks,
+            "model": self.default_model(), "ghcp_ok": self.ghcp_ok, "tasks": tasks, "pwsh": self.pwsh_version(),
         }
+
+    def pwsh_version(self) -> str | None:
+        """PowerShell 7's version, for the status (a zip install that Wazuh can't see, so monitoring needs it here).
+        Asked once an hour; None if pwsh can't be found or run."""
+        now = time.time()
+        cached = getattr(self, "_pwsh", None)
+        if cached is not None and now - cached[0] < 3600:
+            return cached[1]
+        exe = shutil.which("pwsh") or next((p for p in PWSH_PATHS if os.path.isfile(p)), None)
+        version = None
+        if exe:
+            try:
+                r = subprocess.run([exe, "-NoProfile", "-NonInteractive", "-Command",
+                                    "$PSVersionTable.PSVersion.ToString()"], capture_output=True, text=True,
+                                   timeout=60, stdin=subprocess.DEVNULL)
+                out = r.stdout.strip()
+                version = out if r.returncode == 0 and hoststatus.PWSH_RE.fullmatch(out) else None
+            except (OSError, subprocess.TimeoutExpired):
+                version = None
+        self._pwsh = (now, version)
+        return version
 
     def status_json(self) -> dict:
         return hoststatus.build(self.status_facts())

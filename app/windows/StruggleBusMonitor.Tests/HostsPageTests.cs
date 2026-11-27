@@ -91,7 +91,7 @@ public sealed class HostsPageLogicTests
         Assert.Equal("CPU 37%  ·  21.0 GB memory free  ·  812.6 GB disk free  ·  commit 48%", card.Machine);
         Assert.Equal("Since it started: 17 finished, 2 failed, 1 timed out, 3 refused", card.Tasks);
         Assert.Equal(
-            "version 2026.11.24.2  ·  ghcp, claude signed in  ·  default model claude-opus-5.5  ·  runs as sbworker  ·  channel #worker-hosts  ·  1 kept for unsaved work  ·  update to 2026.11.28 at 03:00  ·  updates from https://github.com/acme/mono#worker-host",
+            "version 2026.11.24.2  ·  ghcp, claude signed in  ·  default model claude-opus-5.5  ·  PowerShell 7.6.10  ·  runs as sbworker  ·  channel #worker-hosts  ·  1 kept for unsaved work  ·  update to 2026.11.28 at 03:00  ·  updates from https://github.com/acme/mono#worker-host",
             card.Details);
         Assert.StartsWith("Warning: the host's account can change programs", card.Alerts);
         Assert.True(card.HasAlerts && card.HasRunning);

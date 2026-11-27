@@ -23,8 +23,8 @@ from test_spn_worker_lifecycle import _worker
 CONTRACTS = Path(__file__).resolve().parents[2] / "contracts" / "host-status"
 #: The contract files, pinned: one changed by accident fails here, not by quietly agreeing with itself.
 PINNED = {
-    "snapshot-v2.json": "07261a78e8724a173d0d9482db4ed109711dd29a8d012e15ffd134220036f2fb",
-    "snapshot-v2-device.json": "aadb5bca41c1dac6c7538a8aefe3f99951928be07016360f9965d5b49ce93d4a",
+    "snapshot-v2.json": "dfdd19e0aa5ae9e4a02ce41eb192067c1df17030894f7beca9388eb352d55555",
+    "snapshot-v2-device.json": "4ede2b330023e0179b2a62ebbf577d8dcacd8ef025f19ea354a7755faaee0e3a",
     "sample-v2.json": "f0377cc9142d2c9a2382d18ae9d9c5eaeb2d89a5815077964f45b238fa1e3ca3",
 }
 STATUS = "/api/hosts/status"
