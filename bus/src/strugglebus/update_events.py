@@ -25,6 +25,7 @@ from typing import Any, Callable
 from strugglebus.bus_events import KEEP, BusEventLog, Event, bus_event
 from strugglebus.maintenance_types import MaintenanceAttempt, MaintenanceError, MaintenanceStatus
 from strugglebus.selfhost_updates import LastCheck
+from strugglebus.update_types import UpdateError
 
 POLL_SECONDS = 60
 _NAMESPACE = uuid.UUID("5d0f6a52-6f0b-4f6e-9a55-7b1d1f2c8e31")
@@ -52,8 +53,11 @@ def _reason(code: str | None) -> str | None:
     return None if code is None else code.replace("_", "-")
 
 
-def attempt_events(status: MaintenanceStatus, now: datetime) -> list[Event]:
-    """The events an Ansible install's last maintenance attempt amounts to."""
+def attempt_events(status: MaintenanceStatus, now: datetime, cause: str | None = None) -> list[Event]:
+    """
+    The events an Ansible install's last maintenance attempt amounts to. ``cause`` is the update
+    worker's own reason for a check that did not finish, when it is known.
+    """
     attempt = status.attempt
     if attempt is None or _too_old(attempt.finished_at or attempt.started_at, now):
         return []
@@ -64,11 +68,11 @@ def attempt_events(status: MaintenanceStatus, now: datetime) -> list[Event]:
         previous = status.current_version if status.current_version != version else None
         started = bus_event("update", "update-started", version, version=version, previous=previous)
         events.append(_named(started, attempt.operation_id, "started"))
-    events += _finished(attempt, version)
+    events += _finished(attempt, version, cause)
     return events
 
 
-def _finished(attempt: MaintenanceAttempt, version: str | None) -> list[Event]:
+def _finished(attempt: MaintenanceAttempt, version: str | None, cause: str | None) -> list[Event]:
     """How an attempt ended, if it has."""
     if attempt.phase == "succeeded" and version is not None:
         applied = bus_event("update", "update-applied", version, version=version)
@@ -76,7 +80,7 @@ def _finished(attempt: MaintenanceAttempt, version: str | None) -> list[Event]:
     if attempt.phase != "failed":
         # Still going, or it looked and found nothing newer: nothing to record.
         return []
-    reason = _reason(attempt.error)
+    reason = _reason(cause or attempt.error)
     if version is None:
         failed = bus_event("update", "update-check-failed", reason=reason)
     else:
@@ -94,6 +98,31 @@ def selfhost_events(check: LastCheck | None, now: datetime) -> list[Event]:
     return [_named(event, "selfhost", int(check.checked_at.timestamp()), check.result)]
 
 
+async def _worker_cause(console: Any, attempt: MaintenanceAttempt | None) -> str | None:
+    """
+    Why the update worker's check failed, when the maintenance attempt only says that it did.
+
+    The maintenance service records "the updater was unavailable" for any check that did not
+    finish. The worker keeps its own last operation with the real reason: the source's request
+    limit, the source out of reach, a list that could not be read whole. It is taken only if
+    that operation failed during this attempt.
+    """
+    if attempt is None or attempt.error != "updater_unavailable" or console.client is None:
+        return None
+    try:
+        operation = (await console.client.status()).operation
+    except UpdateError:
+        return None
+    return _cause_during(operation, attempt)
+
+
+def _cause_during(operation: Any, attempt: MaintenanceAttempt) -> str | None:
+    if operation is None or operation.phase != "failed" or operation.finished_at is None:
+        return None
+    latest = (attempt.finished_at or operation.finished_at) + 5
+    return operation.error if attempt.started_at - 5 <= operation.finished_at <= latest else None
+
+
 class UpdateEventRecorder:
     def __init__(
         self, log: BusEventLog, updater: Callable[[], Any], *,
@@ -108,10 +137,11 @@ class UpdateEventRecorder:
         if console.maintenance is None:
             return []
         try:
-            return attempt_events(await console.maintenance.status(), now)
+            status = await console.maintenance.status()
         except MaintenanceError:
             # The maintenance service is away, as it is on any install without one. Not an event.
             return []
+        return attempt_events(status, now, await _worker_cause(console, status.attempt))
 
     async def poll_once(self) -> int:
         """Reads both records and stores what is new. Returns how many events were stored."""

@@ -145,7 +145,9 @@ class Maintenance:
 
 
 def console(maintenance=None, last_check=None):
-    return SimpleNamespace(maintenance=maintenance, selfhost=SimpleNamespace(last_check=lambda: last_check))
+    return SimpleNamespace(
+        maintenance=maintenance, client=None, selfhost=SimpleNamespace(last_check=lambda: last_check),
+    )
 
 
 def recorder(store, updater):
@@ -234,3 +236,80 @@ def test_a_start_that_cannot_be_noted_still_starts(capsys) -> None:
     _record_start(SimpleNamespace(record=broken))
 
     assert "could not record the start" in capsys.readouterr().err
+
+
+# ---- the real cause of a check that did not finish --------------------------------------------
+
+
+class Worker:
+    def __init__(self, answer) -> None:
+        self.answer = answer
+        self.asked = 0
+
+    async def status(self):
+        self.asked += 1
+        if isinstance(self.answer, Exception):
+            raise self.answer
+        return SimpleNamespace(operation=self.answer)
+
+
+def operation(error: str | None = "rate_limited", phase: str = "failed", finished_at: int | None = STARTED + 3):
+    return SimpleNamespace(phase=phase, error=error, finished_at=finished_at)
+
+
+def unavailable(**more) -> MaintenanceStatus:
+    return status(phase="failed", finished_at=STARTED + 5, error="updater_unavailable", **more)
+
+
+def recorded_reason(store, worker, attempt=None) -> dict:
+    updater = console(Maintenance(attempt or unavailable()))
+    updater.client = worker
+    record, log = recorder(store, updater)
+    asyncio.run(record.poll_once())
+    return next(item.event.fields for item in log.recent(50, admin=True) if item.event.source == "update")
+
+
+def test_a_check_stopped_by_the_sources_request_limit_says_so(surface) -> None:  # noqa: F811
+    *_, store = surface
+
+    assert recorded_reason(store, Worker(operation())) == {"reason": "rate-limited"}
+
+
+@pytest.mark.parametrize("worker", [
+    None,
+    Worker(None),
+    Worker(update_events.UpdateError("unavailable")),
+    Worker(operation(phase="succeeded", error=None)),
+    Worker(operation(finished_at=None)),
+    # The worker's last failure was some other time, not this attempt's.
+    Worker(operation(finished_at=STARTED - 3600)),
+    Worker(operation(finished_at=STARTED + 3600)),
+])
+def test_without_the_workers_reason_for_this_attempt_the_general_one_stands(surface, worker) -> None:  # noqa: F811
+    *_, store = surface
+
+    assert recorded_reason(store, worker) == {"reason": "updater-unavailable"}
+
+
+def test_the_worker_is_not_asked_when_the_attempt_already_says_why(surface) -> None:  # noqa: F811
+    *_, store = surface
+    worker = Worker(operation())
+    failed = status(phase="failed", finished_at=STARTED + 50, candidate_version="0.2.75", error="installation_failed")
+
+    assert recorded_reason(store, worker, failed)["reason"] == "installation-failed"
+    assert worker.asked == 0
+
+
+def test_the_updates_page_says_what_went_wrong_in_plain_words() -> None:
+    from strugglebus import update_rendering as page
+
+    limited = page._what_went_wrong(page.ERROR_MESSAGES, "rate_limited")["What went wrong"]
+    shown = page.maintenance_status(unavailable())
+
+    assert "GitHub is limiting requests from this network" in limited and "60 an hour" in limited
+    assert "What went wrong" in shown and "recorded operation" in shown
+    assert page._what_went_wrong(page.MAINTENANCE_MESSAGES, None) == {}
+    assert page._what_went_wrong(page.MAINTENANCE_MESSAGES, "not-a-code") == {}
+    assert "What went wrong" not in page.maintenance_status(status(phase="succeeded", finished_at=STARTED + 5))
+    assert "supervisor refused this operation (odd)" in page.maintenance_failure("odd")
+    assert "already active" in page.maintenance_failure("busy")

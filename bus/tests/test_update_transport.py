@@ -56,7 +56,7 @@ def test_retry_delay_never_exceeds_deadline(http):
                                                (403, "source_unavailable", 1),
                                                (404, "source_unavailable", 1),
                                                (302, "source_unavailable", 1),
-                                               (429, "source_unavailable", 3),
+                                               (429, "rate_limited", 1),
                                                (503, "source_unavailable", 3)])
 def test_http_status_errors_are_sanitized_and_bounded(http, code, expected, calls):
     errors = [urllib.error.HTTPError("https://secret", code, "sensitive", {}, io.BytesIO(b"secret")) for _ in range(3)]
@@ -64,6 +64,22 @@ def test_http_status_errors_are_sanitized_and_bounded(http, code, expected, call
     with pytest.raises(UpdateError, match=expected):
         http.json("/repos/NZCypher819/strugglebus-releases/releases")
     assert http._metadata.calls == calls
+
+
+@pytest.mark.parametrize("code,headers,expected", [
+    (403, {"x-ratelimit-remaining": "0"}, "rate_limited"),
+    (403, {"x-ratelimit-remaining": "12"}, "source_unavailable"),
+    (403, {}, "source_unavailable"),
+    (403, None, "source_unavailable"),
+    (429, {}, "rate_limited"),
+    (404, {"x-ratelimit-remaining": "0"}, "source_unavailable"),
+])
+def test_the_sources_request_limit_is_told_apart_and_never_asked_again_at_once(http, code, headers, expected):
+    """GitHub's limit passes by itself; asking again only uses more of it."""
+    http._metadata = Opener([urllib.error.HTTPError("https://secret", code, "sensitive", headers, io.BytesIO(b"x"))] * 3)
+    with pytest.raises(UpdateError, match=expected):
+        http.json("/repos/u64a/strugglebus/releases")
+    assert http._metadata.calls == 1
 
 
 @pytest.mark.parametrize("url", ["http://api.github.com/app", "https://api.github.com.evil/app",

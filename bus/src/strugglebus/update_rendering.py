@@ -8,7 +8,9 @@ from typing import TYPE_CHECKING
 
 from strugglebus.operator_lifecycle_rendering import disclosure, facts, hidden, panel
 from strugglebus.maintenance_types import MaintenanceStatus
-from strugglebus.update_types import UPDATE_REPOSITORY, UpdateCandidate, UpdateObservation, UpdateStatus
+from strugglebus.update_types import (
+    ERROR_MESSAGES, UPDATE_REPOSITORY, UpdateCandidate, UpdateObservation, UpdateStatus,
+)
 
 if TYPE_CHECKING:
     from strugglebus.operator_updates import UpdateReview
@@ -54,8 +56,19 @@ def maintenance_disabled() -> str:
     )
 
 
+def _what_went_wrong(messages: dict[str, str], code: str | None) -> dict[str, str]:
+    """A failure code in plain words, as one more row; nothing when there was no failure."""
+    if code is None or code not in messages:
+        return {}
+    return {"What went wrong": messages[code]}
+
+
 def maintenance_failure(code: str) -> str:
-    message = {
+    message = MAINTENANCE_MESSAGES.get(code, f"The maintenance supervisor refused this operation ({code}).")
+    return panel("Maintenance unavailable", f'<p role="alert">{escape(message)}</p>')
+
+
+MAINTENANCE_MESSAGES = {
         "unavailable": "The root-owned maintenance supervisor is unavailable.",
         "unknown_outcome": (
             "The maintenance supervisor received the request, but its result could not "
@@ -66,15 +79,17 @@ def maintenance_failure(code: str) -> str:
         "paused": "Automatic maintenance is paused. Manual updates remain available.",
         "outside_window": "The automatic request is outside its configured maintenance window.",
         "no_candidate": "No eligible newer release is available.",
-        "updater_unavailable": "The release preparation worker is unavailable.",
+        "updater_unavailable": (
+            "The check for a release did not finish. The update worker's recorded operation, "
+            "higher on this page, says why."
+        ),
         "preparation_failed": "The release could not be independently prepared and verified.",
         "installation_failed": (
             "Installation failed. The supervisor stopped and preserved recovery evidence."
         ),
         "state_corrupt": "Maintenance state is corrupt or unsupported. Protected recovery is required.",
         "forbidden": "The maintenance supervisor refused the caller identity.",
-    }.get(code, f"The maintenance supervisor refused this operation ({code}).")
-    return panel("Maintenance unavailable", f'<p role="alert">{escape(message)}</p>')
+}
 
 
 def maintenance_status(value: MaintenanceStatus) -> str:
@@ -107,6 +122,7 @@ def maintenance_status(value: MaintenanceStatus) -> str:
                 "Started": _time(attempt.started_at),
                 "Finished": _time(attempt.finished_at),
                 "Failure code": attempt.error or "None",
+                **_what_went_wrong(MAINTENANCE_MESSAGES, attempt.error),
             }),
         )
     return body
@@ -168,7 +184,7 @@ def worker_failure(code: str, path: str | None) -> str:
         "invalid_response": "The worker reply could not be validated. No outcome can be inferred from this reply.",
         "busy": "The worker already has an active operation; there is no job queue.",
         "cooldown": "Release discovery is cooling down. Wait before explicitly checking again.",
-        "rate_limited": "The update source or worker admission limit was reached.",
+        "rate_limited": ERROR_MESSAGES["rate_limited"],
         "authentication_failed": "The worker could not authenticate its dedicated release-source credential.",
         "history_unavailable": "The receipt is absent or evicted, not proof that no work occurred.",
         "observation_expired": "The release observation expired. Check and review the release again.",
@@ -243,6 +259,7 @@ def status(value: UpdateStatus) -> str:
             "Phase": operation.phase, "Deciding identity": operation.actor_id,
             "Accepted": _time(operation.started_at), "Finished": _time(operation.finished_at),
             "Failure code": operation.error or "None",
+            **_what_went_wrong(ERROR_MESSAGES, operation.error),
         }))
     if value.observation is not None:
         body += _observation(value.observation)
