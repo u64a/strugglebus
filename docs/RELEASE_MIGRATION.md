@@ -104,8 +104,9 @@ Afterwards the private repository stays only for `fleet.toml`, until hosts read 
       `u64a/strugglebus-2-release-test` with a stand-in app: three releases, small update
       packages made from the previous release, a second publish of the same version refused,
       and a leftover draft replaced.
-- [ ] 1.7.5, the bridging release: signed once, published both at the old place (so older Apps
-      reach it) and here. The signing script does both for that one version and only here for
+- [x] 1.7.5, the bridging release: signed once, published both at the old place (so older Apps
+      reach it) and here, 27 November 2026 (UTC). The ten files are the same in both, by name,
+      size and SHA-256. The signing script does both for that one version and only here for
       every other.
 - [ ] An installed 1.7.5 seen to take 1.7.6 from here.
 - [ ] `NZCypher819/StruggleApp-Privacy` kept read-only, with 1.7.5 as its last release. It also
