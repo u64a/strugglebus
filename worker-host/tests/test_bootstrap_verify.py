@@ -409,7 +409,11 @@ def test_the_vendored_isolation_check_is_u64_securitys_reviewed_version():
     script = ROOT / "setup" / "Get-WorkerIsolationHits.ps1"
     if not script.is_file():
         pytest.skip("not vendored in this checkout yet (u64a/strugglebus PR 59)")
-    raw = script.read_bytes()
+    # The COMMITTED bytes (LF), as the bootstrap reads them; a Windows checkout writes .ps1 with CRLF
+    # (.gitattributes), so the working file is compared with its line endings undone.
+    blob = subprocess.run(["git", "cat-file", "blob", "HEAD:./setup/Get-WorkerIsolationHits.ps1"], cwd=ROOT,
+                          capture_output=True)
+    raw = blob.stdout if blob.returncode == 0 else script.read_bytes().replace(b"\r\n", b"\n")
     assert hashlib.sha256(raw).hexdigest() == ISOLATION_SHA256 and b"\r" not in raw
 
 
