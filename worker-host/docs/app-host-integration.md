@@ -102,6 +102,10 @@ neither one's logic:
     cannot). The operator checks it before running it:
     `$s = Get-AuthenticodeSignature .\bootstrap.ps1; $s.Status; $s.SignerCertificate.Thumbprint; [bool]$s.TimeStamperCertificate`
     The expected result is `Valid`, the thumbprint the App shows, and `True`.
+    - **A freshly installed Windows that hasn't been online yet** may not have Certum's root certificate. It then
+      reports the signature as untrusted (`UnknownError` or `NotTrusted`), even though the file is fine. Connect it
+      to the internet once (Windows fetches trusted roots on demand), then check again. Or use the `Get-FileHash`
+      check below against the hash the App shows. Never run it on an untrusted result without one of the two.
   - **How a copy is signed** (`tools/sign-bootstrap.ps1`, run on the owner's PC with the certificate):
     - The repository keeps bootstrap.ps1 unsigned. Its SHA-256 is `bootstrap_sha256` in the signed `release.toml`,
       and the certificates allowed to sign it are that release's `authenticode_thumbprints` (current, and the next
