@@ -27,6 +27,14 @@ Download `NZCypher819.StruggleBusMonitor-win-x64-Setup.exe` (or the `win-arm64` 
 each PC. It installs per user with no administrator prompt, and from then on the app updates itself.
 A copy run from the Portable ZIP or from a development build does not self-update; Settings says so.
 
+From 1.7.5 an installed app looks for updates in this repository, `u64a/strugglebus`, among the
+releases tagged `windows/vX.Y.Z`. The bus publishes here too, under `bus/` tags, and the app never
+reads those. It asks GitHub once for the tags, then reads the newest few releases' files from their
+download addresses. A tag whose release is not published yet is passed over; if GitHub is limiting
+requests, or the tags cannot be read, Settings says so instead of saying the app is up to date.
+Versions before 1.7.5 look in `NZCypher819/StruggleApp-Privacy`, which is where 1.7.5 itself is
+published so that they can reach it.
+
 The enrollment and operator grant live in `%LOCALAPPDATA%\StruggleBusMonitor` and are not touched by
 installing, updating or uninstalling. Theme and window preferences are in `settings.json` beside them.
 

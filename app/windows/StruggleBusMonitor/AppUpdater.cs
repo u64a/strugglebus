@@ -55,7 +55,7 @@ internal interface IUpdateEngine
     void ApplyAfterExit(UpdatePackage package);
 }
 
-/// <summary>The real engine: Velopack against the public GitHub releases.</summary>
+/// <summary>The real engine: Velopack against this app's public GitHub releases.</summary>
 internal sealed class VelopackEngine(UpdateManager manager) : IUpdateEngine
 {
     public bool IsInstalled => manager.IsInstalled;
@@ -100,7 +100,10 @@ internal sealed class VelopackEngine(UpdateManager manager) : IUpdateEngine
 /// </summary>
 public sealed class AppUpdater
 {
-    public const string ReleasesUrl = "https://github.com/NZCypher819/StruggleApp-Privacy";
+    /// <summary>The repository whose <c>windows/v</c> releases are this app's. See <see cref="AppReleaseSource"/>.</summary>
+    public const string Repository = "u64a/strugglebus";
+
+    public const string ReleasesUrl = "https://github.com/" + Repository;
 
     private readonly IUpdateEngine? _engine;
     private readonly SemaphoreSlim _gate = new(1, 1);
@@ -115,7 +118,7 @@ public sealed class AppUpdater
 
     private static IUpdateEngine? CreateEngine()
     {
-        try { return new VelopackEngine(new UpdateManager(new GithubSource(ReleasesUrl, null, prerelease: false))); }
+        try { return new VelopackEngine(new UpdateManager(new AppReleaseSource(Repository, new HttpClientFileDownloader()))); }
         catch (Exception) { return null; }
     }
 
