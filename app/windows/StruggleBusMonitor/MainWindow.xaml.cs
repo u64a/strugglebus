@@ -46,6 +46,7 @@ public partial class MainWindow : Window
         InitializeMonitor();
         InitializeHumans();
         InitializeAdmin();
+        InitializeHosts();
         InitializeSettings();
         InitializeTray();
         _ready = true;
@@ -156,7 +157,9 @@ public partial class MainWindow : Window
     {
         // A different enrollment is a different bus or device: nothing kept from the last one applies.
         _adminLoadedAt = null;
+        _hostsLoadedAt = null;
         HumansNav.IsEnabled = true;
+        HostsNav.IsEnabled = true;
         AdminNav.IsEnabled = true;
         QuickFindButton.IsEnabled = true;
         DeviceLabelText.Text = session.DeviceLabel;
@@ -170,6 +173,7 @@ public partial class MainWindow : Window
     private void ShowEnrollment()
     {
         HumansNav.IsEnabled = false;
+        HostsNav.IsEnabled = false;
         AdminNav.IsEnabled = false;
         QuickFindButton.IsEnabled = false;
         DeviceLabelText.Text = string.Empty;
@@ -190,6 +194,7 @@ public partial class MainWindow : Window
     {
         if (nav == SettingsNav) return NavPage.Settings;
         if (nav == HumansNav) return NavPage.Humans;
+        if (nav == HostsNav) return NavPage.Hosts;
         return nav == AdminNav ? NavPage.Admin : NavPage.Monitor;
     }
 
@@ -203,6 +208,7 @@ public partial class MainWindow : Window
         MonitorPage.Visibility = VisibleWhen(layout.Monitor);
         HumansPage.Visibility = VisibleWhen(layout.Humans);
         AdminPage.Visibility = VisibleWhen(layout.Admin);
+        HostsPage.Visibility = VisibleWhen(layout.Hosts);
         CloseMentionPopup();
         OnPageShown(page);
     }
@@ -212,6 +218,7 @@ public partial class MainWindow : Window
         if (page == NavPage.Humans) OnHumansPageShown();
         else UpdateHumansBadge();
         if (page == NavPage.Admin) OnAdminPageShown();
+        if (page == NavPage.Hosts) OnHostsPageShown();
         if (page == NavPage.Settings) OnSettingsPageShown();
     }
 
