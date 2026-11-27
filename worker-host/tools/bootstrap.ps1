@@ -437,7 +437,10 @@ function Get-VerifiedRelease([string]$git, [string]$work, [string]$repo = $Relea
     $ok, $why = Test-ReleaseSignature $data $sig $Keygen $work
     if (-not $ok) { throw "the release is not signed by a project release key with touch and PIN ($why): nothing installed" }
     $release = Read-ReleaseText ([Text.Encoding]::UTF8.GetString($data))
-    if (-not (Test-ReleaseFloor $release)) { throw "release serial $($release.serial) is older than this bootstrap allows ($MinReleaseSerial), or has no installer_sha256" }
+    if (-not (Test-ReleaseFloor $release)) {
+        if (-not $release.ContainsKey('installer_sha256')) { throw "release serial $($release.serial) has no installer_sha256 (it predates what this bootstrap needs): nothing installed" }
+        throw "release serial $($release.serial) is older than this bootstrap allows (at least $MinReleaseSerial): nothing installed"
+    }
     $listing = [Text.Encoding]::UTF8.GetString((& $g @('ls-tree', '-r', '-z', '--full-tree', $release.commit, '--', $folder)))
     $hostFiles = @{}; $installerFiles = @{}
     foreach ($entry in ($listing -split "`0")) {
