@@ -650,10 +650,49 @@
                 <DockPanel x:Name="SettingsPage" Visibility="Collapsed" Background="{DynamicResource Bg}">
                     <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="28,18,28,0">
                         <RadioButton x:Name="SettingsTabGeneral" GroupName="SettingsTab" Content="General" IsChecked="True" Style="{StaticResource SegItem}" Checked="SettingsTab_Checked"/>
+                        <RadioButton x:Name="SettingsTabAppearance" GroupName="SettingsTab" Content="Appearance" Style="{StaticResource SegItem}" Margin="-1,0,0,0" Checked="SettingsTab_Checked"/>
                         <RadioButton x:Name="SettingsTabLogs" GroupName="SettingsTab" Content="Logs" Style="{StaticResource SegItem}" Margin="-1,0,0,0" Checked="SettingsTab_Checked"/>
                     </StackPanel>
                     <Grid>
                 <ScrollViewer x:Name="SettingsGeneralPanel" VerticalScrollBarVisibility="Auto">
+                    <StackPanel Margin="28,22">
+                        <TextBlock Text="General" FontSize="22" FontWeight="SemiBold"/>
+                        <Border Style="{StaticResource Card}" Margin="0,16,0,0">
+                            <StackPanel>
+                                <TextBlock Text="WINDOW" Style="{StaticResource Label}"/>
+                                <CheckBox x:Name="KeepInTrayCheck" Content="Keep running in the system tray when I close the window" Style="{StaticResource Check}" Margin="0,12,0,0" Checked="KeepInTray_Changed" Unchecked="KeepInTray_Changed"/>
+                                <TextBlock Text="The app keeps watching the bus. Open it again from its tray icon, or right-click the icon to quit." Style="{StaticResource MutedText}" TextWrapping="Wrap" Margin="0,4,0,0"/>
+                                <CheckBox x:Name="StartAtSignInCheck" Content="Start when I sign in to Windows, in the tray" Style="{StaticResource Check}" Margin="0,12,0,0" Checked="StartAtSignIn_Changed" Unchecked="StartAtSignIn_Changed"/>
+                                <TextBlock Text="Needs the option above, and a copy installed with the Setup program." Style="{StaticResource MutedText}" TextWrapping="Wrap" Margin="0,4,0,0"/>
+                            </StackPanel>
+                        </Border>
+
+                        <Border Style="{StaticResource Card}" Margin="0,16,0,0">
+                            <StackPanel>
+                                <TextBlock Text="UPDATES" Style="{StaticResource Label}"/>
+                                <TextBlock x:Name="VersionText" FontFamily="{StaticResource Mono}" FontSize="14" Margin="0,8,0,0"/>
+                                <TextBlock x:Name="UpdateStatusText" Style="{StaticResource MutedText}" TextWrapping="Wrap" Margin="0,6,0,0"/>
+                                <TextBlock x:Name="UpdateSourceText" Style="{StaticResource MutedText}" TextWrapping="Wrap" Margin="0,6,0,0"/>
+                                <CheckBox x:Name="AutoUpdateCheck" Content="Install updates automatically" Style="{StaticResource Check}" Margin="0,12,0,0" Checked="AutoUpdate_Changed" Unchecked="AutoUpdate_Changed"/>
+                                <WrapPanel Margin="0,12,0,0">
+                                    <Button x:Name="UpdateCheckButton" Content="Check for updates" Style="{StaticResource BtnOutline}" Click="UpdateCheck_Click" Margin="0,0,8,0"/>
+                                    <Button x:Name="UpdateRestartButton" Content="Restart to update" Style="{StaticResource Btn}" Click="UpdateRestart_Click" Visibility="Collapsed"/>
+                                </WrapPanel>
+                            </StackPanel>
+                        </Border>
+
+                        <Border x:Name="ThisPcCard" Style="{StaticResource Card}" Visibility="Collapsed">
+                            <StackPanel>
+                                <TextBlock Text="THIS PC" Style="{StaticResource Label}"/>
+                                <TextBlock x:Name="ThisPcText" FontFamily="{StaticResource Mono}" TextWrapping="Wrap" Margin="0,8,0,0"/>
+                                <TextBlock Text="Forgetting removes the saved enrollment and operator access from this PC so you can enroll again. It does not revoke the device on the bus; use Admin for that while you still can." Style="{StaticResource MutedText}" TextWrapping="Wrap" Margin="0,8,0,0"/>
+                                <Button Content="Forget this PC" Style="{StaticResource BtnOutline}" Click="ForgetDevice_Click" HorizontalAlignment="Left" Margin="0,12,0,0"/>
+                            </StackPanel>
+                        </Border>
+                    </StackPanel>
+                </ScrollViewer>
+
+                <ScrollViewer x:Name="SettingsAppearancePanel" Visibility="Collapsed" VerticalScrollBarVisibility="Auto">
                     <StackPanel Margin="28,22">
                         <DockPanel>
                             <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Bottom">
@@ -679,29 +718,6 @@
                                 <ItemsPanelTemplate><UniformGrid Columns="5"/></ItemsPanelTemplate>
                             </ItemsControl.ItemsPanel>
                         </ItemsControl>
-
-                        <Border Style="{StaticResource Card}" Margin="0,24,0,0">
-                            <StackPanel>
-                                <TextBlock Text="UPDATES" Style="{StaticResource Label}"/>
-                                <TextBlock x:Name="VersionText" FontFamily="{StaticResource Mono}" FontSize="14" Margin="0,8,0,0"/>
-                                <TextBlock x:Name="UpdateStatusText" Style="{StaticResource MutedText}" TextWrapping="Wrap" Margin="0,6,0,0"/>
-                                <TextBlock x:Name="UpdateSourceText" Style="{StaticResource MutedText}" TextWrapping="Wrap" Margin="0,6,0,0"/>
-                                <CheckBox x:Name="AutoUpdateCheck" Content="Install updates automatically" Foreground="{DynamicResource Fg}" HorizontalAlignment="Left" Margin="0,12,0,0" Checked="AutoUpdate_Changed" Unchecked="AutoUpdate_Changed"/>
-                                <WrapPanel Margin="0,12,0,0">
-                                    <Button x:Name="UpdateCheckButton" Content="Check for updates" Style="{StaticResource BtnOutline}" Click="UpdateCheck_Click" Margin="0,0,8,0"/>
-                                    <Button x:Name="UpdateRestartButton" Content="Restart to update" Style="{StaticResource Btn}" Click="UpdateRestart_Click" Visibility="Collapsed"/>
-                                </WrapPanel>
-                            </StackPanel>
-                        </Border>
-
-                        <Border x:Name="ThisPcCard" Style="{StaticResource Card}" Visibility="Collapsed">
-                            <StackPanel>
-                                <TextBlock Text="THIS PC" Style="{StaticResource Label}"/>
-                                <TextBlock x:Name="ThisPcText" FontFamily="{StaticResource Mono}" TextWrapping="Wrap" Margin="0,8,0,0"/>
-                                <TextBlock Text="Forgetting removes the saved enrollment and operator access from this PC so you can enroll again. It does not revoke the device on the bus; use Admin for that while you still can." Style="{StaticResource MutedText}" TextWrapping="Wrap" Margin="0,8,0,0"/>
-                                <Button Content="Forget this PC" Style="{StaticResource BtnOutline}" Click="ForgetDevice_Click" HorizontalAlignment="Left" Margin="0,12,0,0"/>
-                            </StackPanel>
-                        </Border>
                     </StackPanel>
                 </ScrollViewer>
 

@@ -7,12 +7,20 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <UseWPF>true</UseWPF>
+    <!-- Only for the system tray icon, which WPF does not have. -->
+    <UseWindowsForms>true</UseWindowsForms>
     <ApplicationIcon>icon.ico</ApplicationIcon>
     <StartupObject>StruggleBusMonitor.App</StartupObject>
   </PropertyGroup>
 
   <ItemGroup>
     <FrameworkReference Include="Microsoft.Windows.SDK.NET.Ref" />
+  </ItemGroup>
+
+  <!-- Windows Forms is named in full where it is used, so its types never stand in for WPF's. -->
+  <ItemGroup>
+    <Using Remove="System.Windows.Forms" />
+    <Using Remove="System.Drawing" />
   </ItemGroup>
 
   <!-- App.xaml is a Page so the custom Main in App.xaml.cs can run the updater hooks before WPF starts. -->

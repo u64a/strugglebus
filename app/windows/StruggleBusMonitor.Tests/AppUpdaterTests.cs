@@ -37,7 +37,13 @@ internal sealed class FakeUpdateEngine : IUpdateEngine
 
     public void Discard(UpdatePackage package) => Discarded.Add(package);
 
-    public void ApplyAndRestart(UpdatePackage package) => Restarted.Add(package);
+    public List<string[]> RestartArguments { get; } = [];
+
+    public void ApplyAndRestart(UpdatePackage package, string[] arguments)
+    {
+        Restarted.Add(package);
+        RestartArguments.Add(arguments);
+    }
 
     public void ApplyAfterExit(UpdatePackage package)
     {

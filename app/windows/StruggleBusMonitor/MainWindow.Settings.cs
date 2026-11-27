@@ -40,9 +40,9 @@ public partial class MainWindow
     private void SettingsTab_Checked(object sender, RoutedEventArgs e)
     {
         if (!_ready) return;
-        var logs = SettingsTabLogs.IsChecked == true;
-        SettingsGeneralPanel.Visibility = VisibleWhen(!logs);
-        SettingsLogsPanel.Visibility = VisibleWhen(logs);
+        SettingsGeneralPanel.Visibility = VisibleWhen(SettingsTabGeneral.IsChecked == true);
+        SettingsAppearancePanel.Visibility = VisibleWhen(SettingsTabAppearance.IsChecked == true);
+        SettingsLogsPanel.Visibility = VisibleWhen(SettingsTabLogs.IsChecked == true);
         OnSettingsPageShown();
     }
 
@@ -220,6 +220,7 @@ public partial class MainWindow
         UpdateButton.Content = view.TitleBarLabel;
         UpdateCheckButton.IsEnabled = view.CanCheck;
         UpdateStatusText.Text = view.Text;
+        _ = RestartForUpdateWhileHiddenAsync(status);
     }
 
     private async void UpdateRestart_Click(object sender, RoutedEventArgs e)
