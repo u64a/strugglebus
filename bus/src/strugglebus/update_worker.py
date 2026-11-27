@@ -22,10 +22,10 @@ from typing import Protocol
 from strugglebus.update_state import Journal, UpdateState, journal_to_json
 from strugglebus.update_storage import SecureCache, check_ancestry, read_protected_file
 from strugglebus.update_types import (
-    UPDATE_REPOSITORY, UPDATE_SOURCE_REPOSITORY, JsonObject, REQUEST_BYTES,
+    JsonObject, REQUEST_BYTES,
     RESPONSE_BYTES, UpdateCandidate, UpdateDiscovery, UpdateError, UpdateLimits,
     UpdateRequest, UpdateStatus, decode_frame, decode_json, discovery_from_json,
-    discovery_to_json, encode_frame, encode_json, limits_from_json, request_from_json,
+    discovery_to_json, encode_frame, encode_json, limits_from_json, names_the_release_source, request_from_json,
     require_bool, require_error, require_int, require_object, require_text,
     response_to_json, status_to_json,
 )
@@ -79,8 +79,7 @@ def config_from_json(value: object) -> WorkerConfig:
     require_int(obj["version"], 2, 2)
     release_repository = require_text(obj["release_repository"], 128)
     source_repository = require_text(obj["source_repository"], 128)
-    if (release_repository != UPDATE_REPOSITORY
-            or source_repository != UPDATE_SOURCE_REPOSITORY):
+    if not names_the_release_source(release_repository, source_repository):
         raise UpdateError("invalid_request")
     return WorkerConfig(
         require_int(obj["application_uid"], 2**31 - 1, 1),
@@ -275,8 +274,7 @@ def _peer_allowed(writer: asyncio.StreamWriter, application_uid: int) -> bool:
 def _source_factory(config: WorkerConfig) -> ReleaseSource:
     from strugglebus.update_source import GitHubReleaseSource
 
-    if (config.release_repository != UPDATE_REPOSITORY
-            or config.source_repository != UPDATE_SOURCE_REPOSITORY):
+    if not names_the_release_source(config.release_repository, config.source_repository):
         raise UpdateError("invalid_request")
     return GitHubReleaseSource(config.limits)
 

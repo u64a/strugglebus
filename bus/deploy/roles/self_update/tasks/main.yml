@@ -68,8 +68,12 @@
       - self_update_worker_config.stat.nlink | default(0) == 1
       - self_update_worker_config.stat.mode | default('') == '0640'
       - (self_update_worker_config_bytes.content | b64decode | from_json).version == 2
-      - (self_update_worker_config_bytes.content | b64decode | from_json).release_repository == 'NZCypher819/strugglebus-releases'
-      - (self_update_worker_config_bytes.content | b64decode | from_json).source_repository == 'NZCypher819/strugglebus'
+      # The project's own repository, or the place releases came from up to 0.2.73.
+      - >-
+        [(self_update_worker_config_bytes.content | b64decode | from_json).release_repository,
+         (self_update_worker_config_bytes.content | b64decode | from_json).source_repository]
+        in [['u64a/strugglebus', 'u64a/strugglebus'],
+            ['NZCypher819/strugglebus-releases', 'NZCypher819/strugglebus']]
     fail_msg: >-
       Self-update adoption requires a preflighted version-2 anonymous public-source
       worker configuration before changing the active updater release.

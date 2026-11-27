@@ -3,6 +3,8 @@ import json
 
 import pytest
 
+from strugglebus import update_types
+
 from strugglebus import __version__
 from strugglebus.update_types import (
     ERROR_CODES, ERROR_MESSAGES, LEGACY_UPDATE_REPOSITORY, MAX_TIMESTAMP,
@@ -85,10 +87,22 @@ def test_digest_binds_every_candidate_and_asset_field():
     assert len(value.legacy_private_repository_digest) == 64
 
 
-def test_candidate_identity_uses_public_repository_and_fixed_private_source():
-    assert UPDATE_REPOSITORY == "NZCypher819/strugglebus-releases"
-    assert UPDATE_SOURCE_REPOSITORY == "NZCypher819/strugglebus"
-    assert LEGACY_UPDATE_REPOSITORY == UPDATE_SOURCE_REPOSITORY
+def test_releases_come_from_the_projects_repository_under_a_tag_prefix_of_their_own():
+    assert UPDATE_REPOSITORY == "u64a/strugglebus"
+    assert UPDATE_SOURCE_REPOSITORY == "u64a/strugglebus"
+    assert update_types.RELEASE_TAG_PREFIX == "bus/"
+    # The digest older applications confirmed is still worked out from where they were built.
+    assert LEGACY_UPDATE_REPOSITORY == "NZCypher819/strugglebus"
+
+
+def test_an_updater_configuration_may_name_the_present_place_or_the_former_one():
+    names = update_types.names_the_release_source
+    assert names("u64a/strugglebus", "u64a/strugglebus")
+    # Written before the move: still accepted, so the file need not change at the same moment.
+    assert names("NZCypher819/strugglebus-releases", "NZCypher819/strugglebus")
+    assert not names("u64a/strugglebus", "NZCypher819/strugglebus")
+    assert not names("NZCypher819/strugglebus-releases", "u64a/strugglebus")
+    assert not names("someone/else", "someone/else")
 
 
 @pytest.mark.parametrize("data", [

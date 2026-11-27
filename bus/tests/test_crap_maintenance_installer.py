@@ -121,7 +121,7 @@ def test_bundle_for_another_version_is_a_preparation_failure(installer, monkeypa
         installer._validate_bundle(PreparedRelease(VERSION, Path("/prepared")))
     assert caught.value.code == "preparation_failed"
     assert received["directory"] == Path("/prepared")
-    assert received["expected_repository"] == "NZCypher819/strugglebus"
+    assert received["expected_repository"] == "u64a/strugglebus"
     assert received["minimum_package_version"] == VERSION
 
 

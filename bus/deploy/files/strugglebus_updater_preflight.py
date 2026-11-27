@@ -151,9 +151,13 @@ def validate_config(content: bytes, application_uid: int, data_dir: Path) -> dic
         and value["cache_dir"] == str(CACHE / "state"),
         "configuration topology mismatch",
     )
+    # The project's own repository, or the place releases came from up to 0.2.73. The updater
+    # accepts a file naming either, so the file need not change at the moment of the move.
     require(
-        value["release_repository"] == "NZCypher819/strugglebus-releases"
-        and value["source_repository"] == "NZCypher819/strugglebus",
+        (value["release_repository"], value["source_repository"]) in {
+            ("u64a/strugglebus", "u64a/strugglebus"),
+            ("NZCypher819/strugglebus-releases", "NZCypher819/strugglebus"),
+        },
         "invalid repository identity",
     )
     return validate_limits(value["limits"])

@@ -134,14 +134,31 @@ copies are retired only after a green run here.
 
 - **0.2.73 is the move and nothing else.** It is the last release published at the old place. It
   changes where the updaters look to this repository and to tags named `bus/v*`.
-- The self-hosted fetcher stops asking for "the latest release", which in a shared repository
-  could be the App's. It lists releases once per run, a small page, and takes those with the
-  `bus/v` prefix. That call is anonymous, so it is kept to one.
+- Both updaters find bus releases **by tag**, not by reading the repository's list of releases.
+  The list is shared with the App, which releases more often, so a bus release would in time be
+  pushed off the end of any page of it and a bus would quietly stop seeing updates (found in
+  review by u64-security, bus message 28876). The question "which tags start `bus/v`" is answered
+  with those alone, whatever else is published.
+- A tag is not a release. Anyone who can push can make a tag, so an updater takes the newest tag
+  that has a published release, trying the newest five. A stray tag cannot hide a real update,
+  and a release still installs only if a release key signed it.
+- Tags are never deleted, so their number only grows. An updater reads up to a thousand. If there
+  are ever more and no update is found among those read, the check fails where it can be seen;
+  it never reports "nothing newer".
+- The self-hosted fetcher then asks the old place as well and takes the newer of the two, so a
+  bus is not left without updates if it cannot use the new place. That is two anonymous calls per
+  check where there was one, and a third when there is an update to fetch.
 - Ansible installs name the release repository in `/etc/strugglebus-updater/worker.json`, which
-  the operator supplies. It must change with 0.2.73 or the new updater refuses to start. The exact
-  values, when they take effect relative to the install, and the rollback order are tested on a
-  non-production Ansible install first, including a release list that also holds a newer App
-  release.
+  the operator supplies. The 0.2.73 updater accepts a file naming either this repository
+  (`u64a/strugglebus` for both values) or the old pair, so the file does not have to change at
+  the moment of the install, and a rollback to 0.2.72 needs the old pair still in place. The file
+  is changed afterwards, once 0.2.74 is installed and a rollback to 0.2.72 is no longer wanted.
+  Whatever the file says, a 0.2.73 Ansible install reads only this repository.
+- A 0.2.73 Ansible install accepts only a release built here (its manifest names this
+  repository). So after 0.2.73 there is no further release from the old pipeline for those
+  installs: the way back is the rollback to 0.2.72.
+- All of this is tested on a non-production Ansible install first, including a release list
+  that also holds a newer App release.
 - **0.2.74 is the first release from here**, and carries schema 25 (the host dashboard, host
   events and the stored event log).
 - `NZCypher819/strugglebus-releases` stays, read-only, with 0.2.73 as its last release. A bus
@@ -156,12 +173,14 @@ publish scripts. This needs the owner's yes to add them to `.github/CODEOWNERS`.
 
 - [x] Design for the signature check, reviewed by u64-security (bus messages 28770 to 28772).
 - [x] The check shipped and released through the present path: 0.2.72, 27 November 2026.
-- [ ] The owner's yes to CODEOWNERS for the bus's trust files.
+- [x] The owner's yes to CODEOWNERS for the bus's trust files (pull request 35).
+- [x] Tag rules: `windows/v*` and `bus/v*` tags cannot be moved or deleted, by anyone.
 - [ ] "Deployment validation" and "Isolated LAN CA integration" green on GitHub's runners.
 - [ ] The build workflow, the second build, and the sign-and-publish script.
 - [ ] The updaters read this repository and `bus/v*` tags; tested on a non-production install.
-- [ ] 0.2.73 published at the old place; `worker.json` changed on the production bus.
+- [ ] 0.2.73 published at the old place and installed on the production bus.
 - [ ] 0.2.74 published here. `NZCypher819/strugglebus-releases` kept read-only.
+- [ ] `worker.json` on the production bus changed to name this repository.
 
 ## Before or with the move
 

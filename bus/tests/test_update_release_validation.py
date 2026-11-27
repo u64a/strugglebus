@@ -12,6 +12,7 @@ import zipfile
 import pytest
 
 from strugglebus import release_validation as bundle, release_wheel as wheel, release_lock as lock
+from strugglebus.update_types import UPDATE_SOURCE_REPOSITORY
 from test_update_source import publication, VERSION, TAG, COMMIT, TREE
 
 
@@ -69,7 +70,7 @@ def set_nested(document, path, value):
 def test_shared_manifest_validation_blocks_malformed_or_unknown_policy(publication, path, value, reason):
     rewrite(publication, lambda manifest: set_nested(manifest, path, value))
     with pytest.raises(bundle.ReleaseBundleError, match=reason):
-        bundle.validate_bundle(publication)
+        bundle.validate_bundle(publication, expected_repository=UPDATE_SOURCE_REPOSITORY)
 
 
 @pytest.mark.parametrize("operation,reason", [
@@ -83,7 +84,7 @@ def test_shared_manifest_validation_blocks_malformed_or_unknown_policy(publicati
 def test_manifest_set_and_sort_contracts(publication, operation, reason):
     rewrite(publication, operation)
     with pytest.raises(bundle.ReleaseBundleError, match=reason):
-        bundle.validate_bundle(publication)
+        bundle.validate_bundle(publication, expected_repository=UPDATE_SOURCE_REPOSITORY)
 
 
 def test_source_bindings_are_independently_checked(publication):
@@ -107,7 +108,7 @@ def test_python_contract_must_be_one_consistent_accepted_pair(publication, pytho
         manifest["build"]["tested_python"] = tested
     rewrite(publication, transform)
     with pytest.raises(bundle.ReleaseBundleError, match=reason):
-        bundle.validate_bundle(publication)
+        bundle.validate_bundle(publication, expected_repository=UPDATE_SOURCE_REPOSITORY)
 
 
 def test_json_and_checksum_parsers_fail_closed(publication):

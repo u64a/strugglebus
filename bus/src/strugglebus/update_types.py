@@ -15,9 +15,29 @@ JsonValue: TypeAlias = (
 JsonObject: TypeAlias = dict[str, JsonValue]
 
 PROTOCOL_VERSION = 1
-UPDATE_REPOSITORY = "NZCypher819/strugglebus-releases"
-UPDATE_SOURCE_REPOSITORY = "NZCypher819/strugglebus"
-LEGACY_UPDATE_REPOSITORY = UPDATE_SOURCE_REPOSITORY
+# Releases are published in the project's own repository, which also holds the releases of its
+# other parts. There a bus release is tagged bus/vX.Y.Z; inside the release, and everywhere in
+# this protocol, its tag is still vX.Y.Z.
+UPDATE_REPOSITORY = "u64a/strugglebus"
+UPDATE_SOURCE_REPOSITORY = "u64a/strugglebus"
+RELEASE_TAG_PREFIX = "bus/"
+# Where releases were published and built up to 0.2.73. An updater's configuration file written
+# for those is still accepted, so moving does not need the file changed at the same moment.
+FORMER_UPDATE_REPOSITORY = "NZCypher819/strugglebus-releases"
+FORMER_UPDATE_SOURCE_REPOSITORY = "NZCypher819/strugglebus"
+LEGACY_UPDATE_REPOSITORY = FORMER_UPDATE_SOURCE_REPOSITORY
+
+
+def names_the_release_source(release_repository: str, source_repository: str) -> bool:
+    """
+    Whether an updater's configuration names where releases come from. It may name the present
+    place or the former one: the file only confirms what this code already fixes, and a file
+    written before the move must not stop the updater that carries the move from starting.
+    """
+    return (release_repository, source_repository) in {
+        (UPDATE_REPOSITORY, UPDATE_SOURCE_REPOSITORY),
+        (FORMER_UPDATE_REPOSITORY, FORMER_UPDATE_SOURCE_REPOSITORY),
+    }
 REQUEST_BYTES = 4096
 RESPONSE_BYTES = 65536
 MAX_TIMESTAMP = 253402300799

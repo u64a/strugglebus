@@ -46,7 +46,6 @@ def refusal(page: _ReleasePage, into: Path) -> fetch_release.Problem:
 
 @pytest.mark.parametrize("described", [
     b"not json",
-    b"[]",
     b"{}",
     b'{"tag_name": "v0.3.0"}',
     b'{"tag_name": "v0.3.0", "assets": [{"name": "SHA256SUMS"}]}',
@@ -81,13 +80,25 @@ def test_release_with_an_unexpected_name_is_refused(page, tmp_path, tag):
     assert str(raised.value) == "the newest release has an unexpected name"
 
 
+def test_a_release_list_with_no_bus_release_means_nothing_is_newer(page, tmp_path):
+    """The project's repository also holds other parts' releases, and may hold no bus release yet."""
+    page.files["list.json"] = b'[{"tag_name": "windows/v1.7.3", "assets": []}]'
+    into = tmp_path / "release"
+
+    assert fetch_release.fetch(
+        "0.2.67", into, api=page.base + "/files/list.json", download_prefix=page.base + "/files/",
+    ) == ("current", "0.2.67")
+    assert not into.exists()
+
+
 def test_release_tag_that_is_not_a_version_is_refused(page, tmp_path):
     page.version = "0.3.0-rc1"
 
     problem = refusal(page, tmp_path / "release")
 
+    # A tag that is not vX.Y.Z is not a bus release at all.
     assert problem.code == fetch_release.INVALID
-    assert "is not a release version" in str(problem)
+    assert str(problem) == "the newest release has an unexpected name"
 
 
 @pytest.mark.parametrize("missing", ["SHA256SUMS", "requirements.lock", WHEEL])

@@ -62,13 +62,25 @@ data-root mask would substitute metadata and requires a separately reviewed
 immutable topology-provenance contract, not an unchecked exemption. Actual
 namespace/DAC/ACL behavior remains a real-host adoption gate.
 
-The fixed update source is the public, assets-only repository
-`NZCypher819/strugglebus-releases`. The worker reads it anonymously and sends no
-Authorization header, ambient GitHub credential, cookie or proxy setting. It
-therefore holds no source-repository credential and cannot use update discovery
-to access private code, issues, Actions or other repository data. Worker config
-version 2 pins both the public release repository and the private source identity;
-unknown repositories or older credential-bearing config versions fail closed.
+From 0.2.73 the fixed update source is the project's own public repository,
+`u64a/strugglebus`, which also holds the releases of the project's other parts.
+A bus release there is tagged `bus/vX.Y.Z`; no other tag is a bus release.
+The updater finds releases by asking for the tags that start `bus/v`, never by
+reading the repository's shared list of releases, so releases of other parts
+cannot push a bus release out of view. It takes the newest tag that has a
+published release.
+Inside the release, and in the updater's own records, its tag is still `vX.Y.Z`.
+Up to 0.2.72 the source was `NZCypher819/strugglebus-releases`, and 0.2.73 itself
+is published there, because the buses that fetch it still look there.
+
+The worker reads the source anonymously and sends no Authorization header,
+ambient GitHub credential, cookie or proxy setting. Worker config version 2
+names the release repository and the source identity. From 0.2.73 it may name
+either `u64a/strugglebus` for both, or the former pair
+(`NZCypher819/strugglebus-releases` and `NZCypher819/strugglebus`). The file only
+confirms what the code already fixes, so a file written before the move does not
+need changing at the moment of the move. Any other value, half of each pair, or
+an older credential-bearing config version fails closed.
 
 Public publication does not move source or operational configuration into the
 public repository. A separately approved operator mirror step first verifies the
@@ -83,9 +95,9 @@ downloaded candidate helper or candidate Python module is never executed.
 
 ## Discovery and verification contract
 
-Release discovery is fixed to NZCypher819/strugglebus-releases, while
-canonical metadata and the bundle manifest must bind source repository
-NZCypher819/strugglebus. Verified TLS and exact
+From 0.2.73, release discovery is fixed to u64a/strugglebus and to tags
+starting bus/, and canonical metadata and the bundle manifest must bind source
+repository u64a/strugglebus. Verified TLS and exact
 API/asset hosts are mandatory; redirects must not forward authorization or stale
 Host headers. Ignore ambient proxy overrides. API authentication errors and
 unavailable/partial results are never "no updates".

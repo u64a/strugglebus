@@ -181,13 +181,290 @@ def test_fetcher_reports_an_unreachable_page_and_a_bad_installed_version(tmp_pat
     )
 
 
-def test_fetcher_defaults_point_at_the_public_release_repository():
-    assert fetch_release.API == (
+HERE = (fetch_release.API, fetch_release.DOWNLOAD_PREFIX)
+FORMER = (fetch_release.FORMER_API, fetch_release.FORMER_DOWNLOAD_PREFIX)
+INSTALLED = (0, 2, 72)
+
+
+def test_fetcher_asks_the_projects_repository_first_and_the_former_place_after():
+    assert fetch_release.API == "https://api.github.com/repos/u64a/strugglebus/releases"
+    assert fetch_release.DOWNLOAD_PREFIX == "https://github.com/u64a/strugglebus/releases/download/"
+    assert fetch_release.TAGS == (
+        "https://api.github.com/repos/u64a/strugglebus/git/matching-refs/tags/bus/v?per_page=100"
+    )
+    assert fetch_release.FORMER_API == (
         "https://api.github.com/repos/NZCypher819/strugglebus-releases/releases/latest"
     )
-    assert fetch_release.DOWNLOAD_PREFIX.startswith(
-        "https://github.com/NZCypher819/strugglebus-releases/"
+    assert fetch_release._places(*HERE) == (HERE, FORMER)
+    # A mirror the operator set is asked alone.
+    assert fetch_release._places("https://mirror.lan/latest", "https://mirror.lan/files/") == (
+        ("https://mirror.lan/latest", "https://mirror.lan/files/"),
     )
+
+
+def _record(tag: str, **more) -> dict:
+    return {"tag_name": tag, "assets": [{"name": "a", "browser_download_url": "https://x/" + tag}], **more}
+
+
+def _tags(*names: str) -> list[dict]:
+    return [{"ref": "refs/tags/" + name, "object": {"type": "tag", "sha": "0" * 40}} for name in names]
+
+
+def _release_address(tag: str) -> str:
+    return f"{fetch_release.API}/tags/{tag}"
+
+
+def _serve(monkeypatch, pages: dict):
+    """Answers each address with a page, raises the Problem given for it, or says nothing is there."""
+    asked = []
+
+    def read(url: str, limit: int) -> bytes:
+        asked.append(url)
+        if url not in pages:
+            raise fetch_release.Missing(fetch_release.UNREACHABLE, f"could not download {url}: 404")
+        page = pages[url]
+        if isinstance(page, Exception):
+            raise page
+        return json.dumps(page).encode()
+
+    monkeypatch.setattr(fetch_release, "_read", read)
+    return asked
+
+
+def test_bus_releases_are_found_by_tag_so_other_releases_cannot_bury_them(monkeypatch):
+    """However many App releases are published after it, a bus release is still found."""
+    asked = _serve(monkeypatch, {
+        fetch_release.TAGS: _tags("bus/v0.2.73", "bus/v0.2.74", "bus/v0.10.0", "bus/v0.9.9"),
+        _release_address("bus/v0.10.0"): _record("bus/v0.10.0"),
+    })
+
+    release = fetch_release._newest_here(INSTALLED)
+
+    assert (release.tag, release.version) == ("bus/v0.10.0", "0.10.0")
+    assert release.assets == {"a": "https://x/bus/v0.10.0"}
+    assert (release.api, release.download_prefix) == HERE
+    # Two questions, neither of them the shared list of releases.
+    assert asked == [fetch_release.TAGS, _release_address("bus/v0.10.0")]
+
+
+def test_with_no_newer_tag_nothing_more_is_asked(monkeypatch):
+    asked = _serve(monkeypatch, {fetch_release.TAGS: _tags("bus/v0.2.71", "bus/v0.2.72")})
+    assert fetch_release._newest_here(INSTALLED) is None
+    assert asked == [fetch_release.TAGS]
+
+    _serve(monkeypatch, {fetch_release.TAGS: []})
+    assert fetch_release._newest_here(INSTALLED) is None
+
+
+def test_tags_that_are_not_bus_versions_are_not_releases(monkeypatch):
+    asked = _serve(monkeypatch, {
+        fetch_release.TAGS: _tags("bus/vnext", "bus/v0.3.0-rc1", "bus/v00.3.0", "bus/v0.2.73"),
+        _release_address("bus/v0.2.73"): _record("bus/v0.2.73"),
+    })
+
+    assert fetch_release._newest_here(INSTALLED).version == "0.2.73"
+    assert asked == [fetch_release.TAGS, _release_address("bus/v0.2.73")]
+
+
+def test_a_newer_tag_with_no_release_does_not_hide_a_real_update(monkeypatch):
+    """Anyone who can push can make a tag. Only a published release counts."""
+    asked = _serve(monkeypatch, {
+        fetch_release.TAGS: _tags("bus/v0.2.73", "bus/v9.9.9", "bus/v9.9.8", "bus/v9.9.7"),
+        _release_address("bus/v9.9.8"): _record("bus/v9.9.8", draft=True),
+        _release_address("bus/v9.9.7"): _record("bus/v9.9.7", prerelease=True),
+        _release_address("bus/v0.2.73"): _record("bus/v0.2.73"),
+    })
+
+    assert fetch_release._newest_here(INSTALLED).version == "0.2.73"
+    assert asked[1:] == [_release_address(tag) for tag in ("bus/v9.9.9", "bus/v9.9.8", "bus/v9.9.7", "bus/v0.2.73")]
+
+
+def test_a_release_page_for_another_tag_is_not_taken(monkeypatch):
+    _serve(monkeypatch, {
+        fetch_release.TAGS: _tags("bus/v0.2.74", "bus/v0.2.73"),
+        _release_address("bus/v0.2.74"): _record("bus/v0.2.75"),
+        _release_address("bus/v0.2.73"): _record("bus/v0.2.73"),
+    })
+
+    assert fetch_release._newest_here(INSTALLED).version == "0.2.73"
+
+
+def test_only_the_newest_few_tags_are_tried(monkeypatch):
+    stray = [f"bus/v9.9.{n}" for n in range(fetch_release.TAGS_TRIED)]
+    asked = _serve(monkeypatch, {
+        fetch_release.TAGS: _tags("bus/v0.2.73", *stray),
+        _release_address("bus/v0.2.73"): _record("bus/v0.2.73"),
+    })
+
+    # Never "nothing newer": the real update was left untried behind tags that have no release.
+    with pytest.raises(fetch_release.Problem, match="have no release") as raised:
+        fetch_release._newest_here(INSTALLED)
+    assert raised.value.code == fetch_release.INVALID
+    assert len(asked) == 1 + fetch_release.TAGS_TRIED
+
+
+def test_a_few_tags_with_no_release_and_nothing_behind_them_is_nothing_newer(monkeypatch):
+    """A tag is made a moment before its release is published; that is not a problem."""
+    _serve(monkeypatch, {fetch_release.TAGS: _tags("bus/v0.2.72", "bus/v0.2.73")})
+    assert fetch_release._newest_here(INSTALLED) is None
+
+    every = [f"bus/v9.9.{n}" for n in range(fetch_release.TAGS_TRIED)]
+    _serve(monkeypatch, {fetch_release.TAGS: _tags(*every)})
+    assert fetch_release._newest_here(INSTALLED) is None
+
+
+def _answer(number: int) -> str:
+    return fetch_release.TAGS if number == 1 else f"{fetch_release.TAGS}&page={number}"
+
+
+def test_when_one_answer_cannot_hold_every_tag_the_next_is_asked_for(monkeypatch):
+    """Tags come in name order, so the newest can be anywhere, and every answer is read."""
+    full = _tags(*(f"bus/v0.1.{n}" for n in range(fetch_release.TAGS_IN_ONE_ANSWER)))
+    asked = _serve(monkeypatch, {
+        _answer(1): full, _answer(2): full, _answer(3): _tags("bus/v0.2.9", "bus/v0.3.0"),
+        _release_address("bus/v0.3.0"): _record("bus/v0.3.0"),
+    })
+
+    assert fetch_release._newest_here(INSTALLED).version == "0.3.0"
+    assert asked == [_answer(1), _answer(2), _answer(3), _release_address("bus/v0.3.0")]
+
+
+def test_too_many_tags_to_read_is_a_problem_and_never_nothing_newer(monkeypatch):
+    full = _tags(*(f"bus/v0.1.{n}" for n in range(fetch_release.TAGS_IN_ONE_ANSWER)))
+    asked = _serve(monkeypatch, {_answer(n): full for n in range(1, fetch_release.TAG_ANSWERS + 1)})
+
+    with pytest.raises(fetch_release.Problem, match="more release tags"):
+        fetch_release._newest_here(INSTALLED)
+
+    assert len(asked) == fetch_release.TAG_ANSWERS
+
+
+@pytest.mark.parametrize("answer", [{"message": "Not Found"}, [{"no": "ref"}], ["text"], "text"])
+def test_an_unreadable_tag_list_is_a_problem(monkeypatch, answer):
+    _serve(monkeypatch, {fetch_release.TAGS: answer})
+
+    with pytest.raises(fetch_release.Problem, match="release tags could not be read"):
+        fetch_release._newest_here(INSTALLED)
+
+
+@pytest.mark.parametrize("answer", [{"tag_name": "bus/v0.2.73"}, {"tag_name": "bus/v0.2.73", "assets": 7}])
+def test_an_unreadable_release_page_is_a_problem(monkeypatch, answer):
+    _serve(monkeypatch, {
+        fetch_release.TAGS: _tags("bus/v0.2.73"),
+        _release_address("bus/v0.2.73"): answer,
+    })
+
+    with pytest.raises(fetch_release.Problem, match="did not describe a release"):
+        fetch_release._newest_here(INSTALLED)
+
+
+def test_a_release_that_cannot_be_reached_is_a_problem_not_a_missing_release(monkeypatch):
+    down = fetch_release.Problem(fetch_release.UNREACHABLE, "could not download")
+    _serve(monkeypatch, {
+        fetch_release.TAGS: _tags("bus/v0.2.74", "bus/v0.2.73"),
+        _release_address("bus/v0.2.74"): down,
+        _release_address("bus/v0.2.73"): _record("bus/v0.2.73"),
+    })
+
+    with pytest.raises(fetch_release.Problem) as raised:
+        fetch_release._newest_here(INSTALLED)
+
+    assert raised.value is down
+
+
+def test_a_missing_page_is_told_apart_from_an_unreachable_one(monkeypatch):
+    import urllib.error
+
+    def refuse(code):
+        def urlopen(request, timeout):
+            raise urllib.error.HTTPError(request.full_url, code, "no", {}, None)
+        return urlopen
+
+    monkeypatch.setattr(fetch_release.urllib.request, "urlopen", refuse(404))
+    with pytest.raises(fetch_release.Missing) as missing:
+        fetch_release._read("https://api.github.com/x", 10)
+    assert missing.value.code == fetch_release.UNREACHABLE
+
+    monkeypatch.setattr(fetch_release.urllib.request, "urlopen", refuse(403))
+    with pytest.raises(fetch_release.Problem) as refused:
+        fetch_release._read("https://api.github.com/x", 10)
+    assert not isinstance(refused.value, fetch_release.Missing)
+
+
+def test_a_mirrors_list_counts_only_bus_tags(monkeypatch):
+    _serve(monkeypatch, {"list": [
+        _record("windows/v9.9.9"), _record("v9.9.8"), _record("bus/v0.3.2", draft=True),
+        _record("bus/v0.3.3", prerelease=True), _record("bus/v0.3.1"), _record("bus/v0.10.0"),
+        _record("bus/vnext"), "not a record",
+    ], "none": [_record("windows/v1.7.3")], "empty": []})
+
+    assert fetch_release._newest_release("list", "p/").version == "0.10.0"
+    assert fetch_release._newest_release("none", "p/") is None
+    assert fetch_release._newest_release("empty", "p/") is None
+
+
+def test_a_page_for_one_release_may_use_either_tag_form(monkeypatch):
+    _serve(monkeypatch, {"old": _record("v0.2.73"), "new": _record("bus/v0.2.74"), "app": _record("windows/v1.7.3")})
+
+    assert fetch_release._newest_release("old", "p/").version == "0.2.73"
+    assert fetch_release._newest_release("new", "p/").version == "0.2.74"
+    with pytest.raises(fetch_release.Problem, match="unexpected name"):
+        fetch_release._newest_release("app", "p/")
+
+
+PLACES = (HERE, FORMER)
+
+
+def _both(here_tags: list[str], former: object) -> dict:
+    pages: dict = {fetch_release.TAGS: _tags(*here_tags), fetch_release.FORMER_API: former}
+    pages.update({_release_address(tag): _record(tag) for tag in here_tags})
+    return pages
+
+
+def test_the_newest_release_across_both_places_wins(monkeypatch):
+    _serve(monkeypatch, _both(["bus/v0.2.74"], _record("v0.2.73")))
+    assert fetch_release._newest_anywhere(PLACES, INSTALLED).tag == "bus/v0.2.74"
+
+    _serve(monkeypatch, _both([], _record("v0.2.73")))
+    former = fetch_release._newest_anywhere(PLACES, INSTALLED)
+    assert (former.tag, former.api, former.download_prefix) == ("v0.2.73", *FORMER)
+
+    # The same version in both places: the first place asked is used.
+    _serve(monkeypatch, _both(["bus/v0.2.73"], _record("v0.2.73")))
+    assert fetch_release._newest_anywhere(PLACES, INSTALLED).api == fetch_release.API
+
+
+def test_a_place_that_cannot_be_used_does_not_stop_updates_from_the_other(monkeypatch):
+    unreachable = fetch_release.Problem(fetch_release.UNREACHABLE, "could not download")
+    asked = _serve(monkeypatch, {fetch_release.TAGS: unreachable, fetch_release.FORMER_API: _record("v0.2.73")})
+    assert fetch_release._newest_anywhere(PLACES, INSTALLED).tag == "v0.2.73"
+    assert asked == [fetch_release.TAGS, fetch_release.FORMER_API]
+
+    _serve(monkeypatch, {fetch_release.TAGS: {"nonsense": True}, fetch_release.FORMER_API: _record("v0.2.73")})
+    assert fetch_release._newest_anywhere(PLACES, INSTALLED).tag == "v0.2.73"
+
+    _serve(monkeypatch, _both(["bus/v0.2.74"], unreachable))
+    assert fetch_release._newest_anywhere(PLACES, INSTALLED).tag == "bus/v0.2.74"
+
+
+def test_when_no_place_answers_the_first_problem_is_reported(monkeypatch):
+    first = fetch_release.Problem(fetch_release.UNREACHABLE, "could not download new")
+    second = fetch_release.Problem(fetch_release.INVALID, "the release page did not describe a release")
+    _serve(monkeypatch, {fetch_release.TAGS: first, fetch_release.FORMER_API: second})
+
+    with pytest.raises(fetch_release.Problem) as raised:
+        fetch_release._newest_anywhere(PLACES, INSTALLED)
+
+    assert raised.value is first
+
+
+def test_with_nothing_published_anywhere_the_bus_is_current(monkeypatch, tmp_path: Path):
+    monkeypatch.setattr(fetch_release, "_newest_anywhere", lambda places, installed: None)
+
+    assert fetch_release.fetch("0.2.73", tmp_path / "release", api=HERE[0], download_prefix=HERE[1]) == (
+        "current", "0.2.73",
+    )
+    assert not (tmp_path / "release").exists()
 
 
 def test_switch_is_on_until_turned_off_and_the_updater_reads_one_word(tmp_path: Path):

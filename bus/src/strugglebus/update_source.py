@@ -20,13 +20,28 @@ from .release_records import LocalAsset, _asset_media_type, _validate_asset_reco
 from .release_transport import ReleasePublicationError
 from . import release_validation as policy
 from .release_signature import ReleaseSignatureError, signed_digests
-from .update_transport import _HTTP, _identity, budget, exclusive_file, private_directory, remaining
+from .update_transport import (
+    _HTTP, SourceMissing, _identity, budget, exclusive_file, private_directory, remaining,
+)
 from .update_types import (
-    UPDATE_REPOSITORY, UPDATE_SOURCE_REPOSITORY, UpdateAsset, UpdateCandidate,
+    RELEASE_TAG_PREFIX, UPDATE_REPOSITORY, UPDATE_SOURCE_REPOSITORY, UpdateAsset, UpdateCandidate,
     UpdateDiscovery, UpdateError, UpdateLimits, require_version,
 )
 
 _ROOT = f"/repos/{UPDATE_REPOSITORY}"
+# Bus releases are found by their tags, not by reading the repository's list of releases. That
+# list is shared with the project's other parts, which release more often, so a bus release would
+# in time be pushed out of any window on it and a bus would quietly stop seeing updates. A
+# question for the tags starting bus/v is answered with those alone.
+_TAG_REFS = f"{_ROOT}/git/matching-refs/tags/{RELEASE_TAG_PREFIX}v"
+_TAGS_PER_ANSWER = 100
+# Tags are never deleted, so in time more than one answer is needed to read them all.
+_TAG_ANSWERS = 10
+# A tag is not a release until a release is published for it. So that a stray tag cannot hide a
+# real update, the newest few tags are tried in turn.
+_TAGS_TRIED = 5
+# The most a discovery reports having looked at; the protocol's own ceiling.
+_INSPECTED_CEILING = 40
 _VERSION = re.compile(r"v(0|[1-9][0-9]{0,8})\.(0|[1-9][0-9]{0,8})\.(0|[1-9][0-9]{0,8})")
 _SHA = re.compile(r"[0-9a-f]{40}")
 _DIGEST = re.compile(r"sha256:([0-9a-f]{64})")
@@ -167,15 +182,21 @@ def _get_object(session: _Session, path: str) -> dict[str, Any]:
     return object_value(value)
 
 
+def _published_tag(tag: str) -> str:
+    """The name a release's tag has in the repository: bus/vX.Y.Z for the release vX.Y.Z."""
+    return RELEASE_TAG_PREFIX + tag
+
+
 def _tag_identity(session: _Session, tag: str) -> tuple[str, str, str]:
-    ref = _get_object(session, f"{_ROOT}/git/ref/tags/{tag}")
+    published = _published_tag(tag)
+    ref = _get_object(session, f"{_ROOT}/git/ref/tags/{published}")
     target = object_value(ref.get("object"))
-    if ref.get("ref") != f"refs/tags/{tag}" or target.get("type") != "tag":
+    if ref.get("ref") != f"refs/tags/{published}" or target.get("type") != "tag":
         raise UpdateError("unsupported_release")
     tag_sha = _sha(target.get("sha"))
     annotated = _get_object(session, f"{_ROOT}/git/tags/{tag_sha}")
     target = object_value(annotated.get("object"))
-    if annotated.get("sha") != tag_sha or annotated.get("tag") != tag or target.get("type") != "commit":
+    if annotated.get("sha") != tag_sha or annotated.get("tag") != published or target.get("type") != "commit":
         raise UpdateError("unsupported_release")
     commit = _sha(target.get("sha"))
     record = _get_object(session, f"{_ROOT}/git/commits/{commit}")
@@ -231,9 +252,9 @@ def _source_identity(body: Any) -> tuple[str, str]:
 def _release_identity(value: Any, tag: str, publication_commit: str) -> tuple[int, str, str]:
     record = object_value(value)
     expected = {
-        "tag_name": tag,
+        "tag_name": _published_tag(tag),
         "target_commitish": publication_commit,
-        "name": tag,
+        "name": _published_tag(tag),
         "draft": False,
         "prerelease": False,
         "immutable": True,
@@ -266,56 +287,75 @@ def _resolve(session: _Session, release_id: int, version: str, limits: UpdateLim
                            _assets(assets, version, limits))
 
 
-def _newer(record: Any, running: tuple[int, ...]) -> tuple[tuple[int, ...], int] | None:
-    value = object_value(record)
-    if value.get("draft") is True or value.get("prerelease") is True:
+def _newer(record: Any, running: tuple[int, ...]) -> tuple[int, ...] | None:
+    """The version a tag names, when it is a bus release tag newer than the running version."""
+    ref = object_value(record).get("ref")
+    prefix = f"refs/tags/{RELEASE_TAG_PREFIX}"
+    # Only bus tags count. The repository's other tags, and a bare vX.Y.Z, are not ours.
+    if not isinstance(ref, str) or not ref.startswith(prefix):
         return None
-    tag = value.get("tag_name")
-    if not isinstance(tag, str) or _VERSION.fullmatch(tag) is None:
+    tag = ref[len(prefix):]
+    if _VERSION.fullmatch(tag) is None:
         return None
     version = tuple(int(part) for part in tag[1:].split("."))
-    if version <= running:
-        return None
-    return version, positive_id(value.get("id"))
+    return version if version > running else None
 
 
-def _listing(
-    session: _Session, running: str, limits: UpdateLimits,
-) -> tuple[list[tuple[tuple[int, ...], int]], bool, int]:
-    candidates: list[tuple[tuple[int, ...], int]] = []
+def _listing(session: _Session, running: str) -> tuple[list[tuple[int, ...]], bool, int]:
+    """The tagged versions newer than the running one, newest first, and whether every tag was read."""
+    newer: set[tuple[int, ...]] = set()
     inspected = 0
-    for page in range(1, limits.release_pages + 1):
-        records, more = session.get(f"{_ROOT}/releases?per_page={limits.releases_per_page}&page={page}")
-        if not isinstance(records, list) or len(records) > limits.releases_per_page:
+    complete = False
+    for answer in range(1, _TAG_ANSWERS + 1):
+        records, more = session.get(f"{_TAG_REFS}?per_page={_TAGS_PER_ANSWER}&page={answer}")
+        if not isinstance(records, list) or len(records) > _TAGS_PER_ANSWER:
             raise UpdateError("invalid_metadata")
         inspected += len(records)
         for record in records:
-            candidate = _newer(record, tuple(int(part) for part in running.split(".")))
-            if candidate is not None:
-                candidates.append(candidate)
-        if not more and len(records) < limits.releases_per_page:
-            return candidates, True, inspected
-    return candidates, False, inspected
+            version = _newer(record, tuple(int(part) for part in running.split(".")))
+            if version is not None:
+                newer.add(version)
+        if not more and len(records) < _TAGS_PER_ANSWER:
+            complete = True
+            break
+    return sorted(newer, reverse=True), complete, min(inspected, _INSPECTED_CEILING)
+
+
+def _release_id(session: _Session, version: str) -> int | None:
+    """The published release for a bus tag, or None when the tag has none."""
+    try:
+        record = _get_object(session, f"{_ROOT}/releases/tags/{RELEASE_TAG_PREFIX}v{version}")
+    except SourceMissing:
+        return None
+    if record.get("draft") is True or record.get("prerelease") is True:
+        return None
+    return positive_id(record.get("id"))
 
 
 def _discover(session: _Session, running: str, limits: UpdateLimits) -> UpdateDiscovery:
-    candidates, complete, inspected = _listing(session, running, limits)
-    if not candidates:
-        return UpdateDiscovery(None, complete, inspected, None, None)
+    versions, complete, inspected = _listing(session, running)
     # Offer the newest release. The installed verifier accepts any forward
     # schema, so a host several releases behind updates in one step, and a
     # broken release is superseded by publishing a fixed one.
-    version, release_id = max(candidates)
-    text = ".".join(str(part) for part in version)
-    if sum(item[0] == version for item in candidates) != 1:
-        return UpdateDiscovery(None, complete, inspected, text, "publication_changed")
-    try:
-        candidate = _resolve(session, release_id, text, limits)
-    except UpdateError as error:
-        if error.code not in {"unsupported_release", "invalid_metadata", "publication_changed"}:
-            raise
-        return UpdateDiscovery(None, complete, inspected, text, error.code)
-    return UpdateDiscovery(candidate, complete, inspected, None, None)
+    for version in versions[:_TAGS_TRIED]:
+        text = ".".join(str(part) for part in version)
+        release_id = _release_id(session, text)
+        if release_id is None:
+            continue
+        try:
+            candidate = _resolve(session, release_id, text, limits)
+        except UpdateError as error:
+            if error.code not in {"unsupported_release", "invalid_metadata", "publication_changed"}:
+                raise
+            return UpdateDiscovery(None, complete, inspected, text, error.code)
+        return UpdateDiscovery(candidate, complete, inspected, None, None)
+    if not complete or len(versions) > _TAGS_TRIED:
+        # Either not every tag could be read, or the newest tags tried have no release and older
+        # ones were left untried. "Nothing newer" could be wrong either way, so the check fails
+        # where it can be seen. Tags with no release are easy to make and cannot be deleted, so
+        # this must never pass for "up to date".
+        raise UpdateError("incomplete")
+    return UpdateDiscovery(None, complete, inspected, None, None)
 
 
 def _candidate(candidate: UpdateCandidate, limits: UpdateLimits) -> None:
