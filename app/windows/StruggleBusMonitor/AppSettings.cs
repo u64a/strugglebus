@@ -45,6 +45,12 @@ public sealed class AppSettings
     /// <summary>The update version last installed at startup, so one that fails is not retried in a loop.</summary>
     public string? StartupUpdateAttempt { get; set; }
 
+    /// <summary>Closing the window hides it to the system tray and the app keeps running. Off unless chosen.</summary>
+    public bool KeepInTray { get; set; }
+
+    /// <summary>The "still running in the tray" notice has been shown once, so it is not shown again.</summary>
+    public bool TrayNoticeShown { get; set; }
+
     /// <summary>
     /// The site's signer lines, repository locations and fleet source, as last used to add a
     /// worker host. Public values only: an allowed_signers line holds a public key.

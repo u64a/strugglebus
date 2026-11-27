@@ -132,6 +132,7 @@ public partial class MainWindow
             _updatingWaitingSelection = false;
         }
         WaitingCountText.Text = _waiting.Count.ToString();
+        UpdateTrayTooltip();
         WaitingClearAll.Visibility = VisibleWhen(_waiting.Count > 1);
         WaitingHint.Text = HumansPageLogic.HintForWaiting(_waiting.Count);
     }

@@ -47,6 +47,7 @@ public partial class MainWindow : Window
         InitializeHumans();
         InitializeAdmin();
         InitializeSettings();
+        InitializeTray();
         _ready = true;
 
         SourceInitialized += (_, _) => ApplyTitleBarTheme();
@@ -235,6 +236,7 @@ public partial class MainWindow : Window
         StatusDetailText.Text = detail;
         StatusDetailText.Visibility = VisibleWhen(!string.IsNullOrEmpty(detail));
         StatusDot.SetResourceReference(Shape.FillProperty, colorKey);
+        UpdateTrayTooltip();
     }
 
     /// <summary>Something failed that the background loops will retry; the first failure of an outage is logged.</summary>
@@ -350,14 +352,21 @@ public partial class MainWindow : Window
         }
 
         e.Cancel = true;
-        if (_shutdownStarted) return;
+        if (HidesInsteadOfClosing()) HideToTray();
+        else if (!_shutdownStarted) await ShutDownAsync();
+    }
+
+    /// <summary>Stops the background work, then closes the window for real.</summary>
+    private async Task ShutDownAsync()
+    {
         _shutdownStarted = true;
         SaveWindowPlacement();
         SystemEvents.UserPreferenceChanged -= OnWindowsPreferenceChanged;
         await StopMonitorAsync();
         if (_settings.AutoUpdate) _platform.ApplyUpdateOnExit();
+        _tray?.Dispose();
         _shutdownComplete = true;
-        // Close() is refused while this OnClosing call is still on the stack, which is the case
+        // Close() is refused while the OnClosing call is still on the stack, which is the case
         // whenever nothing above had to wait (for example when the PC is not enrolled).
         _ = Dispatcher.BeginInvoke(Close);
     }

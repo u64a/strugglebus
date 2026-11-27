@@ -10,6 +10,18 @@ namespace StruggleBusMonitor.Tests;
 /// Stands in for Windows: answers the review dialogs, Windows Hello and the save dialog from
 /// values a test sets, records what it was asked, and never shows anything.
 /// </summary>
+/// <summary>A tray icon that only remembers what it was told and lets a test click it.</summary>
+internal sealed class FakeTrayIcon(Action open, Action quit) : ITrayIcon
+{
+    public string Tooltip { get; set; } = string.Empty;
+    public List<string> Notices { get; } = [];
+    public bool Disposed { get; private set; }
+    public void Notify(string text) => Notices.Add(text);
+    public void Dispose() => Disposed = true;
+    public void Open() => open();
+    public void Quit() => quit();
+}
+
 internal sealed class StaWindowAdminPlatform : IWindowPlatform
 {
     private readonly List<TaskCompletionSource> _delays = [];
@@ -97,7 +109,25 @@ internal sealed class StaWindowAdminPlatform : IWindowPlatform
         return UpdateResult;
     }
 
-    public void RestartIntoUpdate() => Restarts++;
+    public List<string[]> RestartArguments { get; } = [];
+
+    public void RestartIntoUpdate(params string[] arguments)
+    {
+        Restarts++;
+        RestartArguments.Add(arguments);
+    }
+
+    public List<string> StartArgumentList { get; } = [];
+    public IReadOnlyList<string> StartArguments => StartArgumentList;
+    public bool StartsAtSignIn { get; set; }
+    public List<FakeTrayIcon> TrayIcons { get; } = [];
+
+    public ITrayIcon ShowTrayIcon(Action open, Action quit)
+    {
+        var icon = new FakeTrayIcon(open, quit);
+        TrayIcons.Add(icon);
+        return icon;
+    }
     public void ApplyUpdateOnExit() => AppliedOnExit++;
 }
 
@@ -170,7 +200,8 @@ internal sealed class StaWindowAdminScene : IDisposable
     public void Close()
     {
         if (_window is null || _closed) return;
-        _window.Close();
+        // Quit, not Close: with the tray option on, closing only hides the window.
+        _window.QuitFromTray();
         StaWindowAdminFixture.PumpUntil(() => _closed, "the window to close");
     }
 

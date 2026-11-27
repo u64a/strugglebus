@@ -24,6 +24,15 @@ internal interface IWindowPlatform
 
     /// <summary>Where a release puts the signed copy of the worker host's installer: beside the app.</summary>
     string SignedInstallerPath { get; }
+
+    /// <summary>What the app was started with; <see cref="TrayLogic.StartArgument"/> means start hidden.</summary>
+    IReadOnlyList<string> StartArguments { get; }
+
+    /// <summary>Puts the app's icon in the system tray. Disposing the result removes it.</summary>
+    ITrayIcon ShowTrayIcon(Action open, Action quit);
+
+    /// <summary>Whether Windows starts this app when this user signs in.</summary>
+    bool StartsAtSignIn { get; set; }
     void SetClipboardText(string text);
     Task<bool> VerifyHelloAsync(string message);
     Task Delay(TimeSpan time);
@@ -31,7 +40,7 @@ internal interface IWindowPlatform
     bool CanUpdate { get; }
     string CurrentVersion { get; }
     Task<UpdateStatus> CheckForUpdatesAsync(IProgress<UpdateStatus>? progress, bool download);
-    void RestartIntoUpdate();
+    void RestartIntoUpdate(params string[] arguments);
     void ApplyUpdateOnExit();
 }
 
@@ -70,6 +79,16 @@ internal sealed class WindowPlatform : IWindowPlatform
     }
 
     public string SignedInstallerPath => HostInstallerLogic.SignedPath;
+
+    public IReadOnlyList<string> StartArguments => Environment.GetCommandLineArgs();
+
+    public ITrayIcon ShowTrayIcon(Action open, Action quit) => new TrayIcon(open, quit);
+
+    public bool StartsAtSignIn
+    {
+        get => SignInStart.IsOn;
+        set => SignInStart.Set(value);
+    }
 
     public string? PickHostFilePath(Window owner, string suggestedName)
     {
@@ -110,7 +129,7 @@ internal sealed class WindowPlatform : IWindowPlatform
     public Task<UpdateStatus> CheckForUpdatesAsync(IProgress<UpdateStatus>? progress, bool download) =>
         _updater.CheckAndDownloadAsync(progress, CancellationToken.None, download);
 
-    public void RestartIntoUpdate() => _updater.RestartIntoUpdate();
+    public void RestartIntoUpdate(params string[] arguments) => _updater.RestartIntoUpdate(arguments);
 
     public void ApplyUpdateOnExit() => _updater.ApplyOnExit();
 }

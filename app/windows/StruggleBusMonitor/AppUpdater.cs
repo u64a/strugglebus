@@ -48,8 +48,8 @@ internal interface IUpdateEngine
     /// <summary>Removes a downloaded package so that nothing installs it later.</summary>
     void Discard(UpdatePackage package);
 
-    /// <summary>Closes the app, installs the package and starts the new version.</summary>
-    void ApplyAndRestart(UpdatePackage package);
+    /// <summary>Closes the app, installs the package and starts the new version with <paramref name="arguments"/>.</summary>
+    void ApplyAndRestart(UpdatePackage package, string[] arguments);
 
     /// <summary>Installs the package once this process has exited, without starting the app again.</summary>
     void ApplyAfterExit(UpdatePackage package);
@@ -81,7 +81,7 @@ internal sealed class VelopackEngine(UpdateManager manager) : IUpdateEngine
     internal static string? PackageProblem(string? path, Func<string, string?> check) =>
         path is not null && File.Exists(path) ? check(path) : "The update was not installed: its file could not be found to check its signature.";
 
-    public void ApplyAndRestart(UpdatePackage package) => manager.ApplyUpdatesAndRestart(package.Asset!);
+    public void ApplyAndRestart(UpdatePackage package, string[] arguments) => manager.ApplyUpdatesAndRestart(package.Asset!, arguments);
 
     public void ApplyAfterExit(UpdatePackage package) =>
         manager.WaitExitThenApplyUpdates(package.Asset!, silent: true, restart: false);
@@ -178,14 +178,14 @@ public sealed class AppUpdater
     /// and <paramref name="remember"/> records this one, so an install that keeps failing cannot
     /// restart the app in a loop. It is still installed on exit or from Settings.
     /// </summary>
-    public void ApplyPendingAtStartup(string? lastAttempt, Action<string> remember)
+    public void ApplyPendingAtStartup(string? lastAttempt, Action<string> remember, params string[] restartArguments)
     {
         if (!CanUpdate) return;
         try
         {
             if (Accept(_engine!, _engine!.PendingRestart) is not { } pending || pending.Version == lastAttempt) return;
             remember(pending.Version);
-            _engine.ApplyAndRestart(pending);
+            _engine.ApplyAndRestart(pending, restartArguments);
         }
         catch (Exception) { /* The window reports it at the next check. */ }
     }
@@ -202,10 +202,10 @@ public sealed class AppUpdater
         return new UpdateStatus(UpdateState.ReadyToRestart, update.Version);
     }
 
-    /// <summary>Closes the app, installs the downloaded update and starts the new version.</summary>
-    public void RestartIntoUpdate()
+    /// <summary>Closes the app, installs the downloaded update and starts the new version with <paramref name="arguments"/>.</summary>
+    public void RestartIntoUpdate(params string[] arguments)
     {
-        if (_engine is not null && _ready is not null) _engine.ApplyAndRestart(_ready);
+        if (_engine is not null && _ready is not null) _engine.ApplyAndRestart(_ready, arguments);
     }
 
     /// <summary>Installs the downloaded update after this process exits, without relaunching.</summary>
