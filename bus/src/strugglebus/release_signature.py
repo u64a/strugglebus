@@ -10,9 +10,7 @@ to the ``cryptography`` library, which is available here.
 
 from __future__ import annotations
 
-import hashlib
 import importlib.util
-from collections.abc import Iterable
 from functools import cache
 from pathlib import Path
 from types import ModuleType
@@ -71,19 +69,3 @@ def signer_of(signature: str, statement: str, *, keys: tuple[str, ...] | None = 
     result = _fetcher().signer_of(signature, statement.encode(), keys=keys, verifies=library_verifies)
     return None if result is None else str(result)
 
-
-def verify_files(
-    tag_message: str, version: str, files: Iterable[Path], *, keys: tuple[str, ...] | None = None,
-) -> None:
-    """
-    Raises unless ``files`` are exactly the release the publisher signed for ``version``: every
-    file named in the statement is there with the signed hash, and there is no file besides.
-    """
-    digests = signed_digests(tag_message, version, keys=keys)
-    present = {path.name: path for path in files}
-    if set(present) != set(digests):
-        odd = sorted(set(present) ^ set(digests))[0]
-        raise ReleaseSignatureError(f"{odd} is not in both the release and its signed statement")
-    for name, path in present.items():
-        if hashlib.sha256(path.read_bytes()).hexdigest() != digests[name]:
-            raise ReleaseSignatureError(f"{name} is not the file the publisher signed")

@@ -320,17 +320,17 @@ def _statement_digests(statement: str, version: str) -> dict[str, str]:
         raise Problem(INVALID, f"the signed statement is not for release {version}")
     digests: dict[str, str] = {}
     for line in lines[2:-1]:
-        digest, separator, name = line.partition("  ")
-        if not separator or not re.fullmatch(r"[0-9a-f]{64}", digest) or not _is_plain_name(name) or name in digests:
+        match = _STATEMENT_LINE.fullmatch(line)
+        if match is None or match["name"] in digests:
             raise Problem(INVALID, "the signed statement is malformed")
-        digests[name] = digest
+        digests[match["name"]] = match["digest"]
     if not digests:
         raise Problem(INVALID, "the signed statement names no files")
     return digests
 
 
-def _is_plain_name(name: str) -> bool:
-    return re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._+-]{0,199}", name) is not None
+# One file: its SHA-256 in lower-case hexadecimal, two spaces, and a plain file name.
+_STATEMENT_LINE = re.compile(r"(?P<digest>[0-9a-f]{64})  (?P<name>[A-Za-z0-9][A-Za-z0-9._+-]{0,199})")
 
 
 def require_signed(digests: dict[str, str], name: str, data: bytes) -> None:

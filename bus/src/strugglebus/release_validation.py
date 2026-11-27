@@ -831,6 +831,12 @@ def _validate_support(deployment_support: dict[str, Any], directory: Path, suppo
 
 
 
+def _names_beside(directory: Path, statement_beside: bool) -> set[str]:
+    """What is in the release's folder, leaving out the signed statement where one is expected."""
+    names = {entry.name for entry in directory.iterdir() if entry.name not in {".", ".."}}
+    return names - {STATEMENT_NAME} if statement_beside else names
+
+
 def _validate_release_files(
     consumption: dict[str, Any], expected_payloads: set[str], directory: Path,
     statement_beside: bool = False,
@@ -841,13 +847,7 @@ def _validate_release_files(
     )
     if release_assets != expected_release_assets:
         raise ReleaseBundleError("release asset allowlist is inconsistent")
-    actual_names = {
-        entry.name
-        for entry in directory.iterdir()
-        if entry.name not in {".", ".."}
-    }
-    if statement_beside:
-        actual_names.discard(STATEMENT_NAME)
+    actual_names = _names_beside(directory, statement_beside)
     if actual_names != set(expected_release_assets):
         raise ReleaseBundleError("release directory has missing or unexpected assets")
     for name in actual_names:
