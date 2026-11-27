@@ -1,13 +1,17 @@
-serial = 8
+serial = 9
 
 # release.toml: the worker-host code hosts install, signed by a pinned key (release.toml.sig, namespace
 # strugglebus-release). Made by tools/make-release.py; signed and merged with tools/sign-config.ps1 -Pr <n>.
 # Hosts announce it at check_at (01:00) and apply it in their maintenance window (03:00): docs/design.md 10a.
 
-version = "2026.11.27.3"
-commit = "3713662cf7effe13af11aaf11cf21e0053bb3662"
-tree_sha256 = "1977efad190a2faa438f23409843683976479a7837272ff6316d7c8049521804"
+version = "2026.11.27.4"
+commit = "6d04610c02340c85eab3c962358660f244e016d8"
+tree_sha256 = "9ce9888d79c8d44705176108bfb57eaf601f2a58edb977692ffba5a6defa2bf4"
 needs_install = false
-notes = "The first release from u64a/strugglebus. Same code as 2026.11.27."
+notes = "Hosts dashboard status push and host events for the bus event log, both waiting for the bus API (schema 25) and retrying hourly until then; new local log lines task-refused and bus-back; release tools for a shared repository."
 bootstrap_sha256 = "1f748b7ab6262ce99b260233dfd4ea145016aa14ec13c9c81877973e9e2dd96b"
 authenticode_thumbprints = ["3FF059FA28ED74ACB229CBA2E670CEA565015238"]
+
+[moved_to]
+repo = "https://github.com/u64a/strugglebus"
+path = "worker-host"
