@@ -129,6 +129,11 @@ def next_version(commit: str, prev: dict) -> str:
     """The commit's date as YYYY.MM.DD, with .2, .3 ... when main's release or a tag already has that version."""
     day = dt.datetime.fromtimestamp(int(git("show", "-s", "--format=%ct", commit))).strftime("%Y.%m.%d")
     version, n = day, 1
+    # After the day's .2 comes .3, never the bare day again (which would read as going back).
+    same_day = re.fullmatch(re.escape(day) + r"(?:\.(\d+))?", str(prev.get("version", "")))
+    if same_day:
+        n = int(same_day.group(1) or 1) + 1
+        version = f"{day}.{n}"
     while str(prev.get("version", "")) == version or git("tag", "-l", f"v{version}"):
         n += 1
         version = f"{day}.{n}"

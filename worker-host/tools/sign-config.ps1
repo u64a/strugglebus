@@ -212,10 +212,11 @@ Set-Location $root
 
 try {
     if ($Test) {
-        $signers = if ($Signers) { (Resolve-Path -LiteralPath $Signers).Path } else { Join-Path $root "${prefix}keys\allowed_signers" }
+        # $signersFile, never $signers: PowerShell names are case-insensitive, so that would BE the -Signers parameter.
+        $signersFile = if ($Signers) { (Resolve-Path -LiteralPath $Signers).Path } else { Join-Path $root "${prefix}keys\allowed_signers" }
         $data = [Text.Encoding]::UTF8.GetBytes("strugglebus sign-config test $(Get-Date -Format o) on $env:COMPUTERNAME`n")
         $sig = Invoke-Sign $keygen $key 'strugglebus-fleet' $data $work
-        Say (Test-Signature $keygen $signers 'strugglebus-fleet' $data $sig $work)
+        Say (Test-Signature $keygen $signersFile 'strugglebus-fleet' $data $sig $work)
         Say 'this PC can sign. Compare the SHA256 above with signing-keys.md 2.1 to see which YubiKey it was.'
         return
     }
@@ -233,13 +234,13 @@ try {
     $branch = $info.headRefName
     Invoke-Git @('fetch', '-q', 'origin', "+refs/heads/main:refs/remotes/origin/main", "+refs/pull/$Pr/head:refs/remotes/origin/pr/$Pr") | Out-Null
     $head = Invoke-Git @('rev-parse', "refs/remotes/origin/pr/$Pr")
-    $signers = Join-Path $work 'allowed_signers'
+    $signersFile = Join-Path $work 'allowed_signers'
     if ($Signers) {
-        Copy-Item -LiteralPath $Signers -Destination $signers
+        Copy-Item -LiteralPath $Signers -Destination $signersFile
     } else {
         $listed = Get-Blob 'refs/remotes/origin/main' "${prefix}keys/allowed_signers"
         if ($null -eq $listed) { throw "main has no ${prefix}keys/allowed_signers: give -Signers <your allowed_signers file>" }
-        [IO.File]::WriteAllBytes($signers, $listed)
+        [IO.File]::WriteAllBytes($signersFile, $listed)
     }
     Say "PR #$Pr '$($info.title)' at $($head.Substring(0, 12)) (branch $branch)"
 
@@ -267,7 +268,7 @@ try {
     try {
         foreach ($item in $plan) {
             $sig = Invoke-Sign $keygen $key $item.Namespace $item.Data $work
-            Say (Test-Signature $keygen $signers $item.Namespace $item.Data $sig $work)
+            Say (Test-Signature $keygen $signersFile $item.Namespace $item.Data $sig $work)
             [IO.File]::WriteAllBytes((Join-Path $tree "$($item.Name).sig"), $sig)
         }
         $names = @($plan | ForEach-Object { "$($_.Name).sig" })
@@ -294,7 +295,7 @@ try {
         $data = Get-Blob $merged $item.Name
         $sig = Get-Blob $merged "$($item.Name).sig"
         if ($null -eq $data -or $null -eq $sig) { throw "$($item.Name) or its signature is missing on main after the merge" }
-        Test-Signature $keygen $signers $item.Namespace $data $sig $work | Out-Null
+        Test-Signature $keygen $signersFile $item.Namespace $data $sig $work | Out-Null
     }
     Say "merged as $($merged.Substring(0, 12)); main verifies."
     if ($plan.Name -contains "${prefix}fleet.toml") {

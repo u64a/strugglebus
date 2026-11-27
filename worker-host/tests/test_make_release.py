@@ -86,6 +86,16 @@ def test_serial_and_same_day_version_follow_main(repo, capsys):
     assert rel.notes == "a fix; release (signed)"  # only commits since the last release, PR numbers dropped
 
 
+def test_after_the_days_second_release_comes_the_third_not_the_bare_day(repo, capsys):
+    first = run(repo, "rev-parse", "HEAD")
+    day = day_of(repo, first)
+    commit(repo, "release.toml", make_release.release_text(5, f"{day}.2", first, "0" * 64, False, "n"), "release")
+    commit(repo, "workerhost/host.py", "x = 2\n", "another fix")
+    push(repo)
+    assert make_release.main(["--dry-run"]) == 0
+    assert released(capsys.readouterr().out).version == f"{day}.3"
+
+
 def test_a_tag_with_the_version_also_moves_it_on(repo, capsys):
     head = run(repo, "rev-parse", "HEAD")
     run(repo, "tag", f"v{day_of(repo, head)}")
