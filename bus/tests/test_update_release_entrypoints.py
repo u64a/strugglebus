@@ -47,7 +47,7 @@ def test_bundle_build_cli_dispatch_contract(tmp_path, monkeypatch, capsys):
     assert capsys.readouterr().out == '{"manifest_version":1}\n'
     assert calls == [((ROOT, tmp_path / "dist", tmp_path / "output", TAG),
                      {"expected_commit": COMMIT, "expected_tree": TREE,
-                      "uv_binary": tmp_path / "uv", "pre_tag": True})]
+                      "uv_binary": tmp_path / "uv", "pre_tag": True, "source_repository": None})]
 
 
 def test_lock_cli_uses_shared_verifier(tmp_path, monkeypatch):

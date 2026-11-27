@@ -472,6 +472,35 @@ def test_pre_tag_build_qualifies_exact_bytes_before_the_tag_exists(
     assert run_git(root, "tag", "--list") == ""
 
 
+def test_a_build_in_the_projects_repository_says_so_and_only_validates_as_such(tmp_path: Path) -> None:
+    root, commit, tree, version, dist, uv = _pre_tag_inputs(tmp_path)
+    tag = f"v{version}"
+
+    manifest = build_bundle(
+        root, dist, tmp_path / "release-assets", tag, expected_commit=commit, expected_tree=tree,
+        uv_binary=uv, pre_tag=True, source_repository="u64a/strugglebus",
+    )
+
+    assert manifest["release"]["repository"] == "u64a/strugglebus"
+    assert manifest["release"]["candidate_id"] == f"u64a/strugglebus@{tag}:{commit}:{tree}"
+    validate_bundle(tmp_path / "release-assets", expected_repository="u64a/strugglebus")
+    # A bus that expects the former repository, 0.2.72 or older, does not take it.
+    with pytest.raises(ReleaseBundleError):
+        validate_bundle(tmp_path / "release-assets")
+
+
+def test_a_build_cannot_claim_some_other_repository(tmp_path: Path) -> None:
+    root, commit, tree, version, dist, uv = _pre_tag_inputs(tmp_path)
+
+    with pytest.raises(ReleaseBundleError, match="not one a bus accepts"):
+        build_bundle(
+            root, dist, tmp_path / "release-assets", f"v{version}", expected_commit=commit,
+            expected_tree=tree, uv_binary=uv, pre_tag=True, source_repository="someone/else",
+        )
+
+    assert not (tmp_path / "release-assets").exists()
+
+
 def test_default_build_requires_an_existing_annotated_tag(tmp_path: Path) -> None:
     root, commit, tree, version, dist, uv = _pre_tag_inputs(tmp_path)
     tag = f"v{version}"

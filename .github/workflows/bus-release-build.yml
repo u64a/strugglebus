@@ -1,0 +1,90 @@
+name: Bus release build
+
+# Builds the five files of a bus release from one commit of main, on GitHub's own runner.
+#
+# This is one of two builds. The publisher builds the same commit again on their own computer,
+# with the same script in the same container image, and signs only if the two results are the
+# same bytes. So this workflow publishes nothing, holds no secrets and can change nothing in the
+# repository: it only offers its result as an artifact to be compared.
+#
+# A pull request that changes the build itself runs it too, so a change that breaks the build,
+# or makes it give different bytes on different machines, shows before it is merged.
+on:
+  workflow_dispatch:
+    inputs:
+      commit:
+        description: The full commit hash on main to build
+        required: true
+        type: string
+  pull_request:
+    paths:
+      - 'bus/scripts/build_release.sh'
+      - 'bus/scripts/release_bundle.py'
+      - 'bus/scripts/canonical_wheel.py'
+      - '.github/workflows/bus-release-build.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: bus-release-build-${{ inputs.commit || github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build bus release files
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    # The same image, by digest, that the second build uses.
+    container:
+      image: debian@sha256:8aa5a7bf5a1955bddbe7d74fcdd0b91ab30e74362a8b73af672b0481b35b44a0
+    env:
+      COMMIT: ${{ inputs.commit || github.event.pull_request.head.sha }}
+    steps:
+      - name: Install what the build script needs
+        run: |
+          set -eu
+          export DEBIAN_FRONTEND=noninteractive
+          apt-get update -qq
+          apt-get install -y -qq --no-install-recommends git curl ca-certificates
+
+      - name: Check the commit is a full hash
+        run: |
+          set -eu
+          case "$COMMIT" in
+            *[!0-9a-f]*) echo "the commit must be a full lower-case hash" >&2; exit 1 ;;
+          esac
+          test "${#COMMIT}" -eq 40
+
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ env.COMMIT }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: A release is built only from main
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          set -eu
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          git fetch --quiet origin main
+          git merge-base --is-ancestor "$COMMIT" origin/main
+
+      - name: Build
+        run: |
+          set -eu
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          bash bus/scripts/build_release.sh "$COMMIT" "$RUNNER_TEMP/release"
+          {
+            echo "### Bus release files built from \`$COMMIT\`"
+            echo '```'
+            (cd "$RUNNER_TEMP/release" && sha256sum -- * | sort -k 2)
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: bus-release-${{ env.COMMIT }}
+          path: ${{ runner.temp }}/release
+          if-no-files-found: error
+          retention-days: 30
