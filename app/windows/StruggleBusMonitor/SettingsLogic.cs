@@ -6,6 +6,12 @@ internal sealed record UpdateView(bool ShowAction, string ActionLabel, bool Show
 /// <summary>Pure helpers for the Settings page, kept apart from the window so they can be tested.</summary>
 internal static class SettingsLogic
 {
+    /// <summary>
+    /// Whether the bus's refusal of the whole log means "use the ordinary one": a bus too old to
+    /// have it (not found, not allowed), or operator access it no longer accepts.
+    /// </summary>
+    public static bool FullLogUnavailable(int statusCode) => statusCode is 401 or 404 or 405;
+
     public const string NotInstalledText =
         "This copy was not installed with the setup program, so it cannot update itself. Install it once with the Setup download from the releases page and later versions will arrive on their own.";
 
