@@ -82,7 +82,8 @@ cloud and only works on a PC where the owner is logged in to it. GitHub's runner
 
 A published release here can never be changed, and the tag can never be moved or deleted. So
 `app\windows\release-github.ps1`, which the signing script calls, makes the release as a draft,
-compares every file GitHub holds with the file on the PC, and only then publishes it. It goes by
+compares every file GitHub holds with the file on the PC by size and SHA-256 (a file GitHub gives
+no hash for counts as a failure), and only then publishes it. It goes by
 tag throughout, never by "the newest release", because the bus's releases are in the same list.
 If publishing stops part way, the signing script keeps the signed packages and prints the command
 that publishes those same files, because signing again would make different ones.
