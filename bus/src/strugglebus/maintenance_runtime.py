@@ -34,7 +34,9 @@ from strugglebus.release_validation import (
 )
 from strugglebus.release_signature import ReleaseSignatureError, signed_digests
 from strugglebus.update_client import UpdateClient
-from strugglebus.update_types import UpdateError, UpdateLimits, UpdateStatus, require_version
+from strugglebus.update_types import (
+    UPDATE_SOURCE_REPOSITORY, UpdateError, UpdateLimits, UpdateStatus, require_version,
+)
 
 PATH_BYTES = 4096
 FILE_BYTES = 512 * 1024 * 1024
@@ -783,7 +785,7 @@ class HostReleaseInstaller(ReleaseInstaller):
         try:
             facts = validate_bundle(
                 release.directory,
-                expected_repository="NZCypher819/strugglebus",
+                expected_repository=UPDATE_SOURCE_REPOSITORY,
                 expected_current_schema=LATEST_SCHEMA_VERSION,
                 minimum_package_version=release.version,
                 accept_newer_schema=True,

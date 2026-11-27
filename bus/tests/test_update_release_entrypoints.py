@@ -10,6 +10,7 @@ from types import SimpleNamespace
 import pytest
 
 from release_fixtures import load_script, write_wheel
+from strugglebus.update_types import UPDATE_SOURCE_REPOSITORY
 from test_update_source import publication, fixture_api, VERSION, TAG, COMMIT, TREE, ROOT
 
 
@@ -157,14 +158,17 @@ def test_metadata_inspection_rejects_wrong_repository_missing_release_or_asset_c
                                            commit=COMMIT, assets=descriptions)
     assert publisher.inspect_release_identity(api, repository=publisher.REPOSITORY_ID, tag=TAG,
                                               commit=COMMIT, assets=descriptions) is None
-    api.find_release = lambda *args: fixture.release
+    # In the private repository this publisher writes to, a release's tag has no prefix.
+    api.find_release = lambda *args: {**fixture.release, "tag_name": TAG, "name": TAG}
     with pytest.raises(publisher.ReleasePublicationError, match="asset set"):
         publisher.inspect_release_identity(api, repository=publisher.REPOSITORY_ID, tag=TAG,
                                            commit=COMMIT, assets=descriptions[:-1])
 
 
-def test_historical_published_byte_wrapper_rechecks_identity_after_one_full_copy(fixture_api):
+def test_historical_published_byte_wrapper_rechecks_identity_after_one_full_copy(fixture_api, monkeypatch):
     fixture, _ = fixture_api
+    # The pretend release was built in the project's own repository, so the publisher is told so.
+    monkeypatch.setattr(load_script("publish_immutable_release"), "REPOSITORY_ID", UPDATE_SOURCE_REPOSITORY)
     # The publisher's own folder holds only the release's files; the signed statement is added
     # beside them later, by an updater that has fetched it from the tag.
     (fixture.directory / "release-statement.txt").unlink()
@@ -172,6 +176,8 @@ def test_historical_published_byte_wrapper_rechecks_identity_after_one_full_copy
     downloads = []
     private_release = {
         **fixture.release,
+        "tag_name": TAG,
+        "name": TAG,
         "target_commitish": COMMIT,
         "body": publisher._release_body(TAG),
     }
@@ -187,13 +193,14 @@ def test_historical_published_byte_wrapper_rechecks_identity_after_one_full_copy
     api = SimpleNamespace(find_release=find, list_assets=lambda *args: fixture.assets,
                           download_asset=download)
     with pytest.raises(publisher.ReleasePublicationError, match="drifted"):
-        publisher.verify_published_release(api, fixture.directory, repository=publisher.REPOSITORY_ID,
+        publisher.verify_published_release(api, fixture.directory, repository=UPDATE_SOURCE_REPOSITORY,
                                            tag=TAG, commit=COMMIT, tree=TREE)
     assert sorted(downloads) == [100, 101, 102, 103, 104]
 
 
-def test_published_copy_rejects_same_length_tamper_and_conflicting_asset_set(publication, tmp_path):
+def test_published_copy_rejects_same_length_tamper_and_conflicting_asset_set(publication, tmp_path, monkeypatch):
     publisher = load_script("publish_immutable_release")
+    monkeypatch.setattr(publisher, "REPOSITORY_ID", UPDATE_SOURCE_REPOSITORY)
     local = publisher._local_assets(publication)
     left, right = tmp_path / "left", tmp_path / "right"
     left.write_bytes(b"original")
@@ -202,12 +209,12 @@ def test_published_copy_rejects_same_length_tamper_and_conflicting_asset_set(pub
     incomplete = dict(local)
     incomplete.pop(next(iter(incomplete)))
     with pytest.raises(publisher.ReleasePublicationError, match="asset set"):
-        publisher._validate_downloaded_bundle(publication, incomplete, repository=publisher.REPOSITORY_ID,
+        publisher._validate_downloaded_bundle(publication, incomplete, repository=UPDATE_SOURCE_REPOSITORY,
                                               tag=TAG, commit=COMMIT, tree=TREE)
     name = "requirements.lock"
     original = local[name]
     right.write_bytes(b"!" * original.size)
     local[name] = publisher.LocalAsset(name, right, original.size, original.digest, original.media_type)
     with pytest.raises(publisher.ReleasePublicationError, match="bytes differ"):
-        publisher._validate_downloaded_bundle(publication, local, repository=publisher.REPOSITORY_ID,
+        publisher._validate_downloaded_bundle(publication, local, repository=UPDATE_SOURCE_REPOSITORY,
                                               tag=TAG, commit=COMMIT, tree=TREE)

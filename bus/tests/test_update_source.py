@@ -27,6 +27,8 @@ ROOT = Path(__file__).resolve().parents[1]
 _MAJOR, _MINOR, _PATCH = (int(part) for part in __version__.split("."))
 VERSION = f"{_MAJOR}.{_MINOR}.{_PATCH + 1}"
 TAG = "v" + VERSION
+# The release's tag as the repository has it. Inside the release it is still TAG.
+PUBLISHED_TAG = "bus/" + TAG
 COMMIT, TREE, TAG_SHA = "1" * 40, "2" * 40, "3" * 40
 PUBLIC_COMMIT, PUBLIC_TREE = "4" * 40, "5" * 40
 
@@ -56,6 +58,11 @@ def publication(tmp_path, monkeypatch):
     uv.write_bytes(b"synthetic uv")
     monkeypatch.setattr(bundle, "resolve_release_identity",
                         lambda *args, **kwargs: (COMMIT, TREE, 1_700_000_000, VERSION))
+    # A release as the pipeline in the project's own repository builds it, which is what an
+    # installed updater expects from now on. The publisher script copies the name when it is
+    # first loaded, so it is loaded before the name is changed and never keeps the changed one.
+    load_script("publish_immutable_release")
+    monkeypatch.setattr(bundle, "REPOSITORY_ID", UPDATE_SOURCE_REPOSITORY)
     directory = tmp_path / "published"
     bundle.build_bundle(ROOT, dist, directory, TAG, uv_binary=uv)
     directory.chmod(0o700)
@@ -84,16 +91,18 @@ class FixtureAPI:
             "version": 1,
         }, sort_keys=True, separators=(",", ":"))
         self.release = {
-            "id": 81, "tag_name": TAG, "target_commitish": PUBLIC_COMMIT,
-            "name": TAG, "body": body,
+            "id": 81, "tag_name": PUBLISHED_TAG, "target_commitish": PUBLIC_COMMIT,
+            "name": PUBLISHED_TAG, "body": body,
             "draft": False, "prerelease": False, "immutable": True,
         }
         self.routes = {
             f"{source._ROOT}/releases?per_page=20&page=1": [self.release],
             f"{source._ROOT}/releases/81": self.release,
-            f"{source._ROOT}/git/ref/tags/{TAG}": {"ref": f"refs/tags/{TAG}", "object": {"type": "tag", "sha": TAG_SHA}},
+            f"{source._ROOT}/git/ref/tags/{PUBLISHED_TAG}": {
+                "ref": f"refs/tags/{PUBLISHED_TAG}", "object": {"type": "tag", "sha": TAG_SHA},
+            },
             f"{source._ROOT}/git/tags/{TAG_SHA}": {
-                "sha": TAG_SHA, "tag": TAG,
+                "sha": TAG_SHA, "tag": PUBLISHED_TAG,
                 "object": {"type": "commit", "sha": PUBLIC_COMMIT},
             },
             f"{source._ROOT}/git/commits/{PUBLIC_COMMIT}": {
@@ -256,11 +265,11 @@ def test_blocked_publication_is_not_hidden_by_older_release(fixture_api, field, 
 
 def test_bounded_listing_resolves_only_newest_and_reports_incomplete(fixture_api):
     api, reader = fixture_api
-    older = {**api.release, "id": 80, "tag_name": "v0.2.28"}
+    older = {**api.release, "id": 80, "tag_name": "bus/v0.2.28"}
     api.routes[f"{source._ROOT}/releases?per_page=20&page=1"] = [older] + [
-        {**api.release, "id": i, "tag_name": f"v0.1.{i}"} for i in range(19)]
+        {**api.release, "id": i, "tag_name": f"bus/v0.1.{i}"} for i in range(19)]
     api.routes[f"{source._ROOT}/releases?per_page=20&page=2"] = [api.release] + [
-        {**api.release, "id": i + 20, "tag_name": f"v0.1.{i + 20}"} for i in range(19)]
+        {**api.release, "id": i + 20, "tag_name": f"bus/v0.1.{i + 20}"} for i in range(19)]
     result = reader.check("0.2.27", deadline=220)
     assert result.candidate.version == VERSION and not result.complete and result.inspected == 40
     assert ("GET", f"{source._ROOT}/releases/80") not in api.requests
@@ -269,7 +278,7 @@ def test_bounded_listing_resolves_only_newest_and_reports_incomplete(fixture_api
 
 def test_blocked_newest_release_does_not_fall_back_to_an_older_one(fixture_api):
     api, reader = fixture_api
-    older = {**api.release, "id": 80, "tag_name": "v0.2.28"}
+    older = {**api.release, "id": 80, "tag_name": "bus/v0.2.28"}
     api.routes[f"{source._ROOT}/releases?per_page=20&page=1"] = [api.release, older]
     api.routes[f"{source._ROOT}/releases/81"] = {**api.release, "immutable": False}
     result = reader.check("0.2.27", deadline=220)
@@ -278,8 +287,9 @@ def test_blocked_newest_release_does_not_fall_back_to_an_older_one(fixture_api):
     assert ("GET", f"{source._ROOT}/releases/80") not in api.requests
 
 
-@pytest.mark.parametrize("draft,prerelease,tag", [(True, False, TAG), (False, True, TAG),
-                                               (False, False, "v0.3.0rc1"), (False, False, "v00.3.0")])
+@pytest.mark.parametrize("draft,prerelease,tag", [(True, False, PUBLISHED_TAG), (False, True, PUBLISHED_TAG),
+                                               (False, False, "bus/v0.3.0rc1"), (False, False, "bus/v00.3.0"),
+                                               (False, False, TAG), (False, False, "windows/" + TAG)])
 def test_nonstable_or_unpublished_records_are_not_candidates(fixture_api, draft, prerelease, tag):
     api, reader = fixture_api
     api.routes[f"{source._ROOT}/releases?per_page=20&page=1"] = [
@@ -294,8 +304,8 @@ def test_duplicate_highest_release_is_blocked(fixture_api):
 
 
 @pytest.mark.parametrize("endpoint,field,value", [
-    (f"/git/ref/tags/{TAG}", "object", {"type": "commit", "sha": PUBLIC_COMMIT}),
-    (f"/git/ref/tags/{TAG}", "ref", "refs/heads/main"),
+    (f"/git/ref/tags/{PUBLISHED_TAG}", "object", {"type": "commit", "sha": PUBLIC_COMMIT}),
+    (f"/git/ref/tags/{PUBLISHED_TAG}", "ref", "refs/heads/main"),
     (f"/git/tags/{TAG_SHA}", "object", {"type": "tag", "sha": TAG_SHA}),
     (f"/git/tags/{TAG_SHA}", "sha", "6" * 40),
     (f"/git/commits/{PUBLIC_COMMIT}", "sha", "6" * 40),

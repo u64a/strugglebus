@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING
 
 from strugglebus.operator_lifecycle_rendering import disclosure, facts, hidden, panel
 from strugglebus.maintenance_types import MaintenanceStatus
-from strugglebus.update_types import UpdateCandidate, UpdateObservation, UpdateStatus
+from strugglebus.update_types import UPDATE_REPOSITORY, UpdateCandidate, UpdateObservation, UpdateStatus
 
 if TYPE_CHECKING:
     from strugglebus.operator_updates import UpdateReview
@@ -186,7 +186,7 @@ def worker_failure(code: str, path: str | None) -> str:
 
 def candidate(value: UpdateCandidate) -> str:
     identity = facts({
-        "Version": value.version, "Repository": "NZCypher819/strugglebus",
+        "Version": value.version, "Repository": UPDATE_REPOSITORY,
         "Release ID": value.release_id, "Annotated tag": value.tag,
         "Tag object": value.tag_object_sha, "Source commit": value.commit,
         "Source tree": value.tree, "Verifier policy": value.policy_id,

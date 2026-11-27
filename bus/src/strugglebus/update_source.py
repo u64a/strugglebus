@@ -22,7 +22,7 @@ from . import release_validation as policy
 from .release_signature import ReleaseSignatureError, signed_digests
 from .update_transport import _HTTP, _identity, budget, exclusive_file, private_directory, remaining
 from .update_types import (
-    UPDATE_REPOSITORY, UPDATE_SOURCE_REPOSITORY, UpdateAsset, UpdateCandidate,
+    RELEASE_TAG_PREFIX, UPDATE_REPOSITORY, UPDATE_SOURCE_REPOSITORY, UpdateAsset, UpdateCandidate,
     UpdateDiscovery, UpdateError, UpdateLimits, require_version,
 )
 
@@ -167,15 +167,21 @@ def _get_object(session: _Session, path: str) -> dict[str, Any]:
     return object_value(value)
 
 
+def _published_tag(tag: str) -> str:
+    """The name a release's tag has in the repository: bus/vX.Y.Z for the release vX.Y.Z."""
+    return RELEASE_TAG_PREFIX + tag
+
+
 def _tag_identity(session: _Session, tag: str) -> tuple[str, str, str]:
-    ref = _get_object(session, f"{_ROOT}/git/ref/tags/{tag}")
+    published = _published_tag(tag)
+    ref = _get_object(session, f"{_ROOT}/git/ref/tags/{published}")
     target = object_value(ref.get("object"))
-    if ref.get("ref") != f"refs/tags/{tag}" or target.get("type") != "tag":
+    if ref.get("ref") != f"refs/tags/{published}" or target.get("type") != "tag":
         raise UpdateError("unsupported_release")
     tag_sha = _sha(target.get("sha"))
     annotated = _get_object(session, f"{_ROOT}/git/tags/{tag_sha}")
     target = object_value(annotated.get("object"))
-    if annotated.get("sha") != tag_sha or annotated.get("tag") != tag or target.get("type") != "commit":
+    if annotated.get("sha") != tag_sha or annotated.get("tag") != published or target.get("type") != "commit":
         raise UpdateError("unsupported_release")
     commit = _sha(target.get("sha"))
     record = _get_object(session, f"{_ROOT}/git/commits/{commit}")
@@ -231,9 +237,9 @@ def _source_identity(body: Any) -> tuple[str, str]:
 def _release_identity(value: Any, tag: str, publication_commit: str) -> tuple[int, str, str]:
     record = object_value(value)
     expected = {
-        "tag_name": tag,
+        "tag_name": _published_tag(tag),
         "target_commitish": publication_commit,
-        "name": tag,
+        "name": _published_tag(tag),
         "draft": False,
         "prerelease": False,
         "immutable": True,
@@ -270,8 +276,12 @@ def _newer(record: Any, running: tuple[int, ...]) -> tuple[tuple[int, ...], int]
     value = object_value(record)
     if value.get("draft") is True or value.get("prerelease") is True:
         return None
-    tag = value.get("tag_name")
-    if not isinstance(tag, str) or _VERSION.fullmatch(tag) is None:
+    # Only bus releases count. The repository's other releases, and a bare vX.Y.Z, are not ours.
+    published = value.get("tag_name")
+    if not isinstance(published, str) or not published.startswith(RELEASE_TAG_PREFIX):
+        return None
+    tag = published[len(RELEASE_TAG_PREFIX):]
+    if _VERSION.fullmatch(tag) is None:
         return None
     version = tuple(int(part) for part in tag[1:].split("."))
     if version <= running:

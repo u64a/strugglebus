@@ -405,29 +405,32 @@ def _described(record: object, prefixes: tuple[str, ...], api: str, prefix: str)
     return _Release(str(record["tag_name"]), version, assets, api, prefix)
 
 
+def _only_release(page: object, api: str, download_prefix: str) -> list[_Release | None]:
+    """The release a single-release page describes. Such a page may name it vX.Y.Z as well."""
+    if not isinstance(page, dict) or "tag_name" not in page or "assets" not in page:
+        raise KeyError("release")
+    release = _described(page, (TAG_PREFIX, "v"), api, download_prefix)
+    if release is None:
+        raise Problem(INVALID, "the newest release has an unexpected name")
+    return [release]
+
+
 def _newest_release(api: str, download_prefix: str) -> _Release | None:
     """
     The newest bus release a place offers, or None when it has none.
 
     The project's repository answers with a list that also holds other parts' releases, so only
-    tags starting bus/v count there. A page that describes a single release (the former place,
-    or a mirror) may name it vX.Y.Z as well.
+    tags starting bus/v count there. A page that describes a single release is the former place,
+    or a mirror.
     """
     try:
         page = json.loads(_read(api, 2 * 1024 * 1024))
         if isinstance(page, list):
             found = [_described(record, (TAG_PREFIX,), api, download_prefix) for record in page]
         else:
-            found = [_described(page, (TAG_PREFIX, "v"), api, download_prefix)]
-            unnamed = found == [None] and "tag_name" in page and "assets" in page
+            found = _only_release(page, api, download_prefix)
     except (ValueError, KeyError, TypeError, AttributeError):
         raise Problem(INVALID, "the release page did not describe a release") from None
-    if not isinstance(page, list) and found == [None]:
-        raise Problem(
-            INVALID,
-            "the newest release has an unexpected name" if unnamed
-            else "the release page did not describe a release",
-        )
     releases = [release for release in found if release is not None]
     return max(releases, key=lambda release: parse_version(release.version), default=None)
 
