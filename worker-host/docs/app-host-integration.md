@@ -377,6 +377,19 @@ The bootstrap runs elevated, as the operator, on the target PC:
    - The bootstrap carries the **current and the next** release key, so a key can be rotated without a flag day.
      The release keys are two YubiKeys with touch required, one kept offline. If one is compromised, an admin
      re-pins on every host, as for a site key (Q3).
+   - **As built (27 Nov 2026; u64-security, #humans 28898):**
+     - **The keys:** the three YubiKeys A, B and C are built into `bootstrap.ps1` (`$ReleaseKeys`). They're the
+       keys `sign-bootstrap.ps1` pins, a test checks they match, and they're for namespace `strugglebus-release`
+       only.
+     - **The signature:** Windows' `ssh-keygen -Y verify` checks it, then **touch and PIN** (flags 0x05) are
+       required, as on the hosts.
+     - **Not older:** the release must not be older than `$MinReleaseSerial`, which is raised whenever this file
+       changes, since a new PC has no installed serial to compare with (prox-manager, 28901).
+     - **The elevated scripts:** `release.toml` also carries **`installer_sha256`**, the same construction as
+       `tree_sha256` over `install.ps1`, `setup/*.ps1` and `setup/*.txt`: what the bootstrap runs as
+       administrator, which `tree_sha256` doesn't cover. Hosts ignore it.
+     - **Nothing from the fetched tree runs** until the signature, the PIN flag, the floor, `tree_sha256` and
+       `installer_sha256` have all passed.
 4. **The account:**
    - with `Dedicated`, it creates a standard local user (`sbworker`, or `sbworker2`... if taken), not an administrator,
      with a long random password handed straight to Task Scheduler and never shown or stored. It denies that

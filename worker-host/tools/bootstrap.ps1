@@ -134,6 +134,117 @@ function Clear-EnrolCode($data) {
     return Format-SbData $copy
 }
 
+# --- verifying the host code before any of it runs (2.2 step 3) ---------------------------------------------------
+
+# The project's release keys: YubiKeys A, B and C, the keys tools\sign-bootstrap.ps1 pins by fingerprint. Only
+# these may sign the host code this script installs, whatever the data file says (its signers may sign only the
+# fleet and host commands). Public keys: nothing secret here.
+$ReleaseKeys = @(
+    'sk-ssh-ed25519@openssh.com AAAAGnNrLXNzaC1lZDI1NTE5QG9wZW5zc2guY29tAAAAIN56hk/clV5r0XsK7JkOlTLz0Zyri/QEhaIqCnmd+5yOAAAAF3NzaDpzdHJ1Z2dsZWJ1cy1zaWduaW5n',
+    'sk-ssh-ed25519@openssh.com AAAAGnNrLXNzaC1lZDI1NTE5QG9wZW5zc2guY29tAAAAIMLHD9G3fCyGMJ8RlHGYzaB7P3efJFqoQoQZ1AxivmUFAAAAF3NzaDpzdHJ1Z2dsZWJ1cy1zaWduaW5n',
+    'sk-ssh-ed25519@openssh.com AAAAGnNrLXNzaC1lZDI1NTE5QG9wZW5zc2guY29tAAAAIMOObxkek5mGgpHJVUzS8mkKtGYyaazmUArYEWj3whC7AAAAF3NzaDpzdHJ1Z2dsZWJ1cy1zaWduaW5n'
+)
+
+# The oldest release this script installs (prox-manager, #humans 28901: an older signed release must be refused). A
+# new PC has no installed serial to compare with, so this floor stands in for it: raise it when this file changes.
+$MinReleaseSerial = 9
+
+function Test-ReleaseFloor($release) {
+    # Pure: the release is not older than this script allows, and carries installer_sha256 (needed for step 6).
+    return [int]$release.serial -ge $MinReleaseSerial -and $release.ContainsKey('installer_sha256')
+}
+
+function Get-ReleaseSigners {
+    # Pure: an allowed_signers file for ssh-keygen: the release keys, principal "release", release namespace only.
+    return (($ReleaseKeys | ForEach-Object { 'release namespaces="strugglebus-release" ' + $_ }) -join "`n") + "`n"
+}
+
+function Read-SshField([byte[]]$buf, [int]$at) {
+    # Pure: one SSH wire string at $at: @(bytes, the next offset). Throws past the end.
+    if ($at + 4 -gt $buf.Length) { throw 'signature too short' }
+    $n = ([int]$buf[$at] -shl 24) -bor ([int]$buf[$at + 1] -shl 16) -bor ([int]$buf[$at + 2] -shl 8) -bor [int]$buf[$at + 3]
+    if ($n -lt 0 -or $at + 4 + $n -gt $buf.Length) { throw 'signature too short' }
+    $out = New-Object byte[] $n
+    [Array]::Copy($buf, $at + 4, $out, 0, $n)
+    return @(, $out), ($at + 4 + $n)
+}
+
+function Get-SkFlags([string]$armoured) {
+    # Pure: a security-key SSHSIG signature's flags byte (0x01 touch, 0x04 PIN), or -1 for any other key type. The
+    # flags are part of what the key signs, so they are genuine once ssh-keygen has verified the signature.
+    $b64 = (($armoured -split "`n") | Where-Object { $_ -and $_ -notmatch '^-----' } | ForEach-Object { $_.Trim() }) -join ''
+    $blob = [Convert]::FromBase64String($b64)
+    if ($blob.Length -lt 10 -or [Text.Encoding]::ASCII.GetString($blob, 0, 6) -cne 'SSHSIG') { throw 'not an SSH signature' }
+    $at = 10
+    foreach ($skip in 1..4) { $f, $at = Read-SshField $blob $at }  # public key, namespace, reserved, hash
+    $inner, $at = Read-SshField $blob $at
+    $type, $j = Read-SshField $inner[0] 0
+    if (-not [Text.Encoding]::ASCII.GetString($type[0]).StartsWith('sk-')) { return -1 }
+    $sig, $j = Read-SshField $inner[0] $j
+    if ($j -ge $inner[0].Length) { throw 'no flags in the signature' }
+    return [int]$inner[0][$j]
+}
+
+function Test-InstalledPath([string]$path) {
+    # Pure: the host's own rule (workerhost/update.py wanted): the files a host runs, which tree_sha256 covers.
+    if ($path -cin 'wh.py', 'config.template.toml', 'README.md') { return $true }
+    return $path -cmatch '^workerhost/[A-Za-z0-9_]+\.py$'
+}
+
+function Test-InstallerPath([string]$path) {
+    # Pure: what this script runs as administrator, which installer_sha256 covers (tools/make-release.py INSTALLER_RE).
+    return $path -ceq 'install.ps1' -or $path -cmatch '^setup/[A-Za-z0-9_.-]+\.(ps1|txt)$'
+}
+
+function Get-TreeSha256($files) {
+    # Pure: the host's tree_sha256 (workerhost/update.py): SHA-256 over "<sha256 of the file>  <path>`n" for each
+    # file, sorted by path ORDINALLY (as Python sorts; PowerShell's own sort ignores case).
+    $paths = [string[]]@($files.Keys)
+    [Array]::Sort($paths, [StringComparer]::Ordinal)
+    $sha = [Security.Cryptography.SHA256]::Create()
+    $lines = ($paths | ForEach-Object {
+            (-join ($sha.ComputeHash([byte[]]$files[$_]) | ForEach-Object { $_.ToString('x2') })) + '  ' + $_ + "`n"
+        }) -join ''
+    return -join ($sha.ComputeHash([Text.Encoding]::UTF8.GetBytes($lines)) | ForEach-Object { $_.ToString('x2') })
+}
+
+function Read-ReleaseText([string]$text) {
+    # Pure: the top-level keys of a signed release.toml this script needs, each checked strictly, or a throw. Only
+    # the part before the first [table] counts (moved_to is a table, and not used here).
+    $head = ($text -split '(?m)^\s*\[', 2)[0]
+    $want = [ordered]@{
+        serial = '^serial = ([0-9]{1,9})$'; version = '^version = "([0-9][0-9A-Za-z.+-]{0,31})"$'
+        commit = '^commit = "([0-9a-f]{40})"$'; tree_sha256 = '^tree_sha256 = "([0-9a-f]{64})"$'
+        installer_sha256 = '^installer_sha256 = "([0-9a-f]{64})"$'
+    }
+    $out = @{}
+    foreach ($k in $want.Keys) {
+        $m = [regex]::Matches($head, '(?m)' + $want[$k].TrimEnd('$') + '\r?$')
+        if ($m.Count -gt 1) { throw "release.toml: $k twice" }
+        if ($m.Count -eq 1) { $out[$k] = $m[0].Groups[1].Value }
+    }
+    foreach ($k in 'serial', 'version', 'commit', 'tree_sha256') { if (-not $out.ContainsKey($k)) { throw "release.toml: no $k" } }
+    $out.serial = [int]$out.serial
+    return $out
+}
+
+function Test-ReleaseSignature([byte[]]$data, [string]$sig, [string]$keygen, [string]$work) {
+    # The release's signature by one of the built-in release keys, namespace strugglebus-release, with the PIN
+    # (0x05): @(ok, why). Runs Windows' own ssh-keygen with the signed bytes as a FILE on stdin (a pipe changes them).
+    $signers = Join-Path $work 'release_signers'
+    $dataFile = Join-Path $work 'release.toml'
+    $sigFile = Join-Path $work 'release.toml.sig'
+    [IO.File]::WriteAllText($signers, (Get-ReleaseSigners), [Text.Encoding]::ASCII)
+    [IO.File]::WriteAllBytes($dataFile, $data)
+    [IO.File]::WriteAllText($sigFile, $sig, [Text.Encoding]::ASCII)
+    $out = & cmd.exe /d /c "`"$keygen`" -Y verify -f `"$signers`" -I release -n strugglebus-release -s `"$sigFile`" < `"$dataFile`" 2>&1"
+    $line = ($out | Select-Object -First 1)
+    if ($LASTEXITCODE -ne 0 -or "$line" -notlike 'Good "strugglebus-release" signature for release with *') { return $false, 'bad-signature' }
+    try { $flags = Get-SkFlags $sig } catch { return $false, 'sig-shape' }
+    if ($flags -ne -1 -and ($flags -band 5) -ne 5) { return $false, 'no-pin' }
+    return $true, 'good'
+}
+
 if ($MyInvocation.InvocationName -eq '.') { return }
 
 function Say([string]$text) { Write-Host "[bootstrap] $text" }
