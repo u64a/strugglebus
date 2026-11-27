@@ -48,8 +48,28 @@ public partial class MainWindow
 
     private void OnSettingsPageShown()
     {
-        if (SettingsTabLogs.IsChecked == true && IsEnrolled) _ = LoadBusLogAsync();
+        if (!BusLogShowing) return;
+        _ = LoadBusLogAsync();
+        _ = KeepBusLogFreshAsync();
     }
+
+    private bool BusLogShowing =>
+        !_shutdownStarted && IsEnrolled && SettingsTabLogs.IsChecked == true && SettingsPage.Visibility == Visibility.Visible;
+
+    /// <summary>
+    /// Reloads the bus log every half minute for as long as the Logs tab is what is showing, so a
+    /// problem appears without anyone pressing Refresh. It stops by itself when the tab is left.
+    /// </summary>
+    private async Task KeepBusLogFreshAsync()
+    {
+        if (_busLogRefreshing) return;
+        _busLogRefreshing = true;
+        await WindowLogic.RepeatAsync(
+            _platform.Delay, SettingsLogic.BusLogRefreshEvery, SettingsLogic.BusLogRefreshEvery, () => !BusLogShowing, LoadBusLogAsync);
+        _busLogRefreshing = false;
+    }
+
+    private bool _busLogRefreshing;
 
     /// <summary>Writes a connection event to the log and the Logs tab. Returns false for null or a repeat.</summary>
     private bool NoteConnection(ConnectionEvent? entry)

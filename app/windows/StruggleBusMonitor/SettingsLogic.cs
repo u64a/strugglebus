@@ -12,6 +12,9 @@ internal static class SettingsLogic
     /// </summary>
     public static bool FullLogUnavailable(int statusCode) => statusCode is 401 or 404 or 405;
 
+    /// <summary>How often the bus log reloads while the Logs tab is showing.</summary>
+    public static readonly TimeSpan BusLogRefreshEvery = TimeSpan.FromSeconds(30);
+
     public const string NotInstalledText =
         "This copy was not installed with the setup program, so it cannot update itself. Install it once with the Setup download from the releases page and later versions will arrive on their own.";
 
