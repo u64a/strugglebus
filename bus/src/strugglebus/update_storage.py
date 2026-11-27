@@ -7,6 +7,8 @@ from pathlib import Path
 import stat
 from typing import Protocol
 
+from strugglebus.release_validation import STATEMENT_NAME
+
 from strugglebus.update_types import (
     JsonValue, UpdateCandidate, UpdateError, UpdateLimits, decode_json, encode_json,
     require_hex,
@@ -38,6 +40,10 @@ class StateStorage(Protocol):
 
     def validate_inventory(self, identities: tuple[str, ...]) -> None:
         raise NotImplementedError
+
+
+# A prepared release is its five files and the publisher's signed statement.
+MAXIMUM_SLOT_ENTRIES = 6
 
 
 def check_metadata(info: os.stat_result, uid: int, mode: int, directory: bool) -> None:
@@ -264,7 +270,7 @@ class SecureCache:
             fd = self._open_slot(name.removeprefix("operation-"))
             try:
                 entries = os.listdir(fd)
-                if len(entries) > 5:
+                if len(entries) > MAXIMUM_SLOT_ENTRIES:
                     raise UpdateError("storage_unsafe")
                 for child in entries:
                     item = self._open_file(child, parent=fd)
@@ -279,7 +285,8 @@ class SecureCache:
     def validate_slot(self, operation_id: str, candidate: UpdateCandidate) -> None:
         fd = self._open_slot(operation_id)
         try:
-            if set(os.listdir(fd)) != {asset.name for asset in candidate.assets}:
+            # The release's files and, beside them, the publisher's signed statement.
+            if set(os.listdir(fd)) != {asset.name for asset in candidate.assets} | {STATEMENT_NAME}:
                 raise UpdateError("verification_failed")
             for asset in candidate.assets:
                 child = self._open_file(asset.name, parent=fd)
@@ -304,7 +311,7 @@ class SecureCache:
             return
         try:
             entries = os.listdir(fd)
-            if len(entries) > 5:
+            if len(entries) > MAXIMUM_SLOT_ENTRIES:
                 raise UpdateError("storage_unsafe")
             for entry in entries:
                 child = self._open_file(entry, parent=fd)

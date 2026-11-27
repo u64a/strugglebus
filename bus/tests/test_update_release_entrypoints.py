@@ -165,6 +165,9 @@ def test_metadata_inspection_rejects_wrong_repository_missing_release_or_asset_c
 
 def test_historical_published_byte_wrapper_rechecks_identity_after_one_full_copy(fixture_api):
     fixture, _ = fixture_api
+    # The publisher's own folder holds only the release's files; the signed statement is added
+    # beside them later, by an updater that has fetched it from the tag.
+    (fixture.directory / "release-statement.txt").unlink()
     publisher = load_script("publish_immutable_release")
     downloads = []
     private_release = {

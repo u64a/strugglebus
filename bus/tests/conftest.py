@@ -72,6 +72,23 @@ class _OneIterationHashlib:
 
 
 @pytest.fixture(scope="session", autouse=True)
+def _releases_signed_with_the_test_key() -> Iterator[None]:
+    """
+    Installed code trusts only the owner's hardware release keys, which no test can use. For the
+    tests, the server's copy of the verifier trusts the stand-in key in release_signing.py. The
+    real pinned keys are checked in test_release_signature.py, on a copy loaded apart from this.
+    """
+    from release_signing import TEST_KEY
+    from strugglebus import release_signature
+
+    verifier = release_signature._fetcher()
+    pinned = verifier.RELEASE_KEYS
+    verifier.RELEASE_KEYS = (TEST_KEY.blob,)
+    yield
+    verifier.RELEASE_KEYS = pinned
+
+
+@pytest.fixture(scope="session", autouse=True)
 def _fast_operator_password_hashing() -> Iterator[None]:
     # Session scope, so module-scoped verifier fixtures are built the same way.
     with pytest.MonkeyPatch.context() as patch:

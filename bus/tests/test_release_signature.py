@@ -111,6 +111,20 @@ def test_a_real_hardware_key_signature_verifies_with_the_pinned_keys():
     assert fetcher.signer_of(signature, message, "strugglebus-release") is None
 
 
+def test_the_real_fixture_signature_can_never_pass_as_a_release():
+    """It is a genuine signature by a release key, in the live namespace, so this must hold for good."""
+    message = (DATA / "sk_signature" / "message.txt").read_text(encoding="utf-8")
+    signature = (DATA / "sk_signature" / "message.txt.sig").read_text(encoding="utf-8")
+    assert fetcher.signer_of(signature, message.encode()) is not None
+
+    for version in ("0.2.72", "0.3.0", "1.0.0"):
+        for tag_message in (message + signature, "Strugglebus public release mirror v1\n{}\n" + message + signature):
+            with pytest.raises(fetcher.Problem, match="the release is not signed by its publisher"):
+                fetcher.signed_digests(tag_message, version)
+    assert not message.startswith(fetcher.STATEMENT_HEADER)
+    assert fetcher.STATEMENT_HEADER + "\n" not in message
+
+
 def test_the_pinned_keys_are_the_owners_three_hardware_keys():
     fingerprints = [fetcher.key_fingerprint(base64.b64decode(key)) for key in fetcher.RELEASE_KEYS]
     assert fingerprints == PINNED_FINGERPRINTS

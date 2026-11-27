@@ -17,6 +17,7 @@ from release_fixtures import load_script, write_wheel, wheel_members, _record_ha
 from strugglebus import __version__
 from strugglebus import update_source as source, update_transport as transport
 from strugglebus import release_validation as validation
+from release_signing import TEST_KEY, statement_for
 from strugglebus.update_types import (
     UPDATE_REPOSITORY, UPDATE_SOURCE_REPOSITORY, UpdateError, UpdateLimits,
 )
@@ -100,6 +101,22 @@ class FixtureAPI:
             },
             f"{source._ROOT}/releases/81/assets?per_page=6": self.assets,
         }
+        self.sign()
+
+    def sign(self):
+        """
+        The publisher signs exactly the files as they are now. The signed statement is served in
+        the release's tag, and also saved beside the files, as a prepared release has it, for the
+        tests that check this folder directly.
+        """
+        saved = self.directory / source.policy.STATEMENT_NAME
+        saved.unlink(missing_ok=True)
+        statement = TEST_KEY.tag_message(statement_for(
+            TAG.removeprefix("v"), {path.name: path.read_bytes() for path in self.directory.iterdir()},
+        ))
+        self.routes[f"{source._ROOT}/git/tags/{TAG_SHA}"]["message"] = statement
+        saved.write_text(statement, encoding="utf-8", newline="")
+        saved.chmod(0o600)
 
     def opener(self, *handlers):
         self.handlers.extend(handlers)
@@ -358,7 +375,10 @@ def _rehash(directory):
         path = directory / asset["name"]
         asset.update(size_bytes=path.stat().st_size, sha256=hashlib.sha256(path.read_bytes()).hexdigest())
     manifest_path.write_bytes(validation._canonical_json(manifest))
-    files = sorted(path for path in directory.iterdir() if path.name != validation.CHECKSUMS_NAME)
+    files = sorted(
+        path for path in directory.iterdir()
+        if path.name not in (validation.CHECKSUMS_NAME, validation.STATEMENT_NAME)
+    )
     (directory / validation.CHECKSUMS_NAME).write_text(
         "".join(f"{hashlib.sha256(path.read_bytes()).hexdigest()}  {path.name}\n" for path in files),
         encoding="ascii",
@@ -370,6 +390,7 @@ def _refresh_assets(api):
         path = api.directory / asset["name"]
         asset["digest"] = "sha256:" + hashlib.sha256(path.read_bytes()).hexdigest()
         asset["size"] = path.stat().st_size
+    api.sign()
 
 
 @pytest.mark.parametrize("section,field,value", [

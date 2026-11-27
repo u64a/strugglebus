@@ -27,9 +27,12 @@ from strugglebus.maintenance_supervisor import (
 from strugglebus.maintenance_types import MaintenanceError
 from strugglebus.migrations import LATEST_SCHEMA_VERSION
 from strugglebus.release_validation import (
+    MAX_STATEMENT_BYTES,
+    STATEMENT_NAME,
     SUPPORT_NAME_TEMPLATE,
     validate_bundle,
 )
+from strugglebus.release_signature import ReleaseSignatureError, signed_digests
 from strugglebus.update_client import UpdateClient
 from strugglebus.update_types import UpdateError, UpdateLimits, UpdateStatus, require_version
 
@@ -323,6 +326,20 @@ def _are_protected_directories(metadata: list[os.stat_result]) -> bool:
         or info.st_mode & 0o022
         for info in metadata
     )
+
+
+def _version_key(version: str) -> tuple[int, ...]:
+    return tuple(int(part) for part in require_version(version).split("."))
+
+
+def _read_statement(path: Path) -> str:
+    """Reads the saved statement without following a link or reading more than a statement holds."""
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0)
+    with os.fdopen(os.open(path, flags), "rb") as stream:
+        info = os.fstat(stream.fileno())
+        if not stat.S_ISREG(info.st_mode) or info.st_size > MAX_STATEMENT_BYTES:
+            raise ValueError("not a statement")
+        return stream.read(MAX_STATEMENT_BYTES).decode("utf-8")
 
 
 def active_application_version(config: RuntimeConfig) -> str:
@@ -759,6 +776,10 @@ class HostReleaseInstaller(ReleaseInstaller):
             )
 
     def _validate_bundle(self, release: PreparedRelease) -> dict[str, Any]:
+        # Root does not take the updater worker's word that the release is the publisher's. It
+        # reads the signed statement and checks the signature itself, before anything from the
+        # release is written, run or imported.
+        signed = self._signed_digests(release)
         try:
             facts = validate_bundle(
                 release.directory,
@@ -766,12 +787,30 @@ class HostReleaseInstaller(ReleaseInstaller):
                 expected_current_schema=LATEST_SCHEMA_VERSION,
                 minimum_package_version=release.version,
                 accept_newer_schema=True,
+                statement_beside=True,
             )
         except Exception:
             raise MaintenanceError("preparation_failed") from None
         if facts["package_version"] != release.version:
             raise MaintenanceError("preparation_failed")
+        # The hashes the validator just computed, which everything after this relies on, must be
+        # the signed ones. So nothing later can use a file the publisher did not sign.
+        if {asset["name"]: asset["sha256"] for asset in facts["release_assets"]} != signed:
+            raise MaintenanceError("preparation_failed")
         return facts
+
+    def _signed_digests(self, release: PreparedRelease) -> dict[str, str]:
+        """The file hashes a pinned release key signed for this version, which must be a newer one."""
+        try:
+            statement = _read_statement(release.directory / STATEMENT_NAME)
+            signed = signed_digests(statement, release.version)
+        except (OSError, ValueError, ReleaseSignatureError):
+            raise MaintenanceError("preparation_failed") from None
+        # The signature ties these files to this version, so a version that is not newer than
+        # the one running is an old release offered again.
+        if _version_key(release.version) <= _version_key(active_application_version(self.config)):
+            raise MaintenanceError("preparation_failed")
+        return signed
 
     def _materialize_helpers(
         self, release: PreparedRelease, facts: dict[str, Any],

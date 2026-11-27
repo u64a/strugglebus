@@ -19,7 +19,8 @@ from typing import Any
 from .release_records import LocalAsset, _asset_media_type, _validate_asset_records
 from .release_transport import ReleasePublicationError
 from . import release_validation as policy
-from .update_transport import _HTTP, _identity, budget, private_directory, remaining
+from .release_signature import ReleaseSignatureError, signed_digests
+from .update_transport import _HTTP, _identity, budget, exclusive_file, private_directory, remaining
 from .update_types import (
     UPDATE_REPOSITORY, UPDATE_SOURCE_REPOSITORY, UpdateAsset, UpdateCandidate,
     UpdateDiscovery, UpdateError, UpdateLimits, require_version,
@@ -77,6 +78,37 @@ class _Session:
     def download(self, asset: UpdateAsset, destination: Path) -> None:
         self.http.download(f"{_ROOT}/releases/assets/{asset.asset_id}", asset, destination)
         remaining(self.http.deadline)
+
+
+def _tag_message(session: _Session, tag_sha: str) -> str:
+    """The message of the release's annotated tag, which carries the publisher's signed statement."""
+    message = _get_object(session, f"{_ROOT}/git/tags/{tag_sha}").get("message")
+    if not isinstance(message, str) or len(message.encode()) > policy.MAX_STATEMENT_BYTES:
+        raise UpdateError("verification_failed")
+    return message
+
+
+def _read_statement(directory: Path) -> str:
+    path = directory / policy.STATEMENT_NAME
+    info = path.lstat()
+    if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1 or info.st_size > policy.MAX_STATEMENT_BYTES:
+        raise UpdateError("storage_unsafe")
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0)
+    with os.fdopen(os.open(path, flags), "rb") as stream:
+        return stream.read(policy.MAX_STATEMENT_BYTES + 1).decode("utf-8")
+
+
+def _verify_signature(candidate: UpdateCandidate, directory: Path) -> None:
+    """
+    The publisher signed exactly this release: the statement saved beside the files is signed by
+    a pinned release key, is for this version, and names each file with the hash it has.
+    """
+    try:
+        signed = signed_digests(_read_statement(directory), candidate.version)
+    except ReleaseSignatureError:
+        raise UpdateError("verification_failed") from None
+    if signed != {asset.name: asset.sha256 for asset in candidate.assets}:
+        raise UpdateError("verification_failed")
 
 
 def _names(version: str) -> set[str]:
@@ -327,13 +359,14 @@ def verify_prepared(candidate: UpdateCandidate, directory: Path, limits: UpdateL
     _candidate(candidate, limits)
     try:
         initial = private_directory(directory)
-        if {path.name for path in directory.iterdir()} != _names(candidate.version):
+        if {path.name for path in directory.iterdir()} != _names(candidate.version) | {policy.STATEMENT_NAME}:
             raise UpdateError("verification_failed")
+        _verify_signature(candidate, directory)
         stamps = {asset.name: _verify_asset(directory / asset.name, asset) for asset in candidate.assets}
         policy.validate_bundle(directory, expected_repository=UPDATE_SOURCE_REPOSITORY,
                                expected_tag=candidate.tag,
                                expected_commit=candidate.commit, expected_tree=candidate.tree,
-                               accept_newer_schema=True)
+                               accept_newer_schema=True, statement_beside=True)
         for asset in candidate.assets:
             if stamps[asset.name] != _file_stamp(directory / asset.name, asset):
                 raise UpdateError("storage_unsafe")
@@ -366,6 +399,8 @@ class GitHubReleaseSource:
             self._unchanged(session, candidate)
             for asset in candidate.assets:
                 session.download(asset, directory / asset.name)
+            with exclusive_file(directory / policy.STATEMENT_NAME) as statement:
+                statement.write(_tag_message(session, candidate.tag_object_sha).encode())
             verify_prepared(candidate, directory, self._limits)
             self._unchanged(session, candidate)
             if _identity(initial) != _identity(private_directory(directory)):
