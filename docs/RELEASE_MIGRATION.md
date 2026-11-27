@@ -13,7 +13,7 @@ sbworkerhost-project and u64-security.
 |---|---|---|---|---|
 | Worker host | private `NZCypher819/strugglebus-worker-host` | the same private repository, as a signed file | hosts read `release.toml` there | **Moving now** |
 | Windows App | this repository, tag `windows/vX.Y.Z` | `NZCypher819/StruggleApp-Privacy` releases | every installed App checks that repository | Not started |
-| Bus | private `NZCypher819/strugglebus` | `NZCypher819/strugglebus-releases` releases | the updaters have that repository built in | Blocked, see below |
+| Bus | private `NZCypher819/strugglebus` | `NZCypher819/strugglebus-releases` releases | the updaters have that repository built in | Planned, see step 3 |
 
 ## The rule that makes one repository safe
 
@@ -98,12 +98,70 @@ Afterwards the private repository stays only for `fleet.toml`, until hosts read 
 
 Copies older than that release keep reading the old place, so it must stay up.
 
-### 3. Bus (bus-dev, after the signature check)
+### 3. Bus (bus-dev)
+
+Agreed in #humans on 27 November 2026 (bus messages 28851 to 28853) with u64-security and
+prox-manager.
+
+**Why it can be simpler than the present pipeline.** That pipeline made GitHub itself the proof
+of who published: a private repository, a qualification on our own runner, a GitHub App that
+publishes an immutable private release, then a hand-run mirror to a public one. Since 0.2.72 the
+proof is the owner's signature over the five files. So the new pipeline is shaped like the
+Windows App's.
+
+**The pipeline, all in this repository**
+
+1. A tag `bus/vX.Y.Z` on `main` starts a workflow on GitHub's own runners. It runs the tests,
+   builds the wheel once, normalises it, makes the five release files, validates them and keeps
+   them as an artifact. It publishes nothing and holds no secrets.
+2. On the owner's PC a script builds the same five files again, in a container whose base image is
+   pinned by digest, from a clean checkout of the tagged commit, with dependencies installed by
+   hash from `requirements.lock`. Neither build shares files or caches with the other.
+3. The script refuses to go on unless all five files from the two builds are byte for byte the
+   same, and says which differ. A compromised runner alone can then not get a bad release signed.
+4. It prints the commits since the previous `bus/v*` tag that touch `bus/`, one line each, for the
+   owner to read, then the statement, and waits for the hardware key.
+5. It publishes the release here, with the statement and signature in the annotated tag, and
+   refuses unless the signature is valid for those files.
+
+**No self-hosted runner on this repository.** `prox-runner` builds and qualifies today. On a
+public repository it would run code from anyone's pull request on the owner's network. The two
+checks that only ran there, "Deployment validation" and "Isolated LAN CA integration", use only
+localhost (prox-manager read the code); they move to GitHub's runners, and the private runner's
+copies are retired only after a green run here.
+
+**Teaching installed buses the new address**
+
+- **0.2.73 is the move and nothing else.** It is the last release published at the old place. It
+  changes where the updaters look to this repository and to tags named `bus/v*`.
+- The self-hosted fetcher stops asking for "the latest release", which in a shared repository
+  could be the App's. It lists releases once per run, a small page, and takes those with the
+  `bus/v` prefix. That call is anonymous, so it is kept to one.
+- Ansible installs name the release repository in `/etc/strugglebus-updater/worker.json`, which
+  the operator supplies. It must change with 0.2.73 or the new updater refuses to start. The exact
+  values, when they take effect relative to the install, and the rollback order are tested on a
+  non-production Ansible install first, including a release list that also holds a newer App
+  release.
+- **0.2.74 is the first release from here**, and carries schema 25 (the host dashboard, host
+  events and the stored event log).
+- `NZCypher819/strugglebus-releases` stays, read-only, with 0.2.73 as its last release. A bus
+  older than 0.2.73 that updates later gets 0.2.73 from there and then moves on.
+- The signed statement does not change. A signature is good wherever the files are served from.
+
+**The source matters more than the build.** Both builds faithfully build whatever is on `main`.
+So the files that decide what a bus trusts get the owner's review, like the worker host:
+`release_signature.py`, `selfhost/fetch_release.py`, `update_source.py`, `update_storage.py`,
+`release_validation.py`, `maintenance_runtime.py`, the updater and maintenance units, and the
+publish scripts. This needs the owner's yes to add them to `.github/CODEOWNERS`.
 
 - [x] Design for the signature check, reviewed by u64-security (bus messages 28770 to 28772).
-- [ ] The check shipped and released through the present path (0.2.72).
-- [ ] The release pipeline moved here from the private repository.
-- [ ] A signed release that tells installed buses the new address. `NZCypher819/strugglebus-releases` kept read-only.
+- [x] The check shipped and released through the present path: 0.2.72, 27 November 2026.
+- [ ] The owner's yes to CODEOWNERS for the bus's trust files.
+- [ ] "Deployment validation" and "Isolated LAN CA integration" green on GitHub's runners.
+- [ ] The build workflow, the second build, and the sign-and-publish script.
+- [ ] The updaters read this repository and `bus/v*` tags; tested on a non-production install.
+- [ ] 0.2.73 published at the old place; `worker.json` changed on the production bus.
+- [ ] 0.2.74 published here. `NZCypher819/strugglebus-releases` kept read-only.
 
 ## Before or with the move
 
