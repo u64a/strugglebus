@@ -21,7 +21,8 @@
 param(
     [string]$DataFile = '',
     [switch]$Yes,
-    [switch]$SingleSigner
+    [switch]$SingleSigner,
+    [ValidateSet('', 'device', 'browser')][string]$SignIn = ''   # how the sign-ins are approved; asked if not given
 )
 
 Set-StrictMode -Version Latest
@@ -687,25 +688,55 @@ function Stop-AccountProcesses([string]$account) {
     }
 }
 
-function Invoke-SignIn([string]$account, $password, $engines, $tools) {
-    # Step 7: each engine's sign-in must run AS the host's account (its tokens are stored in that profile), so a
-    # window opens under it; the operator completes the device-code sign-in in a browser, then closes the window.
+function Get-SignInCommand([string]$engine, [string]$exe, [string]$mode) {
+    # Pure: the command a sign-in window runs, and what to tell the operator. 'device': a code shown here, approved
+    # in a browser on ANY PC (a passkey or a signed-in browser elsewhere works; nothing opens here). 'browser': a
+    # browser opens on THIS PC (Copilot's needs the passkey or sign-in to reach this PC).
+    $device = $mode -ne 'browser'
+    switch ($engine) {
+        'gh' {
+            # gh shows the code either way; in device mode GH_BROWSER only prints the link instead of opening it.
+            $quiet = if ($device) { 'set "GH_BROWSER=cmd /c echo Open on any PC:" && ' } else { '' }
+            return @{ cmd = "$quiet`"$exe`" auth login --hostname github.com --git-protocol https --web && `"$exe`" auth setup-git"
+                      hint = 'copy the one-time code, open https://github.com/login/device, approve, then close this window' }
+        }
+        'ghcp' {
+            if ($device) {
+                return @{ cmd = "`"$exe`" login --device-code"
+                          hint = 'open https://github.com/login/device on any PC, enter the code shown, then close this window' }
+            }
+            return @{ cmd = "`"$exe`" login"; hint = 'approve in the browser that opens here, then close this window' }
+        }
+        default {
+            # Claude Code's /login shows a link and takes the code back by paste, so it works from any PC either way.
+            return @{ cmd = "`"$exe`""; hint = 'type /login, open the link it shows, paste the code back, then /exit and close this window' }
+        }
+    }
+}
+
+function Read-SignInMode([string]$given, [bool]$yes) {
+    if ($given) { return $given }
+    if ($yes) { return 'device' }
+    Say 'How will you approve the sign-ins (GitHub, and each engine)?'
+    Say '  1 = a device code: approve on any PC or phone where you are already signed in (recommended; works for VMs)'
+    Say '  2 = a browser on this PC'
+    $a = Read-Host '[bootstrap] 1 or 2 (Enter = 1)'
+    if ($a -eq '2') { return 'browser' }
+    return 'device'
+}
+
+function Invoke-SignIn([string]$account, $password, $engines, $tools, [string]$mode = 'device') {
+    # Step 7: each sign-in must run AS the host's account (its tokens are stored in that profile), so a window opens
+    # under it; the operator approves it (Get-SignInCommand), then closes the window.
     # Skipped or failed: the host shows needs-sign-in, and `wh signin <engine>` finishes it later.
     $cred = New-AccountCredential $account $password
     # gh first: the host uses it (whether a worker's branch was merged before its clone is deleted; the probe checks
     # `gh auth status`), and `gh auth setup-git` makes it git's GitHub credential for this account.
     foreach ($engine in @('gh') + @($engines)) {
         $exe = $tools[$engine]
-        $cmd = switch ($engine) {
-            'gh'    { "`"$exe`" auth login --hostname github.com --git-protocol https --web && `"$exe`" auth setup-git" }
-            'ghcp'  { "`"$exe`" login --device-code" }   # its default is a browser on THIS PC (a passkey can't reach a VM)
-            default { "`"$exe`"" }
-        }
-        $hint = switch ($engine) {
-            'gh'    { 'copy the one-time code, open the link, approve it, then close this window' }
-            'ghcp'  { 'open https://github.com/login/device on any PC, enter the code shown, then close this window' }
-            default { 'type /login, follow the steps, then /exit and close this window' }
-        }
+        $how = Get-SignInCommand $engine $exe $mode
+        $cmd = $how.cmd
+        $hint = $how.hint
         Say "signing $engine in as $account in a new window: $hint"
         try {
             # HOME: git takes its home from HOME, then HOMEDRIVE+HOMEPATH, which a window opened this way leaves at
@@ -883,6 +914,7 @@ Say "data file digest: $(Get-FileDigest $bytes)"
 foreach ($line in $SB.signers) { Say "signer: $(Get-SignerFingerprint $line)" }
 Say 'compare these with what the App shows for this host.'
 if (-not $Yes) { Read-Host '[bootstrap] press Enter to continue, or close this window to stop' | Out-Null }
+$mode = Read-SignInMode $SignIn $Yes                    # asked now, so the rest runs unattended up to the sign-ins
 
 $work = New-AdminOnlyFolder (Join-Path $env:ProgramData ('strugglebus\bootstrap-' + [guid]::NewGuid().ToString('n')))
 $tools = Install-Prereqs $SB.engines $work              # step 2
@@ -896,11 +928,12 @@ Write-PinnedFiles $SB                                    # step 5
 Invoke-Install $tools.pwsh $verified.stage $work $SB $account.Name $password $tools   # step 6
 $hostHome = Join-Path $SbRoot "host\$($account.Name)"
 Invoke-IsolationCheck $verified.stage $account.Name $hostHome 'C:\sb-workers'   # step 11, straight after the install
-# Steps 7 and 8 run AS the account, which is an interactive logon (CreateProcessWithLogonW), so they come before the
-# denials; the finally applies the denials even when the sign-in or the enrolment fails.
+# Steps 8 and 7 run AS the account, which is an interactive logon (CreateProcessWithLogonW), so they come before the
+# denials; the finally applies the denials even when the enrolment or a sign-in fails. Enrolment first: the App's
+# code lasts 15 minutes, and the sign-ins take as long as the operator needs (on the test VM they outlasted it).
 try {
-    Invoke-SignIn $account.Name $password $SB.engines $tools                     # step 7
     $enrolled = Invoke-Enrol $tools.python $hostHome $account.Name $password $bytes $DataFile   # step 8
+    Invoke-SignIn $account.Name $password $SB.engines $tools $mode               # step 7
 } finally {
     $password = $null
     Set-HostLogonRights $account.SID.Value                                       # step 7's denials
