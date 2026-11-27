@@ -47,6 +47,11 @@ TERMINAL_REPLIES = {"finished", "failed", "timed-out", "interrupted"}
 # launch (Host.ensure_channel).
 WORKER_CHANNELS = ("Humans",)
 WIP_PROTECTED = {"develop", "main", "master"}
+# The App's Hosts dashboard (docs/app-host-integration.md section 1a): the bus's status API, as this host.
+STATUS_PUSH_PATH = "/api/hosts/status"
+STATUS_PUSH_SECONDS = 60     # at least this often
+STATUS_PUSH_MIN_GAP = 10     # at most this often (the bus refuses more than one push per 10 s)
+STATUS_PUSH_BACKOFF = 3600   # after a refusal (an older bus, or not marked as a host yet)
 WIP_PUSH_TIMEOUT = 120
 
 
@@ -210,6 +215,9 @@ class Host:
         self.next_heartbeat = time.time() + 60 * cfg.heartbeat_idle_minutes
         self.channel_state = "unknown"
         self.bus_state = "unknown"
+        # The Hosts dashboard push (push_status_if_due): when, what was last accepted, and a refusal being backed off.
+        self.push_at, self.push_after, self.push_key = 0.0, 0.0, None
+        self.push_refused: int | None = None
         self.game_paused = False
         self.pressure_posted = False
         self.maintenance = False
@@ -1479,10 +1487,60 @@ class Host:
             isolation_weak=bool((read_json_file(self.cfg.state_dir / "isolation.json") or {}).get("exec_hits")),
             last_command=self.st.data.get("last_command"),
             release_source=self.release_where.label(), release_unreachable=self.release_unreachable,
-            release_redirect_refused=bool(self.release_where.refused))
+            release_redirect_refused=bool(self.release_where.refused), **self.dashboard_facts())
+
+    def dashboard_facts(self) -> dict:
+        """The v2-only facts (section 1a): what the desktop panel shows, never a task id, path or repository name."""
+        now, s = time.time(), self.sample
+        since = self.started_at
+        tasks = {k: 0 for k in hoststatus.TASK_OUTCOMES}
+        for rec in self.st.data["tasks"].values():
+            if rec.get("status") in tasks and float(rec.get("updated", 0) or 0) >= since:
+                tasks[rec["status"]] += 1
+        return {
+            "running": [{"slot": r.worker, "engine": getattr(r, "engine", "ghcp"), "model": getattr(r, "model", "?"),
+                         "minutes": round((now - r.started) / 60)} for r in self.runs.values()],
+            "machine": {} if s is None else {"cpu_pct": self.cpu_now, "commit_pct": s.commit_pct,
+                                             "ram_free_gb": s.free_phys / resources.GB,
+                                             "disk_free_gb": s.free_disk / resources.GB},
+            "bus_state": self.bus_state, "channel": self.cfg.channel, "channel_state": self.channel_state,
+            "model": self.default_model(), "ghcp_ok": self.ghcp_ok, "tasks": tasks,
+        }
 
     def status_json(self) -> dict:
         return hoststatus.build(self.status_facts())
+
+    def push_status_if_due(self) -> None:
+        """The App's Hosts dashboard (section 1a): POST the v2 snapshot to the bus as this host, every minute and on a
+        change (at most every 10 s). The heartbeat message is separate and unchanged. A refusal (404: an older bus;
+        403: not yet marked as a host on the bus; another code: a contract mismatch) is logged once and retried hourly,
+        so a host is ready before its bus is."""
+        now = time.time()
+        call = getattr(self.bus, "call", None)  # None: no bus, or a test's bus without raw calls (tests/conftest.py)
+        if call is None or now < self.push_after or now - self.push_at < STATUS_PUSH_MIN_GAP:
+            return
+        snap = hoststatus.build_v2(self.status_facts())
+        key = hoststatus.change_key(snap)
+        if key == self.push_key and now - self.push_at < STATUS_PUSH_SECONDS:
+            return
+        self.push_at = now
+        try:
+            code, _ = call("POST", STATUS_PUSH_PATH, body=hoststatus.body(snap))
+        except (BusError, OSError, ValueError) as e:  # the bus unreachable (shown by bus_state anyway), or over the cap
+            self.log("status-push-failed", error=type(e).__name__)
+            return
+        if code in (200, 201, 204):
+            self.push_key = key
+            if self.push_refused is not None:
+                self.log("status-push-ok", after=self.push_refused)
+                self.push_refused = None
+        elif code == 429:
+            self.push_after = now + 60
+        else:
+            if self.push_refused != code:
+                self.log("status-push-refused", status=code)
+                self.push_refused = code
+            self.push_after = now + STATUS_PUSH_BACKOFF
 
     def status_if_changed(self) -> None:
         """Post the status at once when something the App shows changes (state, warnings, problem, update, engines'
@@ -2132,6 +2190,7 @@ class Host:
         self.flush_outbox()
         self.heartbeat_if_due()
         self.status_if_changed()
+        self.push_status_if_due()
         self.maintain()
         if self.st.data["draining"] and not self.runs and not self.pending:
             self.stopped("drain")

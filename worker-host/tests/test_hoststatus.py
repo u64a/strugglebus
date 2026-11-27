@@ -129,6 +129,170 @@ def test_another_bus_error_with_metadata_is_not_mistaken_for_a_refusal():
     assert h.bus_state == "down" and not h.metadata_refused
 
 
+# --- v2: the Hosts dashboard (section 1a) -------------------------------------------------------------------------
+
+# The facts behind contracts/host-status/: a busy host with two workers, one warning and an announced update.
+V2 = replace(
+    BASE, reported_state="running", busy=2, claiming=1, isolation_weak=True,
+    update={"version": "2026.11.28", "when": "03:00"}, release_source="https://github.com/acme/mono#worker-host",
+    running=[{"slot": "w01", "engine": "ghcp", "model": "claude-opus-5.5", "minutes": 42},
+             {"slot": "w02", "engine": "claude", "model": "claude-sonnet-5.5", "minutes": 7}],
+    machine={"cpu_pct": 37.25, "ram_free_gb": 21.04, "disk_free_gb": 812.6, "commit_pct": 48.0},
+    bus_state="ok", channel="worker-hosts", channel_state="ok", model="claude-opus-5.5", ghcp_ok=True,
+    tasks={"finished": 17, "failed": 2, "timed-out": 1, "refused": 3})
+RECEIVED_AT = "2026-11-27T04:00:00Z"  # the bus's clock, in the history vector
+
+
+def contract(name: str) -> dict:
+    from vectors import path
+
+    return json.loads(path("host-status", name).read_text(encoding="utf-8"))
+
+
+def vector_files() -> dict[str, dict]:
+    """What contracts/host-status/ holds, made from V2 by the reference functions."""
+    snap = hoststatus.build_v2(V2)
+    return {"snapshot-v2.json": snap, "snapshot-v2-device.json": hoststatus.for_device(snap),
+            "sample-v2.json": hoststatus.sample(snap, RECEIVED_AT)}
+
+
+@pytest.mark.parametrize("name", ["snapshot-v2.json", "snapshot-v2-device.json", "sample-v2.json"])
+def test_the_contract_vectors_are_what_the_code_makes(name):
+    assert contract(name) == vector_files()[name]
+
+
+def test_v2_is_v1_plus_the_panels_facts():
+    v1, v2 = build(), hoststatus.build_v2(BASE)
+    assert v2["v"] == 2
+    assert all(v2[k] == v1[k] for k in v1 if k not in ("v", "workers"))  # every v1 field, unchanged
+    assert set(v2) - set(v1) == {"machine", "bus", "model", "ghcp_ok", "tasks"}
+    assert v2["workers"] == {"busy": 0, "max": 12, "claiming": 0, "running": []}
+    assert v2["machine"] == {"cpu_pct": None, "ram_free_gb": None, "disk_free_gb": None, "commit_pct": None}
+    assert list(v2["tasks"]) == list(hoststatus.TASK_OUTCOMES) and set(v2["tasks"].values()) == {0}
+    assert build() == v1  # the heartbeat's v1 is untouched by v2's facts (coordinators read it)
+    assert hoststatus.build(V2)["v"] == 1 and "machine" not in hoststatus.build(V2)
+
+
+def test_a_device_without_the_operator_grant_never_sees_the_admin_fields():
+    dev = hoststatus.for_device(hoststatus.build_v2(V2))
+    assert not {"account", "dedicated", "warnings"} & set(dev)
+    assert dev["bus"] == {"state": "ok"}  # channel and channel_state are admin only (bus-dev, 28832)
+    assert dev["workers"]["running"][0] == {"slot": "w01", "engine": "ghcp", "model": "claude-opus-5.5", "minutes": 42}
+    assert hoststatus.build_v2(V2)["account"] == "sbworker"  # the host sends it; the bus filters on read
+
+
+def test_a_history_sample_is_small_and_uses_the_bus_clock():
+    s = hoststatus.sample(hoststatus.build_v2(V2), RECEIVED_AT)
+    assert s["received_at"] == RECEIVED_AT and s["workers"] == {"busy": 2, "max": 12}
+    assert len(json.dumps(s, separators=(",", ":"))) < 400
+
+
+def test_v2_never_carries_a_task_id_path_or_secret_and_is_under_the_cap():
+    run = {"slot": "w01", "engine": "ghcp", "model": "m", "minutes": 1, "task_id": "abc", "log": "C:\\x\\log.txt"}
+    snap = hoststatus.build_v2(replace(V2, running=[run] * 24))
+    text = json.dumps(snap)
+    assert "task_id" not in text and "abc" not in text and "\\" not in text and "token" not in text
+    assert hoststatus.body(snap) is snap and len(text) < 8000  # 24 workers, still well under 16 KB
+    with pytest.raises(ValueError):
+        hoststatus.body({"x": "y" * 20000})
+
+
+@pytest.fixture
+def pushing(tmp_path, monkeypatch):
+    """A real Host whose bus records each status push and answers with the code the test sets."""
+    from conftest import HOST_A, FakeVault, SharedBus
+    from workerhost import engines as engines_mod
+    from workerhost import resources
+    from workerhost.config import Config
+    from workerhost.host import Host
+
+    monkeypatch.setattr(resources, "sample", lambda root: None)
+    monkeypatch.setattr(engines_mod, "resolve", lambda name: "C:\\bin\\copilot.exe")
+    bus = SharedBus().client(HOST_A)
+    h = Host(Config(host_name="box1", agent_prefix="host-box1", home=tmp_path / "home", workers_root=tmp_path / "w"),
+             bus=bus, vault=FakeVault())
+    h.pins = {"host": HOST_A, "coordinator": HOST_A}
+    pushes, logged, answer = [], [], {"code": 201}
+
+    def call(method, path, body=None, **k):
+        if isinstance(answer["code"], Exception):
+            raise answer["code"]
+        pushes.append((method, path, body))
+        return answer["code"], None
+
+    bus.call = call
+    h.log = lambda event, **k: logged.append((event, k))
+    clock = {"t": 1_800_000_000.0}
+    monkeypatch.setattr("workerhost.host.time.time", lambda: clock["t"])
+    return h, pushes, logged, answer, clock
+
+
+def test_the_host_pushes_its_v2_snapshot_as_itself_every_minute_and_on_a_change(pushing):
+    h, pushes, logged, answer, clock = pushing
+    h.push_status_if_due()
+    assert [(m, p) for m, p, _ in pushes] == [("POST", "/api/hosts/status")]
+    assert pushes[0][2]["v"] == 2 and pushes[0][2]["host"] == "box1" and "account" in pushes[0][2]
+    clock["t"] += 30
+    h.push_status_if_due()
+    assert len(pushes) == 1  # nothing changed and not a minute yet
+    h.st.data["paused"] = True
+    clock["t"] += 5
+    h.push_status_if_due()
+    assert len(pushes) == 2 and pushes[-1][2]["state"] == "paused"  # a change goes at once...
+    h.st.data["paused"] = False
+    clock["t"] += 3
+    h.push_status_if_due()
+    assert len(pushes) == 2  # ...but never more than once in 10 s (the bus's limit)
+    clock["t"] += 60
+    h.push_status_if_due()
+    assert len(pushes) == 3
+    assert not logged
+
+
+@pytest.mark.parametrize("code", [404, 403, 422])
+def test_a_refusal_is_logged_once_and_retried_hourly_so_a_host_is_ready_before_its_bus(pushing, code):
+    h, pushes, logged, answer, clock = pushing
+    answer["code"] = code
+    h.push_status_if_due()
+    assert logged == [("status-push-refused", {"status": code})]
+    clock["t"] += 3599
+    h.push_status_if_due()
+    assert len(pushes) == 1  # backed off for an hour
+    clock["t"] += 2
+    h.push_status_if_due()
+    assert len(pushes) == 2 and len(logged) == 1  # tried again; the same refusal is not logged again
+    answer["code"] = 201
+    clock["t"] += 3601
+    h.push_status_if_due()
+    assert logged[-1] == ("status-push-ok", {"after": code}) and h.push_refused is None
+
+
+def test_a_busy_bus_and_an_unreachable_one_are_not_refusals(pushing):
+    h, pushes, logged, answer, clock = pushing
+    answer["code"] = 429
+    h.push_status_if_due()
+    clock["t"] += 61
+    h.push_status_if_due()
+    assert len(pushes) == 2 and not logged  # 429: a minute's pause, no log
+    answer["code"] = OSError("unreachable")
+    clock["t"] += 61
+    h.push_status_if_due()
+    assert logged == [("status-push-failed", {"error": "OSError"})] and h.push_after < clock["t"]
+
+
+def test_task_totals_count_only_this_host_processes_tasks(pushing):
+    h, pushes, logged, answer, clock = pushing
+    h.st.data["tasks"] = {
+        "old": {"status": "finished", "updated": h.started_at - 1},   # ended before this process started
+        "a": {"status": "finished", "updated": h.started_at + 1},
+        "b": {"status": "refused", "updated": h.started_at + 2},
+        "c": {"status": "started", "updated": h.started_at + 3},       # still running: not a total
+    }
+    h.push_status_if_due()
+    assert pushes[0][2]["tasks"] == {"finished": 1, "failed": 0, "timed-out": 0, "interrupted": 0, "refused": 1,
+                                     "yielded": 0, "cancelled": 0}
+
+
 def test_the_host_sends_its_status_in_the_heartbeats_metadata(tmp_path, monkeypatch):
     from conftest import HOST_A, FakeVault, SharedBus
     from workerhost import resources

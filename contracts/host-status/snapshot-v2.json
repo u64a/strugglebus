@@ -1,0 +1,90 @@
+{
+ "v": 2,
+ "host": "box1",
+ "agent": "host-box1-host",
+ "version": "2026.11.24.2",
+ "serial": 4,
+ "started_at": "2026-11-18T11:06:40Z",
+ "interval_s": 3600,
+ "state": "online",
+ "account": "sbworker",
+ "dedicated": true,
+ "engines": [
+  {
+   "name": "ghcp",
+   "version": "1.0.114",
+   "signed_in": null,
+   "default": true
+  },
+  {
+   "name": "claude",
+   "version": null,
+   "signed_in": true,
+   "default": false
+  }
+ ],
+ "workers": {
+  "busy": 2,
+  "max": 12,
+  "claiming": 1,
+  "running": [
+   {
+    "slot": "w01",
+    "engine": "ghcp",
+    "model": "claude-opus-5.5",
+    "minutes": 42
+   },
+   {
+    "slot": "w02",
+    "engine": "claude",
+    "model": "claude-sonnet-5.5",
+    "minutes": 7
+   }
+  ]
+ },
+ "held_clones": 1,
+ "outbox": 0,
+ "fleet": {
+  "source": "git",
+  "serial": 4,
+  "coordinators": [
+   "coord-main"
+  ],
+  "state": "accepted"
+ },
+ "update": {
+  "version": "2026.11.28",
+  "when": "03:00"
+ },
+ "release": {
+  "source": "https://github.com/acme/mono#worker-host",
+  "serial": 4
+ },
+ "last_command": null,
+ "problem": null,
+ "warnings": [
+  "isolation-weak"
+ ],
+ "machine": {
+  "cpu_pct": 37.2,
+  "ram_free_gb": 21.0,
+  "disk_free_gb": 812.6,
+  "commit_pct": 48.0
+ },
+ "bus": {
+  "state": "ok",
+  "channel": "worker-hosts",
+  "channel_state": "ok"
+ },
+ "model": "claude-opus-5.5",
+ "ghcp_ok": true,
+ "tasks": {
+  "finished": 17,
+  "failed": 2,
+  "timed-out": 1,
+  "interrupted": 0,
+  "refused": 3,
+  "yielded": 0,
+  "cancelled": 0
+ }
+}

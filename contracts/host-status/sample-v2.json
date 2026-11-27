@@ -1,0 +1,25 @@
+{
+ "received_at": "2026-11-27T04:00:00Z",
+ "state": "online",
+ "workers": {
+  "busy": 2,
+  "max": 12
+ },
+ "machine": {
+  "cpu_pct": 37.2,
+  "ram_free_gb": 21.0,
+  "disk_free_gb": 812.6,
+  "commit_pct": 48.0
+ },
+ "outbox": 0,
+ "held_clones": 1,
+ "tasks": {
+  "finished": 17,
+  "failed": 2,
+  "timed-out": 1,
+  "interrupted": 0,
+  "refused": 3,
+  "yielded": 0,
+  "cancelled": 0
+ }
+}
