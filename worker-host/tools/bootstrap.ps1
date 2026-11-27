@@ -681,11 +681,20 @@ function Invoke-SignIn([string]$account, $password, $engines, $tools) {
     # window opens under it; the operator completes the device-code sign-in in a browser, then closes the window.
     # Skipped or failed: the host shows needs-sign-in, and `wh signin <engine>` finishes it later.
     $cred = New-AccountCredential $account $password
-    foreach ($engine in @($engines)) {
+    # gh first: the host uses it (whether a worker's branch was merged before its clone is deleted; the probe checks
+    # `gh auth status`), and `gh auth setup-git` makes it git's GitHub credential for this account.
+    foreach ($engine in @('gh') + @($engines)) {
         $exe = $tools[$engine]
-        $cmd = if ($engine -eq 'ghcp') { "`"$exe`" login" } else { "`"$exe`"" }
-        $hint = if ($engine -eq 'ghcp') { 'follow the device-code steps, then close this window' }
-                else { 'type /login, follow the steps, then /exit and close this window' }
+        $cmd = switch ($engine) {
+            'gh'    { "`"$exe`" auth login --hostname github.com --git-protocol https --web && `"$exe`" auth setup-git" }
+            'ghcp'  { "`"$exe`" login" }
+            default { "`"$exe`"" }
+        }
+        $hint = switch ($engine) {
+            'gh'    { 'copy the one-time code, open the link, approve it, then close this window' }
+            'ghcp'  { 'follow the device-code steps, then close this window' }
+            default { 'type /login, follow the steps, then /exit and close this window' }
+        }
         Say "signing $engine in as $account in a new window: $hint"
         try {
             Start-Process -FilePath (Join-Path $env:SystemRoot 'System32\cmd.exe') -ArgumentList '/k', "title Sign in $engine as $account && $cmd" `
