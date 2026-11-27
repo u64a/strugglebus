@@ -185,8 +185,9 @@ def test_a_bad_redirect_is_refused_before_anything_is_written(repo):
         make_release.main(["--dry-run", "--moved-to", "https://github.com/u64a/strugglebus:../up"])
 
 
-def test_code_in_a_folder_gets_the_same_tree_hash_as_at_the_top(repo, capsys):
+def test_code_in_a_folder_gets_the_same_tree_hash_as_at_the_top(repo, capsys, monkeypatch):
     """The monorepo layout: the host's files under worker-host/, its release.toml there too."""
+    monkeypatch.setattr(make_release, "origin_url", lambda: "https://github.com/acme/mono")
     head = run(repo, "rev-parse", "HEAD")
     top = update.tree_sha256(update.read_tree("git", None, head, cwd=repo))
     for path in ("wh.py", "workerhost/__init__.py", "README.md"):
@@ -213,6 +214,8 @@ def shared(repo, monkeypatch):
     commit(repo, "bus/server.py", "x = 1\n", "a bus change")
     push(repo)
     monkeypatch.setattr(make_release, "ROOT", repo / "worker-host")
+    # The test origin is a local folder; the real one is GitHub (origin_url is tested on its own below).
+    monkeypatch.setattr(make_release, "origin_url", lambda: "https://github.com/acme/mono")
     return repo
 
 
@@ -245,7 +248,8 @@ def test_the_first_release_at_a_new_place_continues_the_old_numbering(shared, tm
                    encoding="utf-8")
     assert make_release.main(["--path", "worker-host", "--continue-from", str(old), "--notes", "first here"]) == 0
     rel = released(capsys.readouterr().out)
-    assert (rel.serial, rel.commit, rel.notes, rel.moved_to) == (8, head, "first here", None)
+    assert (rel.serial, rel.commit, rel.notes) == (8, head, "first here")
+    assert rel.moved_to == ("https://github.com/acme/mono", "worker-host")  # it points at itself (self_redirect)
     assert rel.version == day_of(shared, head) + ".2"  # the old place's version counts for the same day
     assert "-Path worker-host -FirstSerial 8 -Signers" in asked["body"]
 
@@ -266,6 +270,40 @@ def test_continuing_is_refused_once_a_release_is_here_or_without_notes(shared, t
     push(shared)
     with pytest.raises(SystemExit, match="only for the first release here"):
         make_release.main(["--dry-run", "--path", "worker-host", "--continue-from", str(old), "--notes", "n"])
+
+
+def test_every_release_in_a_folder_points_at_its_own_place(shared, capsys):
+    """A host records the redirect only from the release it installed: without its own, the next release sent the
+    hosts back to their fleet repository (27 Nov, serial 8). So each one carries it, signed with the rest."""
+    assert make_release.main(["--dry-run", "--path", "worker-host"]) == 0
+    assert released(capsys.readouterr().out).moved_to == ("https://github.com/acme/mono", "worker-host")
+    # An explicit --moved-to still wins (moving on again), and a release at the top level carries none.
+    assert make_release.main(["--dry-run", "--path", "worker-host", "--moved-to", "https://example.org/a/b:host"]) == 0
+    assert released(capsys.readouterr().out).moved_to == ("https://example.org/a/b", "host")
+
+
+def test_without_an_https_origin_a_folder_release_asks_for_the_address(shared, monkeypatch):
+    monkeypatch.setattr(make_release, "origin_url", lambda: "")
+    with pytest.raises(SystemExit, match="give --moved-to"):
+        make_release.main(["--dry-run", "--path", "worker-host"])
+
+
+@pytest.mark.parametrize("remote, want", [
+    ("https://github.com/u64a/strugglebus.git", "https://github.com/u64a/strugglebus"),
+    ("https://github.com/u64a/strugglebus", "https://github.com/u64a/strugglebus"),
+    ("git@github.com:u64a/strugglebus.git", "https://github.com/u64a/strugglebus"),
+    ("https://GitHub.com/u64a/strugglebus/", "https://github.com/u64a/strugglebus"),
+    ("C:/repos/origin.git", ""),
+    ("https://github.com/only-owner", ""),
+])
+def test_origin_url_is_the_https_address(repo, remote, want):
+    run(repo, "remote", "set-url", "origin", remote)
+    assert make_release.origin_url() == want
+
+
+def test_a_top_level_release_still_carries_no_redirect(repo, capsys):
+    assert make_release.main(["--dry-run"]) == 0
+    assert released(capsys.readouterr().out).moved_to is None
 
 
 def test_a_failed_pr_is_a_failed_run(repo, monkeypatch, capsys):

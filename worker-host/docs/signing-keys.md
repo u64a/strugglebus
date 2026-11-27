@@ -211,6 +211,9 @@ main's.
 u64a/strugglebus) is the same flow with the folder named:
 - **Make it:** `python worker-host/tools/make-release.py --path worker-host`. The release goes to
   `worker-host/release.toml`; the notes list only commits that touched the folder.
+  - **Each release there carries `moved_to` naming its own place** (taken from origin). A host remembers where its
+    releases come from only through the release it has installed. Without the pointer, the next release would send
+    it back to its fleet repository.
 - **Sign it:** `pwsh -File worker-host\tools\sign-config.ps1 -Pr <n> -Path worker-host -Signers <your allowed_signers
   file> -KeyFile <your key handle>`.
   - Only `worker-host/`'s signed files may change in that PR.
