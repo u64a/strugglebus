@@ -54,6 +54,12 @@ internal static class HostStatusParser
         return agent.Length > 0 && string.Equals(agent, author, StringComparison.Ordinal) ? Read(status, agent) : null;
     }
 
+    /// <summary>
+    /// The same fields out of a v2 snapshot the bus stored for a host. The bus has already tied the
+    /// snapshot to the agent that sent it, so there is no author to compare here.
+    /// </summary>
+    public static HostStatus FromSnapshot(JsonElement snapshot) => Read(snapshot, Text(snapshot, "agent"));
+
     /// <summary>The status object, when there is one and it is the version this app understands.</summary>
     private static JsonElement? VersionOne(JsonElement? metadata)
     {
@@ -89,13 +95,13 @@ internal static class HostStatusParser
     private static HostEngine Engine(JsonElement engine) =>
         new(Text(engine, "name"), Text(engine, "version"), Flag(engine, "signed_in"));
 
-    private static JsonElement? Property(JsonElement? parent, string name) =>
+    internal static JsonElement? Property(JsonElement? parent, string name) =>
         parent is { ValueKind: JsonValueKind.Object } element && element.TryGetProperty(name, out var value) ? value : null;
 
-    private static string Text(JsonElement? parent, string name) =>
+    internal static string Text(JsonElement? parent, string name) =>
         Property(parent, name) is { } value ? Clean(value) : string.Empty;
 
-    private static long? Number(JsonElement? parent, string name) =>
+    internal static long? Number(JsonElement? parent, string name) =>
         Property(parent, name) is { ValueKind: JsonValueKind.Number } value && value.TryGetInt64(out var number) ? number : null;
 
     private static bool? Flag(JsonElement? parent, string name) => Property(parent, name)?.ValueKind switch
