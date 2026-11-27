@@ -39,6 +39,7 @@ from strugglebus.retention import RetentionSweeper
 from strugglebus.capabilities import assert_routes_declared
 from strugglebus.host_enrollment import HostEnrollmentService
 from strugglebus.mobile import MobileService
+from strugglebus.bus_events import BusEventLog
 from strugglebus.host_status import HostStatusService
 from strugglebus.site_documents import SiteDocumentService
 from strugglebus.satellite import SatelliteService, SiteAuthority
@@ -1189,6 +1190,7 @@ def create_app(
     application.state.host_status_service = HostStatusService(
         resolved_agent_service.store, clock=utc_now,
     )
+    application.state.event_log = BusEventLog(resolved_agent_service.store, clock=utc_now)
     application.state.access_freeze_service = resolved_access_freeze_service
     application.state.roe_service = resolved_roe_service
     application.state.rate_limiter = resolved_rate_limiter

@@ -458,6 +458,19 @@ class HostReportResponse(StrictModel):
     received_at: str
 
 
+class HostEventsResponse(StrictModel):
+    """A host's batch was accepted. ``stored`` counts the events not already stored."""
+
+    stored: int
+
+
+class MobileFullLogRequest(StrictModel):
+    """The whole log, for an administrator: the device's grant and how many rows."""
+
+    grant_secret: str = Field(min_length=1, max_length=256)
+    limit: int = Field(default=200, ge=1, le=500)
+
+
 class MobileHostStatus(StrictModel):
     """One marked host. ``snapshot`` is null until it has reported.
 

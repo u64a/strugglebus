@@ -15,6 +15,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import TYPE_CHECKING
 
+from strugglebus.bus_events import KEEP as EVENTS_KEPT
 from strugglebus.host_status import HISTORY
 from strugglebus.store._common import utc_now
 
@@ -62,6 +63,11 @@ class RetentionSweeper:
         for _ in range(MAXIMUM_BATCHES):
             if self.store.remove_expired_host_status_samples(
                 now=now, keep=HISTORY, batch_size=self.batch_size,
+            ) < self.batch_size:
+                break
+        for _ in range(MAXIMUM_BATCHES):
+            if self.store.remove_expired_bus_events(
+                now=now, keep=EVENTS_KEPT, batch_size=self.batch_size,
             ) < self.batch_size:
                 break
         blocked = self.store.block_idle_agents(now=now)
