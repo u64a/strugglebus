@@ -677,6 +677,21 @@ function Get-SiteText($data) {
     return "bus_url = `"$($data.bus_url)`"`nfleet_source = `"$($data.fleet_source)`"`nremotes = [$remotes]`n"
 }
 
+function Get-ReleaseRecordText($release, [string]$repo = $ReleaseRepo, [string]$folder = $ReleaseFolder) {
+    # Pure: app\RELEASE.json for the release step 3 verified, in workerhost/update.py's own form (what apply() writes),
+    # with where it came from as the source for its updates. install.ps1 on its own writes "manual", serial 0, and no
+    # source; a host from this script would then never update itself (it has no fleet repository to fall back on).
+    $record = [ordered]@{ version = $release.version; serial = [int]$release.serial; commit = $release.commit
+                          tree_sha256 = $release.tree_sha256; moved_to = [ordered]@{ repo = $repo; path = $folder } }
+    return (ConvertTo-Json $record -Depth 3) + "`n"
+}
+
+function Write-ReleaseRecord([string]$hostHome, $release) {
+    $file = Join-Path $hostHome 'app\RELEASE.json'
+    [IO.File]::WriteAllText($file, (Get-ReleaseRecordText $release), (New-Object Text.UTF8Encoding($false)))
+    Say "recorded release $($release.version) (serial $($release.serial)) from $ReleaseRepo, $ReleaseFolder as installed: the host updates from there"
+}
+
 function Invoke-Install([string]$pwsh, [string]$stage, [string]$work, $data, [string]$account, $password, $tools) {
     # Step 6: the staged, verified install.ps1, by full path, without the operator's profile, for the account; its
     # password goes on stdin and nowhere else.
@@ -990,6 +1005,7 @@ Grant-BatchLogon $account.SID.Value
 Write-PinnedFiles $SB                                    # step 5
 Invoke-Install $tools.pwsh $verified.stage $work $SB $account.Name $password $tools   # step 6
 $hostHome = Join-Path $SbRoot "host\$($account.Name)"
+Write-ReleaseRecord $hostHome $verified.release
 Invoke-IsolationCheck $verified.stage $account.Name $hostHome 'C:\sb-workers'   # step 11, straight after the install
 # Steps 8 and 7 run AS the account, which is an interactive logon (CreateProcessWithLogonW), so they come before the
 # denials; the finally applies the denials even when the enrolment or a sign-in fails. Enrolment first: the App's
