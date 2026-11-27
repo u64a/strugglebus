@@ -1,16 +1,16 @@
-serial = 11
+serial = 12
 
 # release.toml: the worker-host code hosts install, signed by a pinned key (release.toml.sig, namespace
 # strugglebus-release). Made by tools/make-release.py; signed and merged with tools/sign-config.ps1 -Pr <n>.
 # Hosts announce it at check_at (01:00) and apply it in their maintenance window (03:00): docs/design.md 10a.
 
-version = "2026.11.28"
-commit = "86cb1bd3e20178673fd835eca8367f0aa2c4bcd0"
+version = "2026.11.28.2"
+commit = "c5ee2d5e7942a6a384a339132b091a2f877af9e3"
 tree_sha256 = "a475f57823d5fe2cf33710fb9eaebf9b930f154cecaf843cd865ab7376388320"
 needs_install = false
-notes = "Add a host: the install script's steps 4 to 12 (a dedicated, locked-down Windows account; enrolment; device-code or browser sign-ins; the logon denials; u64-security's isolation check) and install.ps1 -Account; the status reports the pinned PowerShell 7 first."
+notes = "Add a host: the install script records the release it verified (with its source), so a host it installs updates itself."
 installer_sha256 = "30213d637758d8969a89d16a73882eeedf29dd372d17720b7224d6fa2954cb29"
-bootstrap_sha256 = "13268672bcf0a58e064c6498eadac8cfbf58355142a7311f962db1feaf4a1ea1"
+bootstrap_sha256 = "849b3d4a36a544fb7647287ee44ffae84839cad30e8fc1e8d304b34bafece5c6"
 authenticode_thumbprints = ["3FF059FA28ED74ACB229CBA2E670CEA565015238"]
 
 [moved_to]
