@@ -70,8 +70,13 @@ function Get-WorkerIsolationHits {
     }
     catch { Write-Warning "Account '$Account' not found; checking with the standard groups only." }
 
-    $profileDir = if ($workerSid) {
-        (Get-CimInstance Win32_UserProfile -Filter "SID='$workerSid'" -ErrorAction SilentlyContinue).LocalPath } else { $null }
+    # Strict-mode safe (the bootstrap runs Set-StrictMode -Version Latest): a missing profile, or one without LocalPath,
+    # is simply no profile folder to exclude.
+    $profileDir = $null
+    if ($workerSid) {
+        $prof = @(Get-CimInstance Win32_UserProfile -Filter "SID='$workerSid'" -ErrorAction SilentlyContinue) | Select-Object -First 1
+        if ($prof -and $prof.PSObject.Properties['LocalPath'] -and $prof.LocalPath) { $profileDir = [string]$prof.LocalPath }
+    }
     $excl = @($Exclude + @($profileDir) | Where-Object { $_ } | ForEach-Object { $_.TrimEnd('\') + '\' })
 
     # ---- ACL evaluation --------------------------------------------------------------------------------------------
@@ -161,12 +166,62 @@ function Get-WorkerIsolationHits {
         }
     }
 
+    # ---- the worker's OWN tasks: is what they run writable by anyone else? ---------------------------------------------
+    # The reverse direction (sbworkerhost-project, #humans 29021): winget portable packages kept the installing user's
+    # TEMP ACL, so that user had full control of copilot.exe and claude.exe, which the worker's task runs. Anyone who
+    # can write a program the worker runs can run code as the worker. Allowed writers: the worker itself, SYSTEM,
+    # Administrators, TrustedInstaller (and CREATOR OWNER, which only names the owner of new children).
+    $trusted = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+    foreach ($s in 'S-1-5-18', 'S-1-5-32-544', 'S-1-3-0', 'S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464') { [void]$trusted.Add($s) }
+    if ($workerSid) { [void]$trusted.Add($workerSid) }
+    function Get-OtherWriters($acl, [int]$mask, [bool]$isContainer) {
+        if (-not $acl) { return @() }
+        $out = @()
+        $owner = try { $acl.GetOwner([Security.Principal.SecurityIdentifier]).Value } catch { $null }
+        if ($owner -and -not $trusted.Contains($owner)) { $out += "owner $owner" }
+        $allow = @{}; $deny = @{}
+        foreach ($ace in $acl.GetAccessRules($true, $true, [Security.Principal.SecurityIdentifier])) {
+            if ($isContainer -and ($ace.PropagationFlags -band [Security.AccessControl.PropagationFlags]::InheritOnly)) { continue }
+            $id = $ace.IdentityReference.Value
+            if ($trusted.Contains($id)) { continue }
+            $bits = ([int64]$ace.FileSystemRights) -band 0xFFFFFFFF -band $mask
+            if (-not $bits) { continue }
+            if ($ace.AccessControlType -eq 'Deny') { $deny[$id] = [int64]($deny[$id]) -bor $bits } else { $allow[$id] = [int64]($allow[$id]) -bor $bits }
+        }
+        foreach ($id in $allow.Keys) {
+            if ($allow[$id] -band (-bnot [int64]($deny[$id]))) {
+                $name = try { ([Security.Principal.SecurityIdentifier]$id).Translate([Security.Principal.NTAccount]).Value } catch { $id }
+                $out += $name
+            }
+        }
+        return $out
+    }
+    if ($workerSid) {
+        foreach ($t in Get-ScheduledTask -ErrorAction SilentlyContinue) {
+            $uid = "$($t.Principal.UserId)"
+            if (-not ($uid -match "(^|\\)$([regex]::Escape($Account))$" -or $uid -eq $workerSid)) { continue }
+            foreach ($a in $t.Actions) {
+                if ($a.CimClass.CimClassName -ne 'MSFT_TaskExecAction') { continue }
+                foreach ($p in Get-CommandPaths $a.Execute $a.Arguments '') {
+                    $p = [Environment]::ExpandEnvironmentVariables($p.Trim('"', "'", ' '))
+                    if (-not (Test-Path -LiteralPath $p -PathType Leaf)) { continue }
+                    $w = @(Get-OtherWriters (Get-AclSafe $p) $FILE_MASK $false)
+                    $dir = [IO.Path]::GetDirectoryName($p)
+                    $wd = @(Get-OtherWriters (Get-AclSafe $dir) $DIR_MASK $true)
+                    if ($w.Count) { Add-Hit 'exec' 'worker-task-program' "$($t.TaskPath)$($t.TaskName) (runs as $uid)" $p "file writable by $($w -join ', '), who could then run code as the worker" }
+                    elseif ($wd.Count) { Add-Hit 'exec' 'worker-task-program' "$($t.TaskPath)$($t.TaskName) (runs as $uid)" $p "its folder $dir is writable by $($wd -join ', '), who could plant a file the worker runs" }
+                }
+            }
+        }
+    }
+
     # ---- Startup folders and shortcuts --------------------------------------------------------------------------------
     $shell = New-Object -ComObject WScript.Shell
     $startups = @("$env:ProgramData\Microsoft\Windows\Start Menu\Programs\Startup")
     foreach ($u in Get-CimInstance Win32_UserProfile -ErrorAction SilentlyContinue | Where-Object { -not $_.Special }) {
         if ($workerSid -and $u.SID -eq $workerSid) { continue }
-        $startups += Join-Path $u.LocalPath 'AppData\Roaming\Microsoft\Windows\Start Menu\Programs\Startup'
+        if (-not ($u.PSObject.Properties['LocalPath'] -and $u.LocalPath)) { continue }   # a profile with no folder
+        $startups += Join-Path ([string]$u.LocalPath) 'AppData\Roaming\Microsoft\Windows\Start Menu\Programs\Startup'
     }
     foreach ($sf in $startups) {
         if (-not (Test-Path -LiteralPath $sf)) { continue }
