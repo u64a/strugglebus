@@ -400,6 +400,26 @@ def test_the_one_time_code_never_reaches_a_command_line():
     assert "Clear-EnrolCode $data" in enrol  # blanked in the file straight after
 
 
+ISOLATION_SHA256 = "c3cbc4de552f10a160bd460ee7e5903ba22d161d641d664093a7c9df95cc4995"  # u64-security 5ee2b05, 29003
+
+
+def test_the_vendored_isolation_check_is_u64_securitys_reviewed_version():
+    """It's dot-sourced ELEVATED by the bootstrap, so an update is a security change: u64-security posts the new hash
+    and reviews it, and this pin changes with it (#humans 29003)."""
+    script = ROOT / "setup" / "Get-WorkerIsolationHits.ps1"
+    if not script.is_file():
+        pytest.skip("not vendored in this checkout yet (u64a/strugglebus PR 59)")
+    raw = script.read_bytes()
+    assert hashlib.sha256(raw).hexdigest() == ISOLATION_SHA256 and b"\r" not in raw
+
+
+def test_step_11_shows_paths_at_the_console_only_and_gives_the_host_counts():
+    text = SCRIPT.read_text(encoding="ascii")
+    step = text.split("function Invoke-IsolationCheck")[1].split("function Remove-DataFileOffer")[0]
+    assert "setup\\Get-WorkerIsolationHits.ps1" in step and "-Account $account -Exclude" in step
+    assert "exec_hits = $exec.Count" in step and "Path" not in step.split("$record")[1]
+
+
 def test_still_ascii_and_lf_only():
     raw = SCRIPT.read_bytes()
     assert max(raw) < 128 and b"\r" not in raw

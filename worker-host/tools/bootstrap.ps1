@@ -754,6 +754,31 @@ function Start-Host([string]$python, [string]$hostHome) {
     else { Say 'the host has not reported within 3 minutes: check Task Scheduler and its log under the home folder' }
 }
 
+function Invoke-IsolationCheck([string]$stage, [string]$account, [string]$hostHome, [string]$workersRoot) {
+    # Step 11 (u64-security's check, vendored as setup\Get-WorkerIsolationHits.ps1, so it arrives in the verified stage
+    # under installer_sha256): anything the host's account could change that runs as someone else. The paths are shown
+    # here only; the host gets the counts (state\isolation.json), which raise its standing "isolation-weak" warning.
+    $check = Join-Path $stage 'setup\Get-WorkerIsolationHits.ps1'
+    if (-not (Test-Path -LiteralPath $check)) { Say 'this release has no isolation check: skipped'; return }
+    . $check
+    $hits = @(Get-WorkerIsolationHits -Account $account -Exclude @($hostHome, $workersRoot))
+    $exec = @($hits | Where-Object { $_.Severity -eq 'exec' })
+    $info = @($hits | Where-Object { $_.Severity -ne 'exec' })
+    if ($exec.Count) {
+        Say "ISOLATION: $($exec.Count) thing(s) the host's account can change would run as someone else:"
+        foreach ($h in $exec) { Say "  [$($h.Kind)] $($h.Source): $($h.Path) ($($h.Why))" }
+        Say 'Fix their permissions; until then the host shows the isolation-weak warning.'
+    } else {
+        Say 'isolation check: nothing the host''s account can change runs as anyone else'
+    }
+    if ($info.Count) { Say "  (and $($info.Count) writable top-level folder(s), lower severity)" }
+    $record = [ordered]@{ exec_hits = $exec.Count; info_hits = $info.Count
+                          checked_at = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ') }
+    $state = Join-Path $hostHome 'state'
+    New-Item -ItemType Directory -Force -Path $state | Out-Null
+    [IO.File]::WriteAllText((Join-Path $state 'isolation.json'), ((ConvertTo-Json $record) + "`n"), (New-Object Text.UTF8Encoding($false)))
+}
+
 function Remove-DataFileOffer([string]$dataFile, [bool]$yes) {
     # Step 12: the data file's code is spent and blanked; offer to delete it.
     if ($yes) { Say "the data file $dataFile is no longer needed (its code is spent); delete it when you like"; return }
@@ -787,6 +812,7 @@ $account = New-HostAccount $SB.host_prefix $password    # step 4
 Write-PinnedFiles $SB                                    # step 5
 Invoke-Install $tools.pwsh $verified.stage $work $SB $account.Name $password   # step 6
 $hostHome = Join-Path $SbRoot "host\$($account.Name)"
+Invoke-IsolationCheck $verified.stage $account.Name $hostHome 'C:\sb-workers'   # step 11, straight after the install
 Invoke-SignIn $account.Name $password $SB.engines $tools                         # step 7
 Set-HostLogonRights $account.SID.Value
 $enrolled = Invoke-Enrol $tools.python $hostHome $account.Name $password $bytes $DataFile   # step 8
