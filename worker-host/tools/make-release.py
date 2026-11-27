@@ -15,7 +15,8 @@ needs_install = true is for a release that changes what install.ps1 sets up (the
 config.toml keys a host must have): hosts announce it but do not apply it.
 
 In a shared repository (u64a/strugglebus), --path names the host's folder: release.toml is written there, the tree
-is read from there and the notes come from commits that touched it. The first release at a new place continues the
+is read from there and the notes come from commits that touched it. Each such release carries moved_to naming its own
+place (from origin), so a host that installs it keeps reading from here. The first release at a new place continues the
 old place's numbering with --continue-from <its release.toml> (hosts refuse any serial not above the one installed);
 it needs --notes, since the old place's commits are not in this repository.
 """
@@ -195,6 +196,25 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     return p.parse_args(argv)
 
 
+def origin_url() -> str:
+    """origin as https://<host>/<owner>/<repo> (no .git), from an https or git@host:owner/repo remote, or ""."""
+    url = git("remote", "get-url", "origin", check=False)
+    m = re.fullmatch(r"(?:https://|git@)([^/:@]+)[/:]([^/]+)/([^/]+?)(?:\.git)?/?", url)
+    return f"https://{m.group(1).lower()}/{m.group(2)}/{m.group(3)}" if m else ""
+
+
+def self_redirect(path: str, given: tuple[str, str] | None) -> tuple[str, str] | None:
+    """In a shared repository, every release points at its own place. A host records the redirect only from the
+    release it has installed, so a release without one sends the host back to its fleet repository: that happened
+    on 27 Nov, after the first release here (serial 8) installed with none."""
+    if given or not path:
+        return given
+    url = origin_url()
+    if not url:
+        raise SystemExit("cannot tell this repository's https address from origin: give --moved-to URL:FOLDER")
+    return url, path
+
+
 def moved_to_arg(value: str) -> tuple[str, str] | None:
     if not value:
         return None
@@ -206,7 +226,7 @@ def moved_to_arg(value: str) -> tuple[str, str] | None:
 
 def main(argv: list[str]) -> int:
     args = parse_args(argv)
-    moved = moved_to_arg(args.moved_to)
+    moved = self_redirect(args.path, moved_to_arg(args.moved_to))
     main_head, commit = resolve_commit(args.commit)
     repo_top = top()
     files = update.read_tree("git", None, commit, cwd=repo_top, prefix=args.path)
