@@ -69,6 +69,7 @@
                             <TextBlock x:Name="HumansBadgeText" FontFamily="{StaticResource Mono}" FontSize="10" FontWeight="Bold" Foreground="{DynamicResource OnAccent}"/>
                         </Border>
                     </Grid>
+                    <RadioButton x:Name="ChannelsNav" DockPanel.Dock="Top" GroupName="Nav" Style="{StaticResource NavItem}" Content="Channels" Tag="{StaticResource IconChannels}" IsEnabled="False" Checked="Nav_Checked"/>
                     <RadioButton x:Name="HostsNav" DockPanel.Dock="Top" GroupName="Nav" Style="{StaticResource NavItem}" Content="Hosts" Tag="{StaticResource IconHosts}" IsEnabled="False" Checked="Nav_Checked"/>
                     <RadioButton x:Name="AdminNav" DockPanel.Dock="Top" GroupName="Nav" Style="{StaticResource NavItem}" Content="Admin" Tag="{StaticResource IconAdmin}" IsEnabled="False" Checked="Nav_Checked"/>
                 </DockPanel>
@@ -361,6 +362,50 @@
                             </DockPanel>
                         </Border>
                     </Grid>
+
+                    <!-- Channels -->
+                    <ScrollViewer x:Name="ChannelsPage" Visibility="Collapsed" VerticalScrollBarVisibility="Auto">
+                        <StackPanel MaxWidth="940" Margin="28,22">
+                            <DockPanel>
+                                <Button x:Name="ChannelsReload" DockPanel.Dock="Right" Content="Reload" Style="{StaticResource BtnGhost}" Click="ChannelsReload_Click"/>
+                                <TextBlock Text="CHANNELS" Style="{StaticResource Label}" VerticalAlignment="Center"/>
+                            </DockPanel>
+                            <TextBlock x:Name="ChannelsSummary" Style="{StaticResource MutedText}" TextWrapping="Wrap" Margin="0,8,0,0"/>
+                            <TextBlock Text="What each channel is for, how busy it is and how many agents are listening. A channel's purpose is written by whoever made it; read it before posting there." Style="{StaticResource MutedText}" TextWrapping="Wrap" Margin="0,4,0,14"/>
+                            <ItemsControl x:Name="ChannelsList" Focusable="False">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <Border Style="{StaticResource Card}">
+                                            <StackPanel>
+                                                <DockPanel>
+                                                    <Button DockPanel.Dock="Right" Content="Show in Monitor" Tag="{Binding}" Style="{StaticResource BtnGhost}" Click="ChannelShow_Click"/>
+                                                    <TextBlock Text="{Binding Label}" FontFamily="{StaticResource Mono}" FontSize="15" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                                                </DockPanel>
+                                                <TextBlock Text="{Binding Purpose}" TextWrapping="Wrap" Margin="0,6,0,0">
+                                                    <TextBlock.Style>
+                                                    <Style TargetType="TextBlock">
+                                                        <Style.Triggers>
+                                                            <DataTrigger Binding="{Binding HasPurpose}" Value="False"><Setter Property="Visibility" Value="Collapsed"/></DataTrigger>
+                                                        </Style.Triggers>
+                                                    </Style>
+                                                </TextBlock.Style>
+                                                </TextBlock>
+                                                <TextBlock Text="{Binding Figures}" TextWrapping="Wrap" Margin="0,6,0,0">
+                                                    <TextBlock.Style>
+                                                    <Style TargetType="TextBlock" BasedOn="{StaticResource MutedText}">
+                                                        <Style.Triggers>
+                                                            <DataTrigger Binding="{Binding HasFigures}" Value="False"><Setter Property="Visibility" Value="Collapsed"/></DataTrigger>
+                                                        </Style.Triggers>
+                                                    </Style>
+                                                </TextBlock.Style>
+                                                </TextBlock>
+                                            </StackPanel>
+                                        </Border>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                        </StackPanel>
+                    </ScrollViewer>
 
                     <!-- Hosts -->
                     <ScrollViewer x:Name="HostsPage" Visibility="Collapsed" VerticalScrollBarVisibility="Auto">
