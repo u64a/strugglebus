@@ -46,6 +46,15 @@ def _maybe(spec: object) -> tuple[str, object]:
     return ("maybe", spec)
 
 
+def _later(spec: object) -> tuple[str, object]:
+    """
+    A field added after v2 was first agreed. A host that does not send it yet is still accepted,
+    so a host and its bus need not be updated at the same moment. When it is sent it is checked
+    like any other field. A field the bus has never heard of is still refused.
+    """
+    return ("later", spec)
+
+
 #: The shape of a v2 snapshot. An object is a dict of exactly these keys: one more or one fewer is
 #: refused, so nothing a snapshot must never carry (a task id, a path, message text) can ride in on
 #: a field the bus does not know.
@@ -90,6 +99,9 @@ SNAPSHOT: dict[str, object] = {
     },
     "model": _maybe(_text(64)),
     "ghcp_ok": _maybe("bool"),
+    # The version of PowerShell 7 the host runs its workers with. Hosts get it from a pinned
+    # archive that an inventory agent cannot see, so the status is where its version is shown.
+    "pwsh": _later(_maybe(_text(32))),
     "tasks": {name: _COUNT for name in TASK_OUTCOMES},
 }
 
@@ -119,7 +131,8 @@ def _fits_scalar(value: object, spec: object) -> bool:
 def _fault_in_keys(value: dict, spec: dict[str, object], path: str) -> str | None:
     """Why an object's set of keys is wrong. Names the place, never an unknown key: that is the sender's text."""
     unknown = bool(set(value) - set(spec))
-    if not unknown and not set(spec) - set(value):
+    needed = {name for name, inner in spec.items() if not _is_later(inner)}
+    if not unknown and not needed - set(value):
         return None
     kind = "unknown-field" if unknown else "missing-field"
     return f"{kind}:{path}" if path else kind
@@ -131,11 +144,16 @@ def _fault_in_object(value: object, spec: dict[str, object], path: str) -> str |
     fault = _fault_in_keys(value, spec, path)
     if fault is not None:
         return fault
-    for name, inner in spec.items():
+    for name in spec.keys() & value.keys():
+        inner = spec[name][1] if _is_later(spec[name]) else spec[name]  # type: ignore[index]
         fault = fault_in(value[name], inner, f"{path}.{name}" if path else name)
         if fault is not None:
             return fault
     return None
+
+
+def _is_later(spec: object) -> bool:
+    return isinstance(spec, tuple) and spec[0] == "later"
 
 
 def _fault_in_list(value: object, spec: tuple, path: str) -> str | None:
