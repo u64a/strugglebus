@@ -119,7 +119,8 @@ they are: coordinators read them to decide whether to send work. This API is an 
 - **Audit:** every write gets an audit line with the agent, the outcome and the size.
 
 **Who sees what.** The bus filters when it reads; the host always sends everything:
-- **Admin only** (a request carrying the operator grant): `account`, `dedicated`, `warnings`, `bus.channel` and
+- **Admin only** (`POST /api/mobile/admin/hosts/status` with the device's grant in the body, the same answer
+  whole): `account`, `dedicated`, `warnings`, `bus.channel` and
   `bus.channel_state`. Together the first three map the weakest machine. A host's channel may be private, and a
   device has no per-channel visibility yet.
 - **Every enrolled device:** everything else, coordinator names included.
@@ -204,7 +205,7 @@ security events.
 outage, sort together at the moment they arrived, each showing its own time.
 
 **Visibility: admins only**, the whole host source (u64-security). It's served only with the operator grant, on
-`GET /api/mobile/admin/logs/full`. The existing log route, which any device can read, leaves host events out.
+`POST /api/mobile/admin/logs/full` (a read; the grant goes in the body, as everywhere). The existing log route, which any device can read, leaves host events out.
 
 ### An event
 

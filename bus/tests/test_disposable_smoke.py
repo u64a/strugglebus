@@ -800,7 +800,7 @@ def test_schema_16_cleanup_leaves_unrelated_keyed_history_untouched(tmp_path):
         ).fetchall() == [(before[0],)]
 
 
-@pytest.mark.parametrize("schema", [10, 25, 99])
+@pytest.mark.parametrize("schema", [10, 26, 99])
 def test_cleanup_unknown_schema_refuses_before_any_mutation(tmp_path, schema):
     path = tmp_path / "fixture.db"
     offline.create_database(path, schema=16)

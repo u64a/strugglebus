@@ -109,6 +109,14 @@ _QUERIES: dict[str, str] = {
         FROM site_document_audit t
         WHERE t.seq > ? ORDER BY t.seq LIMIT 500
     """,
+    "host_agent_audit": """
+        SELECT t.seq AS row_id, t.occurred_at AS ts, 'host-' || t.action AS event,
+               t.agent_id AS agent_id, NULL AS credential_id, NULL AS spn_id,
+               t.request_id AS request_id, t.agent_name AS agent_name,
+               NULL AS identity_expires_at, t.actor_type, t.actor_id
+        FROM host_agent_audit t
+        WHERE t.seq > ? ORDER BY t.seq LIMIT 500
+    """,
 }
 _END_QUERIES: dict[str, str] = {
     "agent_credential_audit": "SELECT COALESCE(MAX(rowid), 0) FROM agent_credential_audit",
@@ -119,6 +127,7 @@ _END_QUERIES: dict[str, str] = {
     "mobile_device_audit": "SELECT COALESCE(MAX(rowid), 0) FROM mobile_device_audit",
     "host_enrollments": "SELECT COALESCE(MAX(rowid), 0) FROM host_enrollments",
     "site_document_audit": "SELECT COALESCE(MAX(seq), 0) FROM site_document_audit",
+    "host_agent_audit": "SELECT COALESCE(MAX(seq), 0) FROM host_agent_audit",
 }
 #: The same selects, newest first, for the operator's log view. Written out
 #: rather than derived, so these too are never assembled at run time.
@@ -191,6 +200,14 @@ _RECENT_QUERIES: dict[str, str] = {
         FROM site_document_audit t
         ORDER BY t.seq DESC LIMIT ?
     """,
+    "host_agent_audit": """
+        SELECT t.seq AS row_id, t.occurred_at AS ts, 'host-' || t.action AS event,
+               t.agent_id AS agent_id, NULL AS credential_id, NULL AS spn_id,
+               t.request_id AS request_id, t.agent_name AS agent_name,
+               NULL AS identity_expires_at, t.actor_type, t.actor_id
+        FROM host_agent_audit t
+        ORDER BY t.seq DESC LIMIT ?
+    """,
 }
 _FIELDS = (
     "ts", "event", "agent_id", "agent_name", "credential_id", "spn_id",
@@ -211,7 +228,8 @@ def _fields(row) -> dict[str, object]:
         **{name: row[name] if name in present else None for name in _HOST_FIELDS},
     }
 #: Request lines carry these too; table rows have them as null and "ok".
-_REQUEST_FIELDS = ("remote_address", "outcome", "status")
+#: ``request_bytes`` is the size the caller declared, on a worker host's reports.
+_REQUEST_FIELDS = ("remote_address", "outcome", "status", "request_bytes")
 
 
 def _line(record: dict[str, object]) -> str:
@@ -222,7 +240,8 @@ def _line(record: dict[str, object]) -> str:
 
 def request_line(
     *, ts: str, event: str, status: int, remote_address: str,
-    spn_id: str | None = None,
+    spn_id: str | None = None, agent_id: str | None = None, agent_name: str | None = None,
+    request_bytes: int | None = None,
 ) -> str:
     """One lifecycle or refused request, from the ASGI gateway.
 
@@ -233,7 +252,8 @@ def request_line(
     record: dict[str, object] = {name: None for name in _FIELDS + _HOST_FIELDS}
     record.update(
         table="request", ts=ts, event=event, spn_id=spn_id,
-        remote_address=remote_address, status=status,
+        agent_id=agent_id, agent_name=agent_name,
+        remote_address=remote_address, status=status, request_bytes=request_bytes,
         outcome="ok" if status < 400 else "refused",
     )
     return _line(record)
@@ -279,6 +299,7 @@ class AuditFeed:
                     record: dict[str, object] = {
                         "table": table, **_fields(row),
                         "remote_address": None, "outcome": "ok", "status": None,
+                        "request_bytes": None,
                     }
                     lines.append((table, int(row["row_id"]), _line(record)))
         for table, row_id, line in lines:

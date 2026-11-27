@@ -8,7 +8,7 @@ from strugglebus.auth import AgentService
 ALLOWED_KEYS = {
     "ts", "table", "event", "agent_id", "agent_name", "credential_id", "spn_id",
     "actor_type", "actor_id", "request_id", "identity_expires_at",
-    "remote_address", "outcome", "status",
+    "remote_address", "outcome", "status", "request_bytes",
     "host_prefix", "document", "serial", "signer_fingerprint",
 }
 
@@ -109,4 +109,4 @@ def test_worker_host_events_reach_the_feed_with_their_own_keys(
 
     recent = audit_feed.recent(store, 10)
     assert {row["table"] for row in recent} >= {"host_enrollments", "site_document_audit"}
-    assert all(set(row) == ALLOWED_KEYS - {"remote_address", "outcome", "status"} for row in recent)
+    assert all(set(row) == ALLOWED_KEYS - {"remote_address", "outcome", "status", "request_bytes"} for row in recent)

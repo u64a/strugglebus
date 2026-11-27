@@ -142,12 +142,12 @@ def test_supported_schema_rejects_missing_duplicate_or_malformed_state(
         inspect_access_freeze(path)
 
 
-@pytest.mark.parametrize("version", [25, 99, 2147483647])
+@pytest.mark.parametrize("version", [26, 99, 2147483647])
 def test_future_schema_and_missing_database_fail_closed(
     tmp_path: Path, version: int
 ) -> None:
     future = tmp_path / "future.db"
-    assert MAX_SUPPORTED_SCHEMA_VERSION == 24
+    assert MAX_SUPPORTED_SCHEMA_VERSION == 25
     with _packaged_database(future, 11) as database:
         database.execute(f"PRAGMA user_version = {version}")
 

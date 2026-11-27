@@ -275,7 +275,7 @@ def _ansible_changed_count(output: str) -> int:
 def run_helper_bootstrap_case(scenario: str) -> None:
     expected_sha256 = {
         "strugglebus-maintenance.py":
-            "b14ff2da4f13071fa75c511b5ca4acc35159897de230d22584a8e809f65b9834",
+            "33966407cdf1928eb43389ac26a911178729a626098e91cf22f2662f74966240",
         "strugglebus-validate-maintenance-config.py":
             "3bda153a3b502b33452aa15d1a0ba01443592a4ee5ce0a3fd690b6b6de0fd58c",
         "strugglebus-release-lock.py":
@@ -285,7 +285,7 @@ def run_helper_bootstrap_case(scenario: str) -> None:
         "strugglebus-validate-backup.py":
             "aad645bf2ac983048b71cd6f973a2e3ee47e1ecdbb6b0571981050f1191a9150",
         "strugglebus-inspect-access-freeze.py":
-            "6dc98305ef1326235803e79ea2b629ec5a3ac180159768d194fdf53c7e2ff9d9",
+            "2da1eda5b0b908f2953f07f0f699cae3dda45d98e656f3ec1850cf55639f205f",
         "strugglebus_inspector_contract.py":
             "7f9cad75f66e14aee399867d0e64fcf821f127c37d6f08d7114ba39cd2de1459",
         "sqlite_backup.py.j2":

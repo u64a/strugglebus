@@ -166,7 +166,7 @@ def test_schema_twenty_one_upgrades_with_durable_identities(tmp_path) -> None:
             "INSERT INTO agents (id, name, created_at) VALUES (?, ?, ?)",
             ("legacy-agent", "legacy-agent", datetime.now(UTC).isoformat()),
         )
-    assert SQLiteStore(path, backup_dir=tmp_path / "backups").initialize() == 24
+    assert SQLiteStore(path, backup_dir=tmp_path / "backups").initialize() == 25
     with sqlite3.connect(path) as database:
         assert database.execute(
             "SELECT expires_at FROM agents WHERE id = 'legacy-agent'"

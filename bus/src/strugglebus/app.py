@@ -39,6 +39,7 @@ from strugglebus.retention import RetentionSweeper
 from strugglebus.capabilities import assert_routes_declared
 from strugglebus.host_enrollment import HostEnrollmentService
 from strugglebus.mobile import MobileService
+from strugglebus.host_status import HostStatusService
 from strugglebus.site_documents import SiteDocumentService
 from strugglebus.satellite import SatelliteService, SiteAuthority
 from strugglebus.spn import ServicePrincipalService
@@ -1184,6 +1185,9 @@ def create_app(
     )
     application.state.site_document_service = SiteDocumentService(
         resolved_agent_service.store,
+    )
+    application.state.host_status_service = HostStatusService(
+        resolved_agent_service.store, clock=utc_now,
     )
     application.state.access_freeze_service = resolved_access_freeze_service
     application.state.roe_service = resolved_roe_service

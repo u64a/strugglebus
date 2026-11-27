@@ -224,7 +224,7 @@ def test_migration_twelve_failure_restores_complete_eleven_transaction(existing)
     "DROP TRIGGER mobile_action_confirmations_bindings_are_immutable",
     "DROP INDEX idx_mobile_write_grants_one_active",
     "DROP TABLE mobile_action_confirmations",
-    "PRAGMA user_version=25",
+    "PRAGMA user_version=26",
 ])
 def test_missing_or_forged_schema_guards_and_future_versions_are_refused(agent_service, statement):
     with sqlite3.connect(agent_service.store.database_path) as connection:

@@ -23,7 +23,7 @@ from pathlib import Path
 # The schema version a freshly installed wheel must report. Kept in step with
 # strugglebus.migrations.LATEST_SCHEMA_VERSION and release_bundle.CURRENT_SCHEMA
 # by tests/test_clean_install_validator.py.
-EXPECTED_SCHEMA_VERSION = 24
+EXPECTED_SCHEMA_VERSION = 25
 # The guide version a freshly installed service must serve, kept in step with
 # strugglebus.integration.GUIDE_VERSION by the same test.
 EXPECTED_GUIDE_VERSION = "1.19.0"

@@ -87,7 +87,7 @@ def test_an_upgraded_bus_starts_with_retention_off(tmp_path, row):
             )
     store = SQLiteStore(database_path, backup_dir=tmp_path / "backups")
 
-    assert store.initialize() == 24
+    assert store.initialize() == 25
 
     settings = store.get_retention()
     assert (settings.message_days, settings.idle_agent_days) == (None, None)

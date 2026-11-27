@@ -62,7 +62,7 @@ def _code(client, secret, grant, prefix="host-office1") -> str:
 
 def test_schema_twenty_four_adds_the_worker_host_tables(surface) -> None:
     _client, _secret, _agents, store = surface
-    assert LATEST_SCHEMA_VERSION == 24
+    assert LATEST_SCHEMA_VERSION == 25
     with sqlite3.connect(store.database_path) as connection:
         tables = {row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
     assert {"host_enrollments", "site_documents", "site_document_audit"} <= tables

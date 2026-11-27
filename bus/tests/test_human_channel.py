@@ -122,7 +122,7 @@ def test_schema_nineteen_upgrades_an_existing_database(tmp_path):
             "INSERT INTO agents (id, name, created_at) VALUES ('existing', 'operator', '2026-01-01T00:00:00Z')",
         )
     store = SQLiteStore(database_path, backup_dir=tmp_path / "backups")
-    assert store.initialize() == LATEST_SCHEMA_VERSION == 24
+    assert store.initialize() == LATEST_SCHEMA_VERSION == 25
     assert list((tmp_path / "backups").iterdir())
     with sqlite3.connect(database_path) as database:
         assert database.execute("SELECT name FROM agents WHERE id = 'existing'").fetchone() == ("operator",)

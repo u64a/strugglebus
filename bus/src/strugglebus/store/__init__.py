@@ -16,6 +16,7 @@ from strugglebus.store._credentials import CredentialMixin
 from strugglebus.store._dashboard import DashboardMixin
 from strugglebus.store._enrollment import EnrollmentMixin
 from strugglebus.store._host_enrollment import HostEnrollmentMixin
+from strugglebus.store._hosts import HostsMixin
 from strugglebus.store._lifecycle import LifecycleMixin
 from strugglebus.store._messages import MessagesMixin
 from strugglebus.store._mobile import MobileMixin
@@ -35,6 +36,7 @@ class SQLiteStore(
     EnrollmentMixin,
     ServicePrincipalMixin,
     HostEnrollmentMixin,
+    HostsMixin,
     CredentialMixin,
     MessagesMixin,
     TaskClaimsMixin,

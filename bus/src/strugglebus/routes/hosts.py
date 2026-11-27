@@ -15,10 +15,12 @@ from strugglebus.errors import (
     StorageError,
 )
 from strugglebus.errors import ConfigurationError
+from strugglebus.host_status import NotAHostError, RefusedError, TooLargeError, TooSoonError
 from strugglebus.models import Agent
 from strugglebus.routes.dependencies import _secret_response_headers, require_agent
 from strugglebus.routes.schemas import (
     HostRedemptionRequest,
+    HostReportResponse,
     RedeemedHostResponse,
     SiteDocumentResponse,
 )
@@ -46,7 +48,60 @@ def _refusal(error: Exception) -> HTTPException:
     return HTTPException(status_code=503, detail=UNAVAILABLE)
 
 
+NOT_A_HOST = "not-a-host"
+TOO_LARGE = "too-large"
+TOO_SOON = "too-soon"
+
+
+def _report_refusal(error: Exception) -> HTTPException:
+    """Why a host's report was not stored, in fixed words a host can act on."""
+
+    if isinstance(error, TooLargeError):
+        return HTTPException(status_code=413, detail=TOO_LARGE)
+    if isinstance(error, NotAHostError):
+        return HTTPException(status_code=403, detail=NOT_A_HOST)
+    if isinstance(error, TooSoonError):
+        return HTTPException(
+            status_code=429, detail=TOO_SOON, headers={"Retry-After": str(error.retry_after)},
+        )
+    if isinstance(error, RefusedError):
+        return HTTPException(status_code=400, detail=error.reason)
+    return HTTPException(status_code=503, detail=UNAVAILABLE)
+
+
 def add_host_routes(router: APIRouter) -> None:
+    @router.post(
+        "/api/hosts/status",
+        response_model=HostReportResponse,
+        status_code=status.HTTP_201_CREATED,
+        responses={
+            400: {"description": "The snapshot does not fit the contract; the detail says where"},
+            403: {"description": "not-a-host"},
+            413: {"description": "too-large"},
+            429: {"description": "too-soon"},
+            503: {"description": "unavailable"},
+        },
+    )
+    async def report_host_status(
+        request: Request,
+        agent: Annotated[Agent, Depends(require_agent)],
+    ) -> HostReportResponse:
+        """A worker host reports what it is doing, for the App's Hosts page.
+
+        The body is the v2 snapshot, at most 16 KB, at most once every ten
+        seconds. Only an agent the bus has marked as a host may report, and
+        the report is stored under the caller's own identity whatever it says.
+        """
+
+        body = await request.body()
+        try:
+            received_at = await asyncio.to_thread(
+                request.app.state.host_status_service.record, agent.id, agent.name, body,
+            )
+        except (DomainValidationError, StorageError) as error:
+            raise _report_refusal(error) from None
+        return HostReportResponse(received_at=received_at)
+
     @router.post(
         "/api/hosts/enrollments/redeem",
         response_model=RedeemedHostResponse,

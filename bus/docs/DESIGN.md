@@ -3060,3 +3060,82 @@ decodes the command. It is the carrier. A worker host acts only if the
 signature checks against keys an administrator pinned on that host, so a bus
 message still carries no authority of its own, and an unsigned message on that
 channel is ignored as it always was.
+
+## 25. Decision: host status, the host mark, and the stored event log
+
+Schema 25. The owner asked for a Hosts page in the Windows App, showing what
+each worker host is doing with twelve hours of history, and for a bus log that
+still shows a problem after it has passed. The contract with the worker host
+is `worker-host/docs/app-host-integration.md` sections 1a and 1b, agreed on
+#humans with u64-security's review (bus messages 28827 to 28850), and the
+shared test files are in `contracts/host-status/` and `contracts/host-events/`.
+
+### Only a marked agent is a host
+
+A worker host's agent is an ordinary agent. What lets it report as a host is
+a mark the bus keeps (`host_agents`). The mark is made in one of two ways:
+
+- **By its own enrolment.** When a service principal that was made by
+  redeeming a host enrolment code registers the agent named
+  `<prefix>-host`, the bus marks that agent in the same transaction. The
+  workers the same principal registers have other names and are not marked.
+- **By an administrator**, for a host enrolled before this existed, and to take
+  the mark away from a machine that is a host no longer
+  (`POST /api/mobile/admin/agents/{agent_id}/host`, with the device's grant).
+
+A name that looks like a host's never counts. Every mark and unmark is a row
+in `host_agent_audit`, which cannot be changed, and reaches the audit feed as
+`host-marked` or `host-unmarked`. Taking the mark away also removes the host's
+stored status, so it stops appearing as a host.
+
+### A host reports; the bus checks the shape and stamps the time
+
+`POST /api/hosts/status` takes the v2 snapshot from the host's own agent.
+
+- **Whose it is** comes from the authenticated agent. The snapshot's `agent`
+  must name the caller, or it is refused.
+- **The shape is checked exactly**: every field's kind and length, no field
+  missing and none unknown. A snapshot must never carry a task id, a path or
+  message text, and an exact shape is what stops one riding in on a field the
+  bus does not know. A refusal names the place in the bus's own words
+  (`bad-value:machine.cpu_pct`) and never repeats what the host sent.
+- **16 KB at most, and once every ten seconds** per host. The pause is kept in
+  the database, so it holds across a restart.
+- **The bus stamps `received_at`.** How old a report is, and so whether a host
+  is alive, is worked out from the bus's clock, never the host's. Every answer
+  to the App carries the bus's `now` for that.
+- **Storage:** the latest snapshot whole, and a sample of each report (about
+  200 bytes: state, workers, machine, outbox, held clones, task totals) for
+  twelve hours. A host's own report trims its older samples in the same
+  transaction; the hourly sweep removes those of hosts that stopped.
+
+Reporting works during an access freeze. A report gives a host no authority,
+and what the hosts are doing is something an operator wants to see then.
+
+### Who reads what
+
+- `GET /api/mobile/hosts/status` and
+  `GET /api/mobile/hosts/{agent_id}/status/history`: any enrolled device.
+  The account a host runs as, whether that account is its own, its warnings
+  and its channel are left out.
+- `POST /api/mobile/admin/hosts/status`: the whole snapshot, with the device's
+  grant. It is a read sent as a POST, like every other use of the grant, so
+  the grant travels in the body and never in an address or a header that a
+  log might keep.
+
+A snapshot is the host's own claim. It is shown as plain text and never acted
+on.
+
+### The audit feed
+
+Every report, stored or refused, gets a request line with the host's agent
+and the size it declared (`request_bytes`, a new key that is null on every
+other line). Reports that worked are kept out of the device's short in-memory
+log, where one a minute per host would push out the lines an operator opens
+that log to find.
+
+### The event log
+
+`bus_events` is in this schema and is filled by the next change: a fixed type
+with a few checked fields per event, no free text from a host or an upstream
+server, each event id stored once, deleted by age and by per-source limits.
