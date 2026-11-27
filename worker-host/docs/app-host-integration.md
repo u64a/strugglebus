@@ -656,13 +656,17 @@ ciphertext**. "Admin-only and never logged" would be a promise about every code 
 the audit feed, the App's own logs, a crash dump. Encryption makes it hold even if one of them slips.
 
 **The host's key:**
-- the host makes an X25519 key pair the first time it's needed;
+- the bootstrap makes the X25519 key pair as the account (§2.2, with the sign-ins), and **prints its fingerprint** in
+  the install output beside the others. So the App's first pin is compared with what the operator saw on the machine
+  itself, not trusted on first use (u64-security, 29120). A host installed before this makes its key the first time
+  it's needed, and its first pin is compared by running `wh status` on the machine;
 - the private key is stored with DPAPI, as the host's account, beside its other credentials;
 - the public key goes in its status as `sign_in_key` (admin-only): `{"x25519": "<base64>", "fingerprint":
   "SHA256:<base64 of SHA-256 over the key>"}`.
 
 **The App pins that fingerprint per host:**
-- it shows the fingerprint with the host's name the first time, and the operator confirms it;
+- it shows the fingerprint with the host's name the first time, and the operator confirms it **matches the one the
+  install printed**;
 - a changed key is never used until the operator confirms it again (with Windows Hello), and the App says plainly
   that the host's key changed.
 
@@ -670,14 +674,18 @@ the audit feed, the App's own logs, a crash dump. Encryption makes it hold even 
 1. The operator pastes the token into the App. The App never stores it and never logs it.
 2. The App encrypts the token to the pinned key:
    - a fresh X25519 key pair for this message (`epk`, its public half);
-   - HKDF-SHA256 over the shared secret, info `strugglebus-claude-token v1`;
+   - HKDF-SHA256 over the shared secret, with salt = `epk` followed by the host's public key (the usual ECIES binding:
+     the derived key belongs to exactly that pair) and info `strugglebus-claude-token v1`. An all-zero shared secret
+     (a low-order point) is refused on both sides (u64-security, 29120);
    - AES-256-GCM, with the host's agent name and the command's nonce as associated data, so the ciphertext can't be
      replayed to another host or in another command.
    - `ct` is the 12-byte IV, the ciphertext and the tag, base64.
 3. The App sends it in a signed `sign-in-claude` command. A token of about 100 characters fits within §4's 1 KB
    document cap.
-4. The host checks the command (all of §4's rules), decrypts, and stores the token with DPAPI. The host's own
-   records keep only the date it arrived, never the token. When the host runs Claude Code workers it gives it as
+4. The host checks the command (all of §4's rules), decrypts, and stores the token with DPAPI. **A failed decryption**
+   (a bad tag, or the wrong key) is the event `sign-in-failed` with `reason=decrypt`, and the status says so. The App
+   then shows "the host could not open it; its key may have changed", never a silent failure.
+5. On success, the host's own records keep only the date it arrived, never the token. When the host runs Claude Code workers it gives it as
    `CLAUDE_CODE_OAUTH_TOKEN`.
 
 **The token's life:**
@@ -709,7 +717,7 @@ security events, through bus-dev's existing App audit path. None carries a code,
 - **Host (sbworkerhost-project):**
   - the three verbs and their checks;
   - the headless sign-ins and their output parsing, refusing anything unexpected;
-  - the X25519 key and the decryption;
+  - the X25519 key (made and fingerprinted by the bootstrap) and the decryption;
   - the `sign_in`, `sign_in_key` and `claude_token_since` status fields;
   - the events and the `claude-token-old` warning;
   - the token passed to Claude Code workers;
