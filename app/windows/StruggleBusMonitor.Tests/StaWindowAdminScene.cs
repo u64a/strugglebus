@@ -66,6 +66,18 @@ internal sealed class StaWindowAdminPlatform : IWindowPlatform
     public string SignedInstallerPath { get; set; } = Path.Combine(Path.GetTempPath(), $"no-signed-installer-{Guid.NewGuid():N}.ps1");
     public List<string> SuggestedHostFileNames { get; } = [];
 
+    public string? FleetFilePath { get; set; }
+    public SshVerdict Verdict { get; set; } = SshVerdict.Good;
+    public List<(string Signer, string Principal, string Purpose, int Bytes)> Verified { get; } = [];
+
+    public string? PickFleetFile(Window owner) => FleetFilePath;
+
+    public Task<SshVerdict> VerifySshSignatureAsync(byte[] message, string signature, string signerLine, string principal, string purpose)
+    {
+        Verified.Add((signerLine, principal, purpose, message.Length));
+        return Task.FromResult(Verdict);
+    }
+
     public string? PickHostFilePath(Window owner, string suggestedName)
     {
         SuggestedHostFileNames.Add(suggestedName);
