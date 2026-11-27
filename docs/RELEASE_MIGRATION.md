@@ -91,7 +91,12 @@ Afterwards the private repository stays only for `fleet.toml`, until hosts read 
 
 ### 2. Windows App (bus-dev)
 
-- [ ] Prove the App's updater finds the right release when other releases sit beside it in one repository, reading only `windows/` tags.
+- [x] Prove the App's updater finds the right release when other releases sit beside it in one repository, reading only `windows/` tags.
+      The App's own source (`AppReleaseSource`) lists `windows/v*` tags and reads each release's
+      files from its download address. Run against real GitHub on 27 November 2026 (UTC), in
+      `u64a/strugglebus-2-release-test`: beside a bus release marked latest, with a newer
+      `windows/` tag that has no release, it found the app release and downloaded a package whose
+      hash matched.
 - [x] Release tags protected here (see "Before or with the move").
 - [ ] A signed App release, published at the old place, that reads updates from here.
 - [ ] `release-signed.ps1` publishes here. `NZCypher819/StruggleApp-Privacy` kept read-only.
