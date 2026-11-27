@@ -175,6 +175,8 @@ class _HTTP:
             error.close()
             if code in _TRANSIENT:
                 raise _Retry() from None
+            if code == 404:
+                raise SourceMissing() from None
             raise UpdateError("source_unavailable") from None
         except ReleasePublicationError:
             raise UpdateError("invalid_metadata") from None
@@ -294,6 +296,16 @@ class _HTTP:
             if delay >= remaining(self.deadline):
                 raise UpdateError("timeout")
             _SLEEP(delay)
+
+
+class SourceMissing(UpdateError):
+    """
+    The source answered that there is nothing at the address. To every caller that does not ask
+    for it by name this is the same failure as before, the source being unavailable.
+    """
+
+    def __init__(self) -> None:
+        super().__init__("source_unavailable")
 
 
 class _Retry(Exception):

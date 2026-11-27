@@ -134,11 +134,20 @@ copies are retired only after a green run here.
 
 - **0.2.73 is the move and nothing else.** It is the last release published at the old place. It
   changes where the updaters look to this repository and to tags named `bus/v*`.
-- The self-hosted fetcher stops asking for "the latest release", which in a shared repository
-  could be the App's. It lists releases once per run, a small page, and takes those with the
-  `bus/v` prefix. It then asks the old place as well and takes the newer of the two, so a bus is
-  not left without updates if it cannot use the new place. That is two anonymous calls per check
-  where there was one. A release from either place is installed only if a release key signed it.
+- Both updaters find bus releases **by tag**, not by reading the repository's list of releases.
+  The list is shared with the App, which releases more often, so a bus release would in time be
+  pushed off the end of any page of it and a bus would quietly stop seeing updates (found in
+  review by u64-security, bus message 28876). The question "which tags start `bus/v`" is answered
+  with those alone, whatever else is published.
+- A tag is not a release. Anyone who can push can make a tag, so an updater takes the newest tag
+  that has a published release, trying the newest five. A stray tag cannot hide a real update,
+  and a release still installs only if a release key signed it.
+- Tags are never deleted, so their number only grows. An updater reads up to a thousand. If there
+  are ever more and no update is found among those read, the check fails where it can be seen;
+  it never reports "nothing newer".
+- The self-hosted fetcher then asks the old place as well and takes the newer of the two, so a
+  bus is not left without updates if it cannot use the new place. That is two anonymous calls per
+  check where there was one, and a third when there is an update to fetch.
 - Ansible installs name the release repository in `/etc/strugglebus-updater/worker.json`, which
   the operator supplies. The 0.2.73 updater accepts a file naming either this repository
   (`u64a/strugglebus` for both values) or the old pair, so the file does not have to change at

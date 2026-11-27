@@ -65,6 +65,10 @@ namespace/DAC/ACL behavior remains a real-host adoption gate.
 From 0.2.73 the fixed update source is the project's own public repository,
 `u64a/strugglebus`, which also holds the releases of the project's other parts.
 A bus release there is tagged `bus/vX.Y.Z`; no other tag is a bus release.
+The updater finds releases by asking for the tags that start `bus/v`, never by
+reading the repository's shared list of releases, so releases of other parts
+cannot push a bus release out of view. It takes the newest tag that has a
+published release.
 Inside the release, and in the updater's own records, its tag is still `vX.Y.Z`.
 Up to 0.2.72 the source was `NZCypher819/strugglebus-releases`, and 0.2.73 itself
 is published there, because the buses that fetch it still look there.

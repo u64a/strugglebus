@@ -71,6 +71,20 @@ def publication(tmp_path, monkeypatch):
     return directory
 
 
+def tag_answer(number: int = 1) -> str:
+    """The address of one answer to the question for the repository's bus tags."""
+    return f"{source._TAG_REFS}?per_page=100&page={number}"
+
+
+def tag_refs(*tags: str) -> list[dict]:
+    return [{"ref": f"refs/tags/{tag}", "object": {"type": "tag", "sha": TAG_SHA}} for tag in tags]
+
+
+def release_for(tag: str) -> str:
+    """The address that answers with the release published for a tag."""
+    return f"{source._ROOT}/releases/tags/{tag}"
+
+
 class FixtureAPI:
     def __init__(self, directory):
         self.directory = directory
@@ -96,7 +110,8 @@ class FixtureAPI:
             "draft": False, "prerelease": False, "immutable": True,
         }
         self.routes = {
-            f"{source._ROOT}/releases?per_page=20&page=1": [self.release],
+            tag_answer(): tag_refs(PUBLISHED_TAG),
+            release_for(PUBLISHED_TAG): self.release,
             f"{source._ROOT}/releases/81": self.release,
             f"{source._ROOT}/git/ref/tags/{PUBLISHED_TAG}": {
                 "ref": f"refs/tags/{PUBLISHED_TAG}", "object": {"type": "tag", "sha": TAG_SHA},
@@ -141,6 +156,9 @@ class FixtureAPI:
         assert request.get_method() == "GET" and request.data is None
         if "/releases/assets/" in path:
             return self.asset_response(request, int(path.rsplit("/", 1)[1]))
+        if path not in self.routes and "/releases/tags/" in path:
+            # A tag that has no published release.
+            raise urllib.error.HTTPError(request.full_url, 404, "Not Found", Message(), None)
         value = self.routes[path]
         if callable(value):
             value = value()
@@ -263,23 +281,55 @@ def test_blocked_publication_is_not_hidden_by_older_release(fixture_api, field, 
     assert result.blocked_version == VERSION and result.blocked_reason == "unsupported_release"
 
 
-def test_bounded_listing_resolves_only_newest_and_reports_incomplete(fixture_api):
+def test_every_answer_of_tags_is_read_and_only_the_newest_release_is_resolved(fixture_api):
+    """Tags come in name order, so the newest can be anywhere."""
     api, reader = fixture_api
-    older = {**api.release, "id": 80, "tag_name": "bus/v0.2.28"}
-    api.routes[f"{source._ROOT}/releases?per_page=20&page=1"] = [older] + [
-        {**api.release, "id": i, "tag_name": f"bus/v0.1.{i}"} for i in range(19)]
-    api.routes[f"{source._ROOT}/releases?per_page=20&page=2"] = [api.release] + [
-        {**api.release, "id": i + 20, "tag_name": f"bus/v0.1.{i + 20}"} for i in range(19)]
+    older = {**api.release, "id": 80, "tag_name": "bus/v0.2.28", "name": "bus/v0.2.28"}
+    api.routes[tag_answer(1)] = tag_refs(*(f"bus/v0.1.{i}" for i in range(100)))
+    api.routes[tag_answer(2)] = tag_refs("bus/v0.2.28", PUBLISHED_TAG)
+    api.routes[release_for("bus/v0.2.28")] = older
     result = reader.check("0.2.27", deadline=220)
-    assert result.candidate.version == VERSION and not result.complete and result.inspected == 40
+    assert result.candidate.version == VERSION and result.complete and result.inspected == 40
+    assert ("GET", release_for("bus/v0.2.28")) not in api.requests
     assert ("GET", f"{source._ROOT}/releases/80") not in api.requests
     assert not any("page=3" in path for _, path in api.requests)
+
+
+def test_other_releases_cannot_bury_a_bus_release(fixture_api):
+    """The shared list of releases is never read, so nothing published after a bus release hides it."""
+    api, reader = fixture_api
+    api.routes[f"{source._ROOT}/releases?per_page=20&page=1"] = [
+        {**api.release, "id": 200 + i, "tag_name": f"windows/v9.9.{i}"} for i in range(20)]
+    api.routes[f"{source._ROOT}/releases?per_page=20&page=2"] = [
+        {**api.release, "id": 300 + i, "tag_name": f"windows/v9.8.{i}"} for i in range(20)]
+    result = reader.check("0.2.27", deadline=220)
+    assert result.candidate.version == VERSION and result.complete
+    assert not any("/releases?" in path for _, path in api.requests)
+
+
+def test_more_tags_than_can_be_read_with_no_update_among_them_fails_the_check(fixture_api):
+    """It is never reported as nothing newer."""
+    api, reader = fixture_api
+    for answer in range(1, source._TAG_ANSWERS + 1):
+        api.routes[tag_answer(answer)] = tag_refs(*(f"bus/v0.1.{i}" for i in range(100)))
+    with pytest.raises(UpdateError, match="invalid_metadata"):
+        reader.check("0.2.27", deadline=220)
+    assert not any(f"page={source._TAG_ANSWERS + 1}" in path for _, path in api.requests)
+
+
+def test_more_tags_than_can_be_read_still_offers_an_update_found_among_them(fixture_api):
+    api, reader = fixture_api
+    for answer in range(1, source._TAG_ANSWERS + 1):
+        api.routes[tag_answer(answer)] = tag_refs(*(f"bus/v0.1.{i}" for i in range(99)), PUBLISHED_TAG)
+    result = reader.check("0.2.27", deadline=220)
+    assert result.candidate.version == VERSION and not result.complete and result.inspected == 40
 
 
 def test_blocked_newest_release_does_not_fall_back_to_an_older_one(fixture_api):
     api, reader = fixture_api
     older = {**api.release, "id": 80, "tag_name": "bus/v0.2.28"}
-    api.routes[f"{source._ROOT}/releases?per_page=20&page=1"] = [api.release, older]
+    api.routes[tag_answer()] = tag_refs(PUBLISHED_TAG, "bus/v0.2.28")
+    api.routes[release_for("bus/v0.2.28")] = older
     api.routes[f"{source._ROOT}/releases/81"] = {**api.release, "immutable": False}
     result = reader.check("0.2.27", deadline=220)
     assert result.candidate is None
@@ -287,20 +337,47 @@ def test_blocked_newest_release_does_not_fall_back_to_an_older_one(fixture_api):
     assert ("GET", f"{source._ROOT}/releases/80") not in api.requests
 
 
-@pytest.mark.parametrize("draft,prerelease,tag", [(True, False, PUBLISHED_TAG), (False, True, PUBLISHED_TAG),
-                                               (False, False, "bus/v0.3.0rc1"), (False, False, "bus/v00.3.0"),
-                                               (False, False, TAG), (False, False, "windows/" + TAG)])
-def test_nonstable_or_unpublished_records_are_not_candidates(fixture_api, draft, prerelease, tag):
+@pytest.mark.parametrize("tag", ["bus/v0.3.0rc1", "bus/v00.3.0", TAG, "windows/" + TAG, "bus/" + VERSION])
+def test_tags_that_are_not_bus_release_tags_are_not_candidates(fixture_api, tag):
     api, reader = fixture_api
-    api.routes[f"{source._ROOT}/releases?per_page=20&page=1"] = [
-        {**api.release, "draft": draft, "prerelease": prerelease, "tag_name": tag}]
-    assert reader.check("0.2.27", deadline=220).candidate is None
+    api.routes[tag_answer()] = tag_refs(tag)
+    api.routes[release_for(tag)] = api.release
+    result = reader.check("0.2.27", deadline=220)
+    assert result.candidate is None and result.blocked_reason is None and result.complete
 
 
-def test_duplicate_highest_release_is_blocked(fixture_api):
+@pytest.mark.parametrize("field", ["draft", "prerelease"])
+def test_a_tag_whose_release_is_not_published_is_not_a_candidate(fixture_api, field):
     api, reader = fixture_api
-    api.routes[f"{source._ROOT}/releases?per_page=20&page=1"] = [api.release, {**api.release, "id": 82}]
-    assert reader.check("0.2.27", deadline=220).blocked_reason == "publication_changed"
+    api.routes[release_for(PUBLISHED_TAG)] = {**api.release, field: True}
+    result = reader.check("0.2.27", deadline=220)
+    assert result.candidate is None and result.blocked_reason is None
+
+
+def test_a_newer_tag_with_no_release_does_not_hide_a_real_update(fixture_api):
+    """Anyone who can push can make a tag. Only a published release counts."""
+    api, reader = fixture_api
+    api.routes[tag_answer()] = tag_refs("bus/v9.9.9", "bus/v9.9.8", PUBLISHED_TAG)
+    api.routes[release_for("bus/v9.9.8")] = {**api.release, "id": 90, "draft": True}
+    result = reader.check("0.2.27", deadline=220)
+    assert result.candidate.version == VERSION
+    assert ("GET", release_for("bus/v9.9.9")) in api.requests
+
+
+def test_only_the_newest_few_tags_are_tried(fixture_api):
+    api, reader = fixture_api
+    stray = [f"bus/v9.9.{n}" for n in range(source._TAGS_TRIED)]
+    api.routes[tag_answer()] = tag_refs(PUBLISHED_TAG, *stray)
+    result = reader.check("0.2.27", deadline=220)
+    assert result.candidate is None and result.blocked_reason is None
+    assert ("GET", release_for(PUBLISHED_TAG)) not in api.requests
+
+
+def test_a_release_that_cannot_be_reached_is_not_taken_for_a_missing_one(fixture_api):
+    api, reader = fixture_api
+    api.routes[release_for(PUBLISHED_TAG)] = urllib.error.HTTPError("https://x", 403, "no", Message(), None)
+    with pytest.raises(UpdateError, match="source_unavailable"):
+        reader.check("0.2.27", deadline=220)
 
 
 @pytest.mark.parametrize("endpoint,field,value", [
@@ -512,7 +589,7 @@ def test_candidate_resolution_rejects_incomplete_or_overbudget_identity(fixture_
     elif change == "release_id":
         api.routes[f"{source._ROOT}/releases/81"] = {**api.release, "id": 82}
     else:
-        api.routes[f"{source._ROOT}/releases?per_page=20&page=1"] = [api.release] * 21
+        api.routes[tag_answer()] = tag_refs(*(f"bus/v0.1.{i}" for i in range(101)))
         with pytest.raises(UpdateError, match="invalid_metadata"):
             reader.check("0.2.27", deadline=220)
         return

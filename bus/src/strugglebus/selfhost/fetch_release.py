@@ -38,8 +38,21 @@ from pathlib import Path
 # its other parts. A bus release there is tagged bus/vX.Y.Z, and nothing else is a bus release.
 REPOSITORY = "u64a/strugglebus"
 TAG_PREFIX = "bus/v"
-API = f"https://api.github.com/repos/{REPOSITORY}/releases?per_page=30"
+API = f"https://api.github.com/repos/{REPOSITORY}/releases"
 DOWNLOAD_PREFIX = f"https://github.com/{REPOSITORY}/releases/download/"
+
+# Bus releases are found there by their tags, not by reading the list of releases. The list is
+# shared with the project's other parts, which release more often, so a bus release would in time
+# be pushed off the end of any page of it and a bus would quietly stop seeing updates. A question
+# for the tags starting bus/v is answered with those alone.
+TAGS = f"https://api.github.com/repos/{REPOSITORY}/git/matching-refs/tags/{TAG_PREFIX}?per_page=100"
+TAGS_IN_ONE_ANSWER = 100
+# Tags are never deleted, so in time there are more than one answer holds and further answers
+# are asked for. This many answers is ten times the releases made in the project's first year.
+TAG_ANSWERS = 10
+# A tag is not a release until a release is published for it. So that a stray tag cannot hide a
+# real update, the newest few tags are tried in turn.
+TAGS_TRIED = 5
 
 # Where releases were published up to 0.2.73. It is still asked, after the place above, so a bus
 # is never left without updates if it cannot use the new place. A release from either is taken
@@ -59,6 +72,10 @@ class Problem(Exception):
         self.code = code
 
 
+class Missing(Problem):
+    """The address answered that there is nothing there. Elsewhere it is an ordinary Problem."""
+
+
 def parse_version(text: str) -> tuple[int, int, int]:
     match = _VERSION.fullmatch(text)
     if match is None:
@@ -76,7 +93,8 @@ def _read(url: str, limit: int) -> bytes:
         with urllib.request.urlopen(request, timeout=60) as response:  # noqa: S310  # nosec B310
             data = response.read(limit + 1)
     except (urllib.error.URLError, OSError, ValueError) as error:
-        raise Problem(UNREACHABLE, f"could not download {url}: {error}") from None
+        kind = Missing if getattr(error, "code", None) == 404 else Problem
+        raise kind(UNREACHABLE, f"could not download {url}: {error}") from None
     if len(data) > limit:
         raise Problem(INVALID, f"{url} is larger than expected")
     return data
@@ -417,11 +435,9 @@ def _only_release(page: object, api: str, download_prefix: str) -> list[_Release
 
 def _newest_release(api: str, download_prefix: str) -> _Release | None:
     """
-    The newest bus release a place offers, or None when it has none.
+    The newest bus release on a page that the former place, or an operator's mirror, serves.
 
-    The project's repository answers with a list that also holds other parts' releases, so only
-    tags starting bus/v count there. A page that describes a single release is the former place,
-    or a mirror.
+    The page describes one release, or is a list of them in which only tags starting bus/v count.
     """
     try:
         page = json.loads(_read(api, 2 * 1024 * 1024))
@@ -435,7 +451,61 @@ def _newest_release(api: str, download_prefix: str) -> _Release | None:
     return max(releases, key=lambda release: parse_version(release.version), default=None)
 
 
-def _newest_anywhere(places: tuple[tuple[str, str], ...]) -> _Release | None:
+def _tag_names() -> list[str]:
+    """Every tag in the project's repository that starts bus/v."""
+    names: list[str] = []
+    for answer in range(1, TAG_ANSWERS + 1):
+        address = TAGS if answer == 1 else f"{TAGS}&page={answer}"
+        try:
+            refs = json.loads(_read(address, 2 * 1024 * 1024))
+            if not isinstance(refs, list):
+                raise TypeError("refs")
+            names += [str(ref["ref"]) for ref in refs]
+        except (ValueError, KeyError, TypeError):
+            raise Problem(INVALID, "the list of release tags could not be read") from None
+        if len(refs) < TAGS_IN_ONE_ANSWER:
+            return names
+    # Still more tags than were read. Saying "nothing newer" could then be wrong, so say so.
+    raise Problem(INVALID, "there are more release tags than this updater can read; update it by hand")
+
+
+def _tagged_versions(installed: tuple[int, int, int]) -> list[str]:
+    """The versions newer than the installed one that have a bus tag, newest first."""
+    versions = {_version_of(name.removeprefix("refs/tags/"), (TAG_PREFIX,)) for name in _tag_names()}
+    newer = [version for version in versions if version is not None and parse_version(version) > installed]
+    return sorted(newer, key=parse_version, reverse=True)
+
+
+def _published(version: str) -> _Release | None:
+    """The release published for a bus tag, or None when the tag has none."""
+    address = f"{API}/tags/{TAG_PREFIX}{version}"
+    try:
+        page = json.loads(_read(address, 2 * 1024 * 1024))
+        release = _described(page, (TAG_PREFIX,), API, DOWNLOAD_PREFIX)
+    except Missing:
+        return None
+    except (ValueError, KeyError, TypeError, AttributeError):
+        raise Problem(INVALID, "the release page did not describe a release") from None
+    return release if release is not None and release.version == version else None
+
+
+def _newest_here(installed: tuple[int, int, int]) -> _Release | None:
+    """The newest bus release in the project's repository that is newer than the installed one."""
+    for version in _tagged_versions(installed)[:TAGS_TRIED]:
+        release = _published(version)
+        if release is not None:
+            return release
+    return None
+
+
+def _newest_at(place: tuple[str, str], installed: tuple[int, int, int]) -> _Release | None:
+    api, download_prefix = place
+    if place == (API, DOWNLOAD_PREFIX):
+        return _newest_here(installed)
+    return _newest_release(api, download_prefix)
+
+
+def _newest_anywhere(places: tuple[tuple[str, str], ...], installed: tuple[int, int, int]) -> _Release | None:
     """
     The newest bus release across the places to ask. A place that cannot be reached or read is
     passed over while another answers; if none answers, the first problem is reported.
@@ -443,9 +513,9 @@ def _newest_anywhere(places: tuple[tuple[str, str], ...]) -> _Release | None:
     best: _Release | None = None
     answered = False
     problem: Problem | None = None
-    for api, download_prefix in places:
+    for place in places:
         try:
-            release = _newest_release(api, download_prefix)
+            release = _newest_at(place, installed)
         except Problem as error:
             problem = problem or error
             continue
@@ -506,7 +576,7 @@ def _places(api: str, download_prefix: str) -> tuple[tuple[str, str], ...]:
 
 def fetch(installed: str, into: Path, *, api: str, download_prefix: str) -> tuple[str, str]:
     current = parse_version(installed)
-    release = _newest_anywhere(_places(api, download_prefix))
+    release = _newest_anywhere(_places(api, download_prefix), current)
     if release is None:
         return "current", installed
     tag, version, assets = release.tag, release.version, release.assets
