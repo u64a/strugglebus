@@ -408,6 +408,38 @@ function Get-WingetPackageDir([string]$target, [string]$root = $WingetPackages) 
     return $r + $package
 }
 
+$TrustedSids = @('S-1-5-32-544', 'S-1-5-18', 'S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464')  # Administrators, SYSTEM, TrustedInstaller
+$CreatorOwner = 'S-1-3-0'
+$WriteRights = [Security.AccessControl.FileSystemRights]'WriteData, AppendData, WriteExtendedAttributes, WriteAttributes, Delete, DeleteSubdirectoriesAndFiles, ChangePermissions, TakeOwnership'
+
+function Get-AclProblem([string]$ownerSid, $aces) {
+    # Pure: why this folder is NOT safe to inherit from, or $null. Owner Administrators, SYSTEM or TrustedInstaller;
+    # write (any of $WriteRights) allowed to nobody else. CREATOR OWNER as an inherit-only entry is what Program Files
+    # itself has: it grants nothing on the folder, only the creator of something inside (here, an administrator).
+    # $aces: @{ sid; rights (int); allow (bool); inheritOnly (bool) }.
+    if ($TrustedSids -notcontains $ownerSid) { return "owned by $ownerSid" }
+    foreach ($a in @($aces)) {
+        if (-not $a.allow -or ($a.rights -band [int]$WriteRights) -eq 0) { continue }
+        if ($TrustedSids -contains $a.sid) { continue }
+        if ($a.sid -eq $CreatorOwner -and $a.inheritOnly) { continue }
+        return "$($a.sid) may write to it"
+    }
+    return $null
+}
+
+function Assert-WingetRootSafe([string]$root = $WingetPackages) {
+    # u64-security (#humans 29070): a reset package folder inherits from the root, which winget created; so the root
+    # must be right first, or the reset would hand its flaw down. Refused, not fixed: an administrator looks at it.
+    $acl = (Get-Item -LiteralPath $root).GetAccessControl('Owner, Access')
+    $owner = $acl.GetOwner([Security.Principal.SecurityIdentifier]).Value
+    $aces = foreach ($r in $acl.GetAccessRules($true, $true, [Security.Principal.SecurityIdentifier])) {
+        @{ sid = $r.IdentityReference.Value; rights = [int]$r.FileSystemRights
+           allow = ($r.AccessControlType -eq 'Allow'); inheritOnly = [bool]($r.PropagationFlags -band 'InheritOnly') }
+    }
+    $problem = Get-AclProblem $owner $aces
+    if ($problem) { throw "$root is not safe to inherit from ($problem): fix its permissions, then run this again" }
+}
+
 function Repair-WingetPackageAcl([string]$path) {
     # winget unpacks a portable package in the installing user's TEMP and moves it, so its files keep that folder's
     # ACL: the installer has full control and other users (the host's account) get "Access is denied" (seen on the
@@ -417,6 +449,7 @@ function Repair-WingetPackageAcl([string]$path) {
     $target = if ($item.LinkType -eq 'SymbolicLink') { @($item.Target)[0] } else { $item.FullName }
     $dir = Get-WingetPackageDir $target
     if (-not $dir -or -not (Test-Path -LiteralPath $dir)) { return }
+    Assert-WingetRootSafe
     $icacls = Join-Path $env:SystemRoot 'System32\icacls.exe'
     & $icacls $dir /reset /T /C /Q | Out-Null
     if ($LASTEXITCODE -ne 0) { throw "could not reset the permissions of $dir" }
@@ -791,7 +824,9 @@ function Add-UserRights([string]$sid, [string[]]$rights) {
     $updated = Update-UserRightsInf ([IO.File]::ReadAllText($infFile)) $sid $rights
     [IO.File]::WriteAllText($infFile, $updated, [Text.Encoding]::Unicode)
     & $secedit /configure /db $db /cfg $infFile /areas USER_RIGHTS /quiet | Out-Null
-    if ($LASTEXITCODE -ne 0) { throw "could not set $($rights -join ', ') (secedit /configure)" }
+    $code = $LASTEXITCODE
+    Remove-Item -LiteralPath $infFile, $db, ([IO.Path]::ChangeExtension($db, '.jfm')) -Force -ErrorAction SilentlyContinue
+    if ($code -ne 0) { throw "could not set $($rights -join ', ') (secedit /configure)" }
 }
 
 function Grant-BatchLogon([string]$sid) {

@@ -479,6 +479,33 @@ def test_the_stray_gitconfig_is_checked_at_the_start_and_after_the_sign_ins():
     assert main.index("Invoke-SignIn") < main.index("Test-StrayGitConfig -Remove") < main.index("} finally {")
 
 
+ADMINS, SYSTEM_SID, USERS, AUTH_USERS, BOB = "S-1-5-32-544", "S-1-5-18", "S-1-5-32-545", "S-1-5-11", "S-1-5-21-1-2-3-1001"
+FULL, READ_RUN, MODIFY, WRITE_DATA = 2032127, 1179817, 1245631, 2
+
+
+@pytest.mark.parametrize("owner, aces, bad", [
+    (ADMINS, [(ADMINS, FULL, True, False), (SYSTEM_SID, FULL, True, False), (USERS, READ_RUN, True, False),
+              ("S-1-3-0", FULL, True, True)], None),                        # what the test VM's root has
+    (BOB, [(ADMINS, FULL, True, False)], "owned by"),                        # owned by a user
+    (ADMINS, [(USERS, MODIFY, True, False)], "may write"),                   # Users can change it
+    (ADMINS, [(AUTH_USERS, WRITE_DATA, True, False)], "may write"),          # one write bit is enough
+    (ADMINS, [(BOB, FULL, True, False)], "may write"),
+    (ADMINS, [("S-1-3-0", FULL, True, False)], "may write"),                 # CREATOR OWNER on the folder itself
+    (ADMINS, [(USERS, MODIFY, False, False)], None),                         # a deny entry grants nothing
+])
+@pytest.mark.parametrize("shell", SHELLS)
+def test_the_winget_root_must_be_safe_before_a_package_inherits_from_it(owner, aces, bad, shell):
+    items = ", ".join(f"@{{ sid = '{s}'; rights = {r}; allow = ${str(a).lower()}; inheritOnly = ${str(i).lower()} }}"
+                      for s, r, a, i in aces)
+    got = run(f"ConvertTo-Json @(Get-AclProblem '{owner}' @({items}))", shell)
+    assert (got == [None]) if bad is None else (bad in got[0])
+
+
+def test_the_winget_root_is_checked_before_any_reset():
+    repair = SCRIPT.read_text(encoding="ascii").split("function Repair-WingetPackageAcl")[1].split("\n}\n")[0]
+    assert repair.index("Assert-WingetRootSafe") < repair.index("/reset")
+
+
 def test_still_ascii_and_lf_only():
     raw = SCRIPT.read_bytes()
     assert max(raw) < 128 and b"\r" not in raw
