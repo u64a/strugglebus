@@ -245,11 +245,122 @@ function Test-ReleaseSignature([byte[]]$data, [string]$sig, [string]$keygen, [st
     return $true, 'good'
 }
 
-if ($MyInvocation.InvocationName -eq '.') { return }
-
 function Say([string]$text) { Write-Host "[bootstrap] $text" }
 
+# --- the machine: checks, prerequisites (2.2 steps 1 and 2) -----------------------------------------------------
+
+# Where the host code comes from, built in (like the release keys): the data file can't point the install elsewhere.
+$ReleaseRepo = 'https://github.com/u64a/strugglebus'
+$ReleaseFolder = 'worker-host'
+$Keygen = Join-Path $env:SystemRoot 'System32\OpenSSH\ssh-keygen.exe'   # Windows' own, never another on PATH
+
+# What step 2 installs, only where missing, with winget (signed packages only), machine-wide so the host's account
+# sees them too. The first existing path wins.
+$Prereqs = [ordered]@{
+    python = @{ id = 'Python.Python.3.13'; paths = @('C:\Program Files\Python313\python.exe', 'C:\Program Files\Python312\python.exe') }
+    git    = @{ id = 'Git.Git'; paths = @('C:\Program Files\Git\cmd\git.exe') }
+    pwsh   = @{ id = 'Microsoft.PowerShell'; paths = @('C:\Program Files\PowerShell\7\pwsh.exe') }
+    gh     = @{ id = 'GitHub.cli'; paths = @('C:\Program Files\GitHub CLI\gh.exe') }
+    ghcp   = @{ id = 'GitHub.Copilot'; paths = @('C:\Program Files\WinGet\Links\copilot.exe') }
+    claude = @{ id = 'Anthropic.ClaudeCode'; paths = @('C:\Program Files\WinGet\Links\claude.exe') }
+}
+
+function Get-NeededPrereqs($engines) {
+    # Pure: the tools this host needs: the four always, plus each chosen engine.
+    return @('python', 'git', 'pwsh', 'gh') + @(@($engines) | Where-Object { $_ -cin 'ghcp', 'claude' })
+}
+
+function Test-Windows11 { return [Environment]::OSVersion.Version.Build -ge 22000 }
+
+function Test-Elevated {
+    $p = [Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()
+    return $p.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+}
+
+function Find-Prereq([string]$name) {
+    foreach ($p in $Prereqs[$name].paths) { if (Test-Path -LiteralPath $p -PathType Leaf) { return $p } }
+    return $null
+}
+
+function Install-Prereqs($engines) {
+    # Step 2: each missing tool from winget, machine-wide. Returns name -> path; throws if one is still missing.
+    $found = [ordered]@{}
+    foreach ($name in (Get-NeededPrereqs $engines)) {
+        $path = Find-Prereq $name
+        if (-not $path) {
+            $id = $Prereqs[$name].id
+            Say "installing $id (winget, machine-wide)"
+            & winget install --id $id --exact --scope machine --silent --accept-package-agreements --accept-source-agreements --disable-interactivity | Out-Host
+            $path = Find-Prereq $name
+            if (-not $path) { throw "$id did not install where expected ($($Prereqs[$name].paths -join ', '))" }
+        }
+        Say "$name`: $path"
+        $found[$name] = $path
+    }
+    return $found
+}
+
+# --- the host code: fetched, verified, staged (2.2 step 3) -------------------------------------------------------
+
+function Invoke-GitBytes([string]$git, [string[]]$arguments) {
+    # git's stdout as exact bytes (PowerShell's own capture would decode and re-encode it). Throws on failure.
+    $psi = New-Object Diagnostics.ProcessStartInfo $git
+    $psi.Arguments = ($arguments | ForEach-Object { if ($_ -match '[\s"]') { '"' + $_.Replace('"', '\"') + '"' } else { $_ } }) -join ' '
+    $psi.UseShellExecute = $false
+    $psi.RedirectStandardOutput = $true
+    $psi.RedirectStandardError = $true
+    $p = [Diagnostics.Process]::Start($psi)
+    $err = $p.StandardError.ReadToEndAsync()
+    $ms = New-Object IO.MemoryStream
+    $p.StandardOutput.BaseStream.CopyTo($ms)
+    $p.WaitForExit()
+    if ($p.ExitCode -ne 0) { throw "git $($arguments[0]) failed: $($err.Result.Trim())" }
+    return , $ms.ToArray()
+}
+
+function Get-VerifiedRelease([string]$git, [string]$work, [string]$repo = $ReleaseRepo, [string]$folder = $ReleaseFolder) {
+    # Step 3: the newest release on main, checked before ANY of it runs: the signature by a built-in release key with
+    # touch and PIN, not older than $MinReleaseSerial, then tree_sha256 and installer_sha256 over the exact bytes.
+    # Returns @{ release; stage } with the staged files (the host's and the installer's) under $work\stage.
+    $mirror = Join-Path $work 'release.git'
+    Invoke-GitBytes $git @('clone', '--quiet', '--bare', '--filter=blob:none', '--single-branch', '--branch', 'main', $repo, $mirror) | Out-Null
+    $g = { param([string[]]$a) Invoke-GitBytes $git (@('--git-dir', $mirror) + $a) }
+    $data = & $g @('cat-file', 'blob', "main:$folder/release.toml")
+    $sig = [Text.Encoding]::ASCII.GetString((& $g @('cat-file', 'blob', "main:$folder/release.toml.sig")))
+    $ok, $why = Test-ReleaseSignature $data $sig $Keygen $work
+    if (-not $ok) { throw "the release is not signed by a project release key with touch and PIN ($why): nothing installed" }
+    $release = Read-ReleaseText ([Text.Encoding]::UTF8.GetString($data))
+    if (-not (Test-ReleaseFloor $release)) { throw "release serial $($release.serial) is older than this bootstrap allows ($MinReleaseSerial), or has no installer_sha256" }
+    $listing = [Text.Encoding]::UTF8.GetString((& $g @('ls-tree', '-r', '-z', '--full-tree', $release.commit, '--', $folder)))
+    $hostFiles = @{}; $installerFiles = @{}
+    foreach ($entry in ($listing -split "`0")) {
+        if (-not $entry) { continue }
+        $meta, $full = $entry -split "`t", 2
+        if (($meta -split ' ')[1] -ne 'blob' -or -not $full.StartsWith("$folder/")) { continue }
+        $rel = $full.Substring($folder.Length + 1)
+        if (Test-InstalledPath $rel) { $hostFiles[$rel] = & $g @('cat-file', 'blob', "$($release.commit):$full") }
+        elseif (Test-InstallerPath $rel) { $installerFiles[$rel] = & $g @('cat-file', 'blob', "$($release.commit):$full") }
+    }
+    if ((Get-TreeSha256 $hostFiles) -cne $release.tree_sha256) { throw 'the host files do not match the signed tree_sha256: nothing installed' }
+    if ((Get-TreeSha256 $installerFiles) -cne $release.installer_sha256) { throw 'install.ps1 or setup\ does not match the signed installer_sha256: nothing installed' }
+    $stage = Join-Path $work 'stage'
+    foreach ($set in $hostFiles, $installerFiles) {
+        foreach ($rel in $set.Keys) {
+            $to = Join-Path $stage ($rel -replace '/', '\')
+            New-Item -ItemType Directory -Force (Split-Path $to) | Out-Null
+            [IO.File]::WriteAllBytes($to, [byte[]]$set[$rel])
+        }
+    }
+    Say "release $($release.version) (serial $($release.serial), $($release.commit.Substring(0, 12))): signature, PIN, tree and installer hashes all good"
+    return @{ release = $release; stage = $stage }
+}
+
+if ($MyInvocation.InvocationName -eq '.') { return }
+
 if (-not $DataFile) { throw 'give the App''s data file: bootstrap.ps1 -DataFile .\sbhost-enrol.json' }
+if (-not (Test-Windows11)) { throw 'this needs Windows 11' }
+if (-not (Test-Elevated)) { throw 'run this as administrator (right-click PowerShell, Run as administrator)' }
+if (-not (Test-Path -LiteralPath $Keygen -PathType Leaf)) { throw "Windows' own ssh-keygen is missing ($Keygen): add the optional feature OpenSSH Client" }
 $bytes = [IO.File]::ReadAllBytes((Resolve-Path -LiteralPath $DataFile).Path)
 $SB = Read-SbData $bytes -SingleSigner:$SingleSigner
 Say "data file from device $($SB.device), $($SB.written_at), for host $($SB.host_prefix) on $($SB.bus_url)"
@@ -257,4 +368,10 @@ Say "data file digest: $(Get-FileDigest $bytes)"
 foreach ($line in $SB.signers) { Say "signer: $(Get-SignerFingerprint $line)" }
 Say 'compare these with what the App shows for this host.'
 if (-not $Yes) { Read-Host '[bootstrap] press Enter to continue, or close this window to stop' | Out-Null }
-throw 'not built yet: the install steps (2.2 steps 2 to 12) come in a later change'
+
+$work = Join-Path $env:TEMP ('sbhost-bootstrap-' + [guid]::NewGuid().ToString('n'))
+New-Item -ItemType Directory -Path $work | Out-Null
+$tools = Install-Prereqs $SB.engines                    # step 2
+$verified = Get-VerifiedRelease $tools.git $work        # step 3
+Say "verified host code staged at $($verified.stage)"
+throw 'not built yet: the install steps after the verified fetch (2.2 steps 4 to 12) come in a later change'

@@ -173,6 +173,47 @@ def test_the_signed_test_release_is_a_real_one():
     assert (rel.serial, rel.version) == (9, "2026.11.27.4")
 
 
+@pytest.mark.parametrize("shell", SHELLS)
+def test_the_prerequisites_follow_the_engines(shell):
+    out = run("ConvertTo-Json @(((Get-NeededPrereqs @('ghcp')) -join ','), ((Get-NeededPrereqs @('claude', 'ghcp')) -join ','), "
+              "((Get-NeededPrereqs @('evil')) -join ','))", shell)
+    assert out == ["python,git,pwsh,gh,ghcp", "python,git,pwsh,gh,claude,ghcp", "python,git,pwsh,gh"]
+
+
+def test_the_release_source_and_ssh_keygen_are_built_in_not_from_the_data_file():
+    text = SCRIPT.read_text(encoding="ascii")
+    assert "$ReleaseRepo = 'https://github.com/u64a/strugglebus'" in text and "$ReleaseFolder = 'worker-host'" in text
+    assert "System32\\OpenSSH\\ssh-keygen.exe" in text and "$SB.release" not in text
+
+
+@pytest.mark.skipif(KEYGEN is None or shutil.which("git") is None, reason="needs git and Windows OpenSSH")
+def test_the_whole_fetch_against_this_repositorys_signed_release(tmp_path):
+    """Get-VerifiedRelease against a clone of this repository's own main: the real signed release is verified and
+    exactly its host and installer files are staged. A release without installer_sha256 is refused before anything
+    is staged instead. (The VM test runs the same against github.com.)"""
+    top = Path(subprocess.run(["git", "rev-parse", "--show-toplevel"], cwd=ROOT, capture_output=True, text=True,
+                              check=True).stdout.strip())
+    folder = ROOT.relative_to(top).as_posix() if top.resolve() != ROOT.resolve() else ""
+    if not folder:
+        pytest.skip("needs the monorepo layout")
+    if subprocess.run(["git", "rev-parse", "--verify", "--quiet", "main"], cwd=top, capture_output=True).returncode:
+        pytest.skip("no local main branch to clone (a CI checkout)")
+    main_toml = subprocess.run(["git", "show", f"main:{folder}/release.toml"], cwd=top, capture_output=True).stdout
+    git = shutil.which("git")
+    body = (f"function Say([string]$t) {{ }}; $Keygen = '{KEYGEN}'; "
+            f"try {{ $r = Get-VerifiedRelease '{git}' '{tmp_path}' '{top.as_posix()}' '{folder}'; "
+            "ConvertTo-Json @(\"serial $($r.release.serial)\") } catch { ConvertTo-Json @($_.Exception.Message) }")
+    out = run(body, PWSH or SHELLS[0])
+    if b"installer_sha256" not in main_toml:
+        assert "no installer_sha256" in out[0] and not (tmp_path / "stage").exists()
+        return
+    rel = update.parse_release(main_toml)
+    assert out == [f"serial {rel.serial}"], out
+    staged = sorted(p.relative_to(tmp_path / "stage").as_posix() for p in (tmp_path / "stage").rglob("*") if p.is_file())
+    assert "wh.py" in staged and "install.ps1" in staged and any(p.startswith("setup/") for p in staged)
+    assert all(update.wanted(p) or load_make_release().INSTALLER_RE.fullmatch(p) for p in staged)
+
+
 def test_still_ascii_and_lf_only():
     raw = SCRIPT.read_bytes()
     assert max(raw) < 128 and b"\r" not in raw
