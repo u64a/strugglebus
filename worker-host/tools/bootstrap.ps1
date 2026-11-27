@@ -818,10 +818,15 @@ Write-PinnedFiles $SB                                    # step 5
 Invoke-Install $tools.pwsh $verified.stage $work $SB $account.Name $password $tools   # step 6
 $hostHome = Join-Path $SbRoot "host\$($account.Name)"
 Invoke-IsolationCheck $verified.stage $account.Name $hostHome 'C:\sb-workers'   # step 11, straight after the install
-Invoke-SignIn $account.Name $password $SB.engines $tools                         # step 7
-Set-HostLogonRights $account.SID.Value
-$enrolled = Invoke-Enrol $tools.python $hostHome $account.Name $password $bytes $DataFile   # step 8
-$password = $null
+# Steps 7 and 8 run AS the account, which is an interactive logon (CreateProcessWithLogonW), so they come before the
+# denials; the finally applies the denials even when the sign-in or the enrolment fails.
+try {
+    Invoke-SignIn $account.Name $password $SB.engines $tools                     # step 7
+    $enrolled = Invoke-Enrol $tools.python $hostHome $account.Name $password $bytes $DataFile   # step 8
+} finally {
+    $password = $null
+    Set-HostLogonRights $account.SID.Value                                       # step 7's denials
+}
 Start-Host $tools.python $hostHome                                                  # step 9
 Say "enrolled as $($enrolled.identity). CONFIRMATION CODE: $($enrolled.code)"
 Say 'In the App, compare this code with the one it shows for this host, then approve the host into the fleet.'
