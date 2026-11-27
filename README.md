@@ -25,7 +25,7 @@ switch. The bus runs on your local network only.
 - **Day to day:** the [manual](bus/src/strugglebus/selfhost/manual/README.md) covers the console, the
   Windows app, channels, agents, upkeep and troubleshooting.
 - **The Windows app:** download the Setup program from the
-  [app releases](https://github.com/NZCypher819/StruggleApp-Privacy/releases). See
+  newest release named StruggleBus Monitor in [this repository's releases](https://github.com/u64a/strugglebus/releases). See
   [`app/windows/`](app/windows/README.md).
 - **A worker host:** see [`worker-host/`](worker-host/README.md). The Windows app's Admin page makes the
   data file a new host's installer needs.
@@ -38,8 +38,8 @@ does not hold.
 
 | Part | Published | What an installed copy checks before updating |
 |---|---|---|
-| Bus, from 0.2.72 | [NZCypher819/strugglebus-releases](https://github.com/NZCypher819/strugglebus-releases) | Every file against a statement signed with one of the owner's hardware keys, and that the version is newer. See [RELEASE_SIGNING.md](bus/docs/RELEASE_SIGNING.md). |
-| Windows app, from 1.7.3 | [NZCypher819/StruggleApp-Privacy](https://github.com/NZCypher819/StruggleApp-Privacy/releases) | Every file against a list signed with the project's code-signing certificate, the signer's thumbprint, and that the version is newer. The Setup program and the app are code-signed from 1.7.2. |
+| Bus, from 0.2.72 | [This repository's releases](https://github.com/u64a/strugglebus/releases), tagged `bus/vX.Y.Z`, from 0.2.74. 0.2.72 and 0.2.73 are in [NZCypher819/strugglebus-releases](https://github.com/NZCypher819/strugglebus-releases). | Every file against a statement signed with one of the owner's hardware keys, and that the version is newer. See [RELEASE_SIGNING.md](bus/docs/RELEASE_SIGNING.md). |
+| Windows app, from 1.7.3 | [This repository's releases](https://github.com/u64a/strugglebus/releases), tagged `windows/vX.Y.Z`, from 1.7.5. 1.7.5 and earlier are in [NZCypher819/StruggleApp-Privacy](https://github.com/NZCypher819/StruggleApp-Privacy/releases). | Every file against a list signed with the project's code-signing certificate, the signer's thumbprint, and that the version is newer. The Setup program and the app are code-signed from 1.7.2. |
 | Worker host | [`worker-host/release.toml`](worker-host/release.toml) in this repository | A signature over that file against keys pinned on each host, the code's hash, and a serial that only goes up. |
 
 Older copies trust the place they update from. Update them once and they are covered from then on.

@@ -8,8 +8,11 @@
 #   1. Pushing the tag windows/vX.Y.Z makes GitHub test and build the app,
 #      unsigned, and keep the build as an artifact of that run.
 #   2. This script, run on the signing PC, downloads that build, signs the
-#      app and its installer, packages them and publishes the release to the
-#      repository the installed app updates from.
+#      app and its installer, packages them and publishes the release in the
+#      same repository, on that same tag. That is where the installed app
+#      looks for updates, from 1.7.5. Older copies look in
+#      NZCypher819/StruggleApp-Privacy, so 1.7.5 itself is published there as
+#      well, and is the last release there.
 #
 #   pwsh app/windows/release-signed.ps1 -Version 1.7.2
 #
@@ -35,7 +38,15 @@ $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 
 $SourceRepository = 'u64a/strugglebus'
-$DestinationRepository = 'NZCypher819/StruggleApp-Privacy'
+# The same repository: the release goes on the tag GitHub built from.
+$DestinationRepository = $SourceRepository
+# The GitHub half: the previous release's package, and publishing. See the file.
+$GitHubTool = Join-Path $PSScriptRoot 'release-github.ps1'
+# Copies older than $BridgeVersion look for updates in $FormerRepository. That
+# one version is published there too, so that they can reach it; from it on,
+# the app looks here. No other version is ever published there.
+$FormerRepository = 'NZCypher819/StruggleApp-Privacy'
+$BridgeVersion = '1.7.5'
 $Workflow = 'windows-release.yml'
 $PackId = 'NZCypher819.StruggleBusMonitor'
 $RepositoryRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..')).Path
@@ -255,6 +266,31 @@ function Assert-EveryProgramSigned {
     Write-Host "every program file is signed: $ours by this project, $microsoft by Microsoft"
 }
 
+function Publish-AtFormerPlace {
+    # The bridging version only. The packaging tool uploads, as every release
+    # before it was uploaded, and reads the token from the environment, so it
+    # never appears on a command line or in this script's output.
+    param([hashtable]$Outputs)
+    $env:VPK_TOKEN = Invoke-Capture gh @('auth', 'token')
+    try {
+        # One runtime at a time: both upload into the same GitHub release.
+        foreach ($runtime in $Runtimes) {
+            Invoke-Checked $vpk @('upload', 'github',
+                '--repoUrl', "https://github.com/$FormerRepository",
+                '--channel', $runtime,
+                '--outputDir', $Outputs[$runtime],
+                '--tag', "v$Version",
+                '--releaseName', "StruggleBus Monitor v$Version",
+                '--publish',
+                '--merge')
+        }
+    }
+    finally {
+        Remove-Item Env:VPK_TOKEN -ErrorAction SilentlyContinue
+    }
+    Write-Host "Published v$Version in $FormerRepository, for copies older than $BridgeVersion."
+}
+
 if ($Version -notmatch '^\d+\.\d+\.\d+([-.][0-9A-Za-z.-]+)?$') { throw "'$Version' is not a version like 1.7.2." }
 if ($ArtifactsDir -and -not $SkipUpload) { throw '-ArtifactsDir is for trying the signing step and needs -SkipUpload. A published release is always made from the build GitHub made for the tag.' }
 
@@ -264,6 +300,8 @@ $vpk = Get-Vpk
 $icon = Join-Path $PSScriptRoot 'StruggleBusMonitor\icon.ico'
 $work = Join-Path ([IO.Path]::GetTempPath()) "strugglebus-release-$Version-$([Guid]::NewGuid().ToString('N').Substring(0, 8))"
 New-Item -ItemType Directory -Path $work | Out-Null
+# Set once publishing starts, cleared when it finishes. See the end.
+$publishing = $false
 Write-Host "Signing as: $($certificate.Subject)"
 Write-Host "Working in: $work"
 
@@ -283,9 +321,8 @@ try {
         $releases = Join-Path $work "Releases-$runtime"
 
         # The previous release lets the tool make a small update package. The
-        # first release on a channel has none, so a failure here is not fatal.
-        & $vpk download github --repoUrl "https://github.com/$DestinationRepository" --channel $runtime --outputDir $releases | Out-Host
-        if ($LASTEXITCODE -ne 0) { Write-Warning "No previous $runtime release was downloaded; this one will have no small update package." }
+        # first release on a channel has none, so finding none is not fatal.
+        Invoke-Checked pwsh @('-NoProfile', '-File', $GitHubTool, '-Action', 'previous', '-Version', $Version, '-Runtime', $runtime, '-Into', $releases)
 
         # Beside the app, and so on the signed list of files below.
         Copy-Item -LiteralPath $installer -Destination (Join-Path $build 'bootstrap.ps1') -Force
@@ -327,31 +364,25 @@ try {
         return
     }
     if (-not $Yes) {
-        $answer = Read-Host "Publish StruggleBus Monitor v$Version to $DestinationRepository? Type 'publish' to go ahead"
+        $answer = Read-Host "Publish StruggleBus Monitor v$Version in $DestinationRepository? Type 'publish' to go ahead"
         if ($answer -ne 'publish') { Write-Host 'Stopped. Nothing was uploaded.'; return }
     }
 
-    # The packaging tool reads the token from the environment, so it never
-    # appears on a command line or in this script's output.
-    $env:VPK_TOKEN = Invoke-Capture gh @('auth', 'token')
-    try {
-        # One runtime at a time: both upload into the same GitHub release.
-        foreach ($runtime in $Runtimes) {
-            Invoke-Checked $vpk @('upload', 'github',
-                '--repoUrl', "https://github.com/$DestinationRepository",
-                '--channel', $runtime,
-                '--outputDir', $outputs[$runtime],
-                '--tag', "v$Version",
-                '--releaseName', "StruggleBus Monitor v$Version",
-                '--publish',
-                '--merge')
-        }
-    }
-    finally {
-        Remove-Item Env:VPK_TOKEN -ErrorAction SilentlyContinue
-    }
+    $publishing = $true
+    if ($Version -eq $BridgeVersion) { Publish-AtFormerPlace -Outputs $outputs }
+    # As a draft first, compared file by file with what is here, then
+    # published: a published release here can never be changed.
+    Invoke-Checked pwsh @('-NoProfile', '-File', $GitHubTool, '-Action', 'publish', '-Version', $Version, '-Packages', $work, '-Runtimes', ($Runtimes -join ','))
+    $publishing = $false
     Write-Host "Published StruggleBus Monitor v$Version, signed by $($certificate.Subject)."
 }
 finally {
-    if (-not $SkipUpload) { Remove-Item -LiteralPath $work -Recurse -Force -ErrorAction SilentlyContinue }
+    if ($publishing) {
+        # Signing again would make different files, so the signed packages are
+        # kept. If the release in $DestinationRepository is what is missing,
+        # the command below publishes these same files there.
+        Write-Warning "Publishing did not finish. The signed packages are kept in $work."
+        Write-Warning "To publish them in ${DestinationRepository}: pwsh app\windows\release-github.ps1 -Action publish -Version $Version -Packages `"$work`""
+    }
+    elseif (-not $SkipUpload) { Remove-Item -LiteralPath $work -Recurse -Force -ErrorAction SilentlyContinue }
 }
