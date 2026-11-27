@@ -2,10 +2,10 @@ using System.Windows.Input;
 
 namespace StruggleBusMonitor;
 
-internal enum NavPage { Monitor, Humans, Hosts, Admin, Settings }
+internal enum NavPage { Monitor, Humans, Channels, Hosts, Admin, Settings }
 
 /// <summary>Which parts of the window are showing for a page.</summary>
-internal sealed record PageLayout(bool Settings, bool Enrollment, bool Workspace, bool Monitor, bool Humans, bool Admin, bool Hosts = false);
+internal sealed record PageLayout(bool Settings, bool Enrollment, bool Workspace, bool Monitor, bool Humans, bool Admin, bool Hosts = false, bool Channels = false);
 
 internal enum ShortcutAction { None, OpenQuickFind, CloseQuickFind }
 
@@ -26,7 +26,8 @@ internal static class NavigationLogic
             Monitor: page == NavPage.Monitor,
             Humans: page == NavPage.Humans,
             Admin: page == NavPage.Admin,
-            Hosts: page == NavPage.Hosts);
+            Hosts: page == NavPage.Hosts,
+            Channels: page == NavPage.Channels);
     }
 
     /// <summary>Ctrl+K toggles quick find on an enrolled PC; Escape closes it.</summary>

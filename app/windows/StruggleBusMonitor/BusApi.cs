@@ -201,6 +201,16 @@ public sealed class BusApi
     public Task<List<BusMessage>> GetExportMessagesAsync(CancellationToken cancellationToken) =>
         GetMessagesAsync(ExportSnapshotLimit, cancellationToken);
 
+    /// <summary>
+    /// Every channel with its purpose, message count, the agents listening and its last message.
+    /// Needs a StruggleBus newer than 0.2.74; an older one answers "not found".
+    /// </summary>
+    public async Task<IReadOnlyList<ChannelActivity>> GetChannelActivityAsync(CancellationToken cancellationToken) =>
+        (await GetAsync<List<ChannelActivityResponse>>("api/mobile/channels/activity", cancellationToken))
+            .Select(channel => new ChannelActivity(channel.Name, channel.Purpose ?? string.Empty, channel.MessageCount, channel.SubscriberCount, channel.LastActivityAt))
+            .OrderBy(channel => channel.Name, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
     public async Task<List<BusChannel>> GetChannelsAsync(CancellationToken cancellationToken)
     {
         var channels = await GetAsync<List<ChannelResponse>>("api/mobile/channels", cancellationToken);
@@ -819,6 +829,7 @@ public sealed class BusApi
     private sealed record StatusResponse([property: JsonPropertyName("api_version")] int ApiVersion, string State);
     private sealed record ErrorResponse(string Detail);
     private sealed record ChannelResponse(string Id, string Name, string? Purpose);
+    private sealed record ChannelActivityResponse(string Name, string? Purpose, [property: JsonPropertyName("message_count")] int MessageCount, [property: JsonPropertyName("subscriber_count")] int SubscriberCount, [property: JsonPropertyName("last_activity_at")] DateTimeOffset? LastActivityAt);
     private sealed record MessageResponse(long Seq, string Channel, [property: JsonPropertyName("agent_name")] string? AgentName, string Body, string Kind, [property: JsonPropertyName("created_at")] DateTimeOffset CreatedAt, [property: JsonPropertyName("reply_to")] long? ReplyTo = null, JsonElement? Metadata = null);
     private sealed record AgentResponse(string Id, string Name, string? Description, string? Host, [property: JsonPropertyName("last_seen_at")] DateTimeOffset? LastSeenAt);
 }

@@ -47,6 +47,7 @@ public partial class MainWindow : Window
         InitializeHumans();
         InitializeAdmin();
         InitializeHosts();
+        InitializeChannels();
         InitializeSettings();
         InitializeTray();
         _ready = true;
@@ -158,7 +159,9 @@ public partial class MainWindow : Window
         // A different enrollment is a different bus or device: nothing kept from the last one applies.
         _adminLoadedAt = null;
         _hostsLoadedAt = null;
+        _channelsLoadedAt = null;
         HumansNav.IsEnabled = true;
+        ChannelsNav.IsEnabled = true;
         HostsNav.IsEnabled = true;
         AdminNav.IsEnabled = true;
         QuickFindButton.IsEnabled = true;
@@ -173,6 +176,7 @@ public partial class MainWindow : Window
     private void ShowEnrollment()
     {
         HumansNav.IsEnabled = false;
+        ChannelsNav.IsEnabled = false;
         HostsNav.IsEnabled = false;
         AdminNav.IsEnabled = false;
         QuickFindButton.IsEnabled = false;
@@ -190,12 +194,15 @@ public partial class MainWindow : Window
 
     private static Visibility VisibleWhen(bool shown) => shown ? Visibility.Visible : Visibility.Collapsed;
 
+    /// <summary>Which page each navigation item opens. Anything else opens Monitor.</summary>
     private NavPage PageOf(RadioButton nav)
     {
-        if (nav == SettingsNav) return NavPage.Settings;
-        if (nav == HumansNav) return NavPage.Humans;
-        if (nav == HostsNav) return NavPage.Hosts;
-        return nav == AdminNav ? NavPage.Admin : NavPage.Monitor;
+        (RadioButton Nav, NavPage Page)[] pages =
+        [
+            (SettingsNav, NavPage.Settings), (HumansNav, NavPage.Humans), (HostsNav, NavPage.Hosts),
+            (ChannelsNav, NavPage.Channels), (AdminNav, NavPage.Admin)
+        ];
+        return pages.FirstOrDefault(entry => entry.Nav == nav).Page;
     }
 
     private void ShowPage(RadioButton nav)
@@ -209,17 +216,23 @@ public partial class MainWindow : Window
         HumansPage.Visibility = VisibleWhen(layout.Humans);
         AdminPage.Visibility = VisibleWhen(layout.Admin);
         HostsPage.Visibility = VisibleWhen(layout.Hosts);
+        ChannelsPage.Visibility = VisibleWhen(layout.Channels);
         CloseMentionPopup();
         OnPageShown(page);
     }
 
     private void OnPageShown(NavPage page)
     {
-        if (page == NavPage.Humans) OnHumansPageShown();
-        else UpdateHumansBadge();
-        if (page == NavPage.Admin) OnAdminPageShown();
-        if (page == NavPage.Hosts) OnHostsPageShown();
-        if (page == NavPage.Settings) OnSettingsPageShown();
+        if (page != NavPage.Humans) UpdateHumansBadge();
+        var shown = new Dictionary<NavPage, Action>
+        {
+            [NavPage.Humans] = OnHumansPageShown,
+            [NavPage.Admin] = OnAdminPageShown,
+            [NavPage.Hosts] = OnHostsPageShown,
+            [NavPage.Channels] = OnChannelsPageShown,
+            [NavPage.Settings] = OnSettingsPageShown
+        };
+        if (shown.TryGetValue(page, out var load)) load();
     }
 
     private void Window_PreviewKeyDown(object sender, KeyEventArgs e)

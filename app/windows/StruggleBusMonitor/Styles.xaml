@@ -45,6 +45,7 @@
 
     <Geometry x:Key="IconMonitor">M3,12 h4 l3,-8 l4,16 l3,-8 h4</Geometry>
     <Geometry x:Key="IconHumans">M4,5 h16 v11 h-11 l-5,4 z</Geometry>
+    <Geometry x:Key="IconChannels">M9,4 l-2,16 M17,4 l-2,16 M4,9 h16 M3,15 h16</Geometry>
     <Geometry x:Key="IconHosts">M4,5 h16 v6 h-16 z M4,13 h16 v6 h-16 z M7,8 h2 M7,16 h2</Geometry>
     <Geometry x:Key="IconAdmin">M12,3 l8,3 v6 c0,5 -3.5,8 -8,9 c-4.5,-1 -8,-4 -8,-9 v-6 z</Geometry>
     <Geometry x:Key="IconSettings">M4,7 h9 M19,7 h1 M4,17 h3 M13,17 h7 M14,5 v4 h4 v-4 z M8,15 v4 h4 v-4 z</Geometry>
