@@ -34,6 +34,9 @@ internal interface IWindowPlatform
     /// <summary>Whether Windows starts this app when this user signs in.</summary>
     bool StartsAtSignIn { get; set; }
     void SetClipboardText(string text);
+
+    /// <summary>Opens a web address in the operator's browser.</summary>
+    void OpenLink(string url);
     Task<bool> VerifyHelloAsync(string message);
     Task Delay(TimeSpan time);
 
@@ -117,6 +120,9 @@ internal sealed class WindowPlatform : IWindowPlatform
     };
 
     public void SetClipboardText(string text) => Clipboard.SetText(text);
+
+    public void OpenLink(string url) =>
+        System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(url) { UseShellExecute = true })?.Dispose();
 
     public Task<bool> VerifyHelloAsync(string message) => _hello.VerifyAsync(message);
 

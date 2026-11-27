@@ -852,6 +852,28 @@
                                 <Button Content="Forget this PC" Style="{StaticResource BtnOutline}" Click="ForgetDevice_Click" HorizontalAlignment="Left" Margin="0,12,0,0"/>
                             </StackPanel>
                         </Border>
+
+                        <Border Style="{StaticResource Card}" Margin="0,16,0,0">
+                            <StackPanel>
+                                <TextBlock Text="ABOUT" Style="{StaticResource Label}"/>
+                                <TextBlock x:Name="AboutWhatText" TextWrapping="Wrap" Margin="0,8,0,0"/>
+                                <TextBlock x:Name="AboutOwnerText" Style="{StaticResource MutedText}" TextWrapping="Wrap" Margin="0,8,0,0"/>
+                                <TextBlock x:Name="AboutLicenceText" Style="{StaticResource MutedText}" TextWrapping="Wrap" Margin="0,6,0,0"/>
+                                <ItemsControl x:Name="AboutLinks" Margin="0,12,0,0">
+                                    <ItemsControl.ItemsPanel>
+                                        <ItemsPanelTemplate>
+                                            <WrapPanel/>
+                                        </ItemsPanelTemplate>
+                                    </ItemsControl.ItemsPanel>
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate>
+                                            <Button Content="{Binding Label}" Tag="{Binding}" ToolTip="{Binding Url}" Style="{StaticResource BtnOutline}" Click="AboutLink_Click" Margin="0,0,8,8"/>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                                <TextBlock x:Name="AboutLinksNote" Style="{StaticResource MutedText}" TextWrapping="Wrap" Margin="0,0,0,0"/>
+                            </StackPanel>
+                        </Border>
                     </StackPanel>
                 </ScrollViewer>
 
