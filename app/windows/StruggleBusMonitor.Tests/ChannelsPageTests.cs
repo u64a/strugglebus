@@ -121,6 +121,21 @@ public sealed class ChannelsWindowTests(StaWindowAdminFixture sta)
     });
 
     [Fact]
+    public void ARealOlderBusRefusesTheCountsAsForbiddenAndThePageStillShowsTheChannels() => sta.Run(() =>
+    {
+        var scene = new StaWindowAdminScene().Enroll();
+        using var _ = scene;
+        scene.Bus.On(ActivityRoute, _ => StaWindowAdminBus.Fail(403, AdminFlow.UnknownRouteDetail));
+        scene.Open();
+        scene.Window.ChannelsNav.IsChecked = true;
+        StaWindowAdminScene.Until(() => scene.Window.ChannelsSummary.Text.Length > 0, "the channels");
+
+        Assert.Equal("general", Assert.Single(Cards(scene.Window)).Name);
+        Assert.Equal("1 channel. " + ChannelsPageLogic.NoFigures, scene.Window.ChannelsSummary.Text);
+        Assert.Equal(string.Empty, scene.Notice);
+    });
+
+    [Fact]
     public void ShowInMonitorOpensMonitorOnThatChannelAlone() => sta.Run(() =>
     {
         using var scene = OpenChannels();

@@ -22,8 +22,19 @@ internal static class AdminFlow
 
     // ---- Lists -------------------------------------------------------------------------------
 
-    /// <summary>A bus older than 0.2.64 answers the management lists with "not found" or "not allowed".</summary>
-    public static bool IsLegacyBus(BusApiException error) => error.StatusCode is 404 or 405;
+    /// <summary>
+    /// What a bus says to a route it is too old to have. Its permission check comes before its
+    /// routing and refuses, with these words, any route it has no rule for; so from a real bus an
+    /// unknown route is this "forbidden", not "not found".
+    /// </summary>
+    public const string UnknownRouteDetail = "route declares no capability";
+
+    /// <summary>
+    /// True when the answer means the bus is too old to have the route: "not found", "not allowed",
+    /// or the bus's own refusal of a route it has no rule for. Any other "forbidden" is a real one.
+    /// </summary>
+    public static bool IsLegacyBus(BusApiException error) =>
+        error.StatusCode is 404 or 405 || (error.StatusCode == 403 && error.Detail == UnknownRouteDetail);
 
     /// <summary>How many agent rows are put on screen at a time. Each row is a real control with its buttons.</summary>
     public const int AgentPageSize = 100;

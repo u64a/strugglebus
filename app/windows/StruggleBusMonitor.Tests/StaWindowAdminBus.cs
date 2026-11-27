@@ -57,6 +57,12 @@ internal sealed class StaWindowAdminBus : IDisposable
     public Session Session => new(BaseUrl, "credential-secret", CaDer, DeviceId, DeviceLabel);
 
     public static BusReply Ok(string json) => new(200, json);
+
+    /// <summary>
+    /// What a real bus says to a route it does not have: its permission check refuses it before
+    /// routing can say "not found". Tests of an older bus must see this, not a 404.
+    /// </summary>
+    public static BusReply UnknownRoute() => Fail(403, AdminFlow.UnknownRouteDetail);
     public static BusReply Fail(int status, string detail) => new(status, JsonSerializer.Serialize(new { detail }));
 
     public void On(string route, Func<BusRequest, BusReply> answer) => _routes[route] = answer;
@@ -122,7 +128,7 @@ internal sealed class StaWindowAdminBus : IDisposable
                     await HoldStreamOpenAsync(secure);
                     return;
                 }
-                var reply = _routes.TryGetValue(request.Route, out var answer) ? answer(request) : Fail(404, "Not found.");
+                var reply = _routes.TryGetValue(request.Route, out var answer) ? answer(request) : UnknownRoute();
                 var body = Encoding.UTF8.GetBytes(reply.Json);
                 var head = $"HTTP/1.1 {reply.Status} Status\r\nContent-Type: application/json\r\nContent-Length: {body.Length}\r\n\r\n";
                 await secure.WriteAsync(Encoding.ASCII.GetBytes(head), _stop.Token);

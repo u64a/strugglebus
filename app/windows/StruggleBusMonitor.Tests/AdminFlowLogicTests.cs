@@ -25,6 +25,14 @@ public class AdminFlowLogicTests
     }
 
     [Fact]
+    public void ARealBusRefusesARouteItDoesNotHaveAsForbiddenAndThatIsAnOlderBusToo()
+    {
+        Assert.True(AdminFlow.IsLegacyBus(new BusApiException(403, "route declares no capability", "x")));
+        Assert.False(AdminFlow.IsLegacyBus(new BusApiException(403, "operator grant required", "x")));
+        Assert.False(AdminFlow.IsLegacyBus(new BusApiException(500, "route declares no capability", "x")));
+    }
+
+    [Fact]
     public void TheAgentsSummaryCountsOrSaysHowManyMatch()
     {
         var all = new[] { Row(AdminRowKind.Agent), Row(AdminRowKind.Agent, "blocked") };
