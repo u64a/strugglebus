@@ -364,7 +364,8 @@ try {
         return
     }
     if (-not $Yes) {
-        $answer = Read-Host "Publish StruggleBus Monitor v$Version in $DestinationRepository? Type 'publish' to go ahead"
+        $where = if ($Version -eq $BridgeVersion) { "$FormerRepository and $DestinationRepository" } else { $DestinationRepository }
+        $answer = Read-Host "Publish StruggleBus Monitor v$Version in $where? Type 'publish' to go ahead"
         if ($answer -ne 'publish') { Write-Host 'Stopped. Nothing was uploaded.'; return }
     }
 
