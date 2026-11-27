@@ -442,6 +442,25 @@ def test_step_11_shows_paths_at_the_console_only_and_gives_the_host_counts():
     assert "$h" not in record and ".Path" not in record and ".Source" not in record  # counts only, never a path
 
 
+@pytest.mark.parametrize("shell", SHELLS)
+def test_sign_in_commands_for_a_device_code_and_for_a_browser_here(shell):
+    body = ("$r = @{}; foreach ($m in 'device', 'browser') { foreach ($e in 'gh', 'ghcp', 'claude') { "
+            "$r[\"$e-$m\"] = (Get-SignInCommand $e \"C:\\t\\$e.exe\" $m).cmd } }; ConvertTo-Json $r")
+    got = run(body, shell)
+    assert got["ghcp-device"] == '"C:\\t\\ghcp.exe" login --device-code'
+    assert got["ghcp-browser"] == '"C:\\t\\ghcp.exe" login'
+    assert got["gh-device"].startswith('set "GH_BROWSER=') and "auth setup-git" in got["gh-device"]
+    assert "GH_BROWSER" not in got["gh-browser"] and "auth setup-git" in got["gh-browser"]
+    assert got["claude-device"] == got["claude-browser"] == '"C:\\t\\claude.exe"'
+
+
+def test_enrolment_runs_before_the_sign_ins_and_the_denials_always_follow():
+    main = SCRIPT.read_text(encoding="ascii").split("InvocationName -eq '.') { return }")[1]
+    block = main.split("try {")[1].split("} finally {")
+    assert block[0].index("Invoke-Enrol") < block[0].index("Invoke-SignIn")  # the App's code lasts 15 minutes
+    assert "Set-HostLogonRights" in block[1]
+
+
 def test_still_ascii_and_lf_only():
     raw = SCRIPT.read_bytes()
     assert max(raw) < 128 and b"\r" not in raw
