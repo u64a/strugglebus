@@ -154,6 +154,8 @@ public partial class MainWindow : Window
 
     private void ShowWorkspace(Session session)
     {
+        // A different enrollment is a different bus or device: nothing kept from the last one applies.
+        _adminLoadedAt = null;
         HumansNav.IsEnabled = true;
         AdminNav.IsEnabled = true;
         QuickFindButton.IsEnabled = true;

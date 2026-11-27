@@ -25,6 +25,26 @@ internal static class AdminFlow
     /// <summary>A bus older than 0.2.64 answers the management lists with "not found" or "not allowed".</summary>
     public static bool IsLegacyBus(BusApiException error) => error.StatusCode is 404 or 405;
 
+    /// <summary>How many agent rows are put on screen at a time. Each row is a real control with its buttons.</summary>
+    public const int AgentPageSize = 100;
+
+    /// <summary>
+    /// How long the lists are trusted before opening Admin fetches them again. Within this time
+    /// the page opens at once with what it has; Reload always fetches.
+    /// </summary>
+    public static readonly TimeSpan ListsFreshFor = TimeSpan.FromSeconds(60);
+
+    public static bool ListsAreStale(DateTimeOffset? loadedAt, DateTimeOffset now) =>
+        loadedAt is not { } loaded || now - loaded >= ListsFreshFor;
+
+    /// <summary>The label on the button under a long list, or null when every matching row is showing.</summary>
+    public static string? MoreAgentsLabel(int showing, int matching)
+    {
+        var hidden = matching - showing;
+        if (hidden <= 0) return null;
+        return $"Show {Math.Min(AgentPageSize, hidden)} more ({hidden} not shown)";
+    }
+
     public static string AgentsSummary(bool legacy, int shown, IReadOnlyCollection<AdminRow> all)
     {
         if (legacy) return LegacyAgents;
