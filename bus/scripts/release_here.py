@@ -33,6 +33,7 @@ from typing import Any, Callable
 from strugglebus.release_signature import release_statement, signer_of
 
 REPOSITORY = "u64a/strugglebus"
+BUILD_WORKFLOW = ".github/workflows/bus-release-build.yml"
 TAG_PREFIX = "bus/"
 # The image both builds run in, by digest. The workflow names the same one.
 IMAGE = "debian@sha256:8aa5a7bf5a1955bddbe7d74fcdd0b91ab30e74362a8b73af672b0481b35b44a0"
@@ -71,7 +72,8 @@ def require_commit_on_main(run: Run, root: Path, commit: str) -> None:
     """A release is built only from a commit that is on main as GitHub has it now."""
     if _COMMIT.fullmatch(commit) is None:
         raise ReleaseError("give the full 40-character commit hash")
-    run("git", "fetch", "--quiet", "origin", "main", cwd=root)
+    # With the tags, so the list of changes since the last release starts from the newest one.
+    run("git", "fetch", "--quiet", "--tags", "origin", "main", cwd=root)
     try:
         run("git", "merge-base", "--is-ancestor", commit, "origin/main", cwd=root)
     except ReleaseError:
@@ -126,13 +128,34 @@ def build_here(run: Run, root: Path, commit: str, work: Path) -> Path:
     return output
 
 
+def made_by_the_build_workflow(run: Run, artifact: dict[str, Any], commit: str) -> bool:
+    """
+    Whether an artifact is the real build of this commit. Its name proves nothing: a pull request,
+    even from a fork, runs its own copy of a workflow and can offer an artifact of any name. So
+    the run behind it must be the build workflow, started by hand in this repository, for this
+    commit, and finished well.
+    """
+    made = api(run, "GET", f"repos/{REPOSITORY}/actions/runs/{int(artifact['workflow_run']['id'])}")
+    return (
+        made.get("path") == BUILD_WORKFLOW
+        and made.get("event") == "workflow_dispatch"
+        and made.get("head_sha") == commit
+        and (made.get("head_repository") or {}).get("full_name") == REPOSITORY
+        and made.get("conclusion") == "success"
+    )
+
+
 def githubs_build(run: Run, commit: str, work: Path) -> Path:
     """GitHub's build of the same commit: the artifact the build workflow offered."""
     listing = json.loads(run("gh", "api", f"repos/{REPOSITORY}/actions/artifacts?name=bus-release-{commit}&per_page=100"))
-    offered = [item for item in listing.get("artifacts", []) if not item.get("expired")]
+    offered = [
+        item for item in listing.get("artifacts", [])
+        if not item.get("expired") and made_by_the_build_workflow(run, item, commit)
+    ]
     if not offered:
         raise ReleaseError(
-            f"GitHub has no build of {commit}. Start the 'Bus release build' workflow for it and let it finish."
+            f"GitHub has no build of {commit} made by the 'Bus release build' workflow. Start that "
+            "workflow by hand for this commit while it is the newest on main, and let it finish."
         )
     newest = max(offered, key=lambda item: int(item["id"]))
     output = work / "github"
@@ -248,6 +271,45 @@ def require_published_as_meant(record: dict[str, Any], tag: str, commit: str, fi
         raise ReleaseError("the published release is not as it was meant, in: " + ", ".join(wrong))
 
 
+def ensure_tag(run: Run, repository: str, payload: dict[str, Any]) -> None:
+    """
+    Makes the release's tag, or accepts the one already there from a run that stopped part way.
+
+    A bus tag can never be moved or deleted, so a second run must be able to carry on from it. It
+    is accepted only if it is an annotated tag on exactly this commit with exactly this message,
+    which holds the signed statement. Anything else is someone else's tag and stops the release.
+    """
+    tag = payload["tag"]
+    name = f"refs/tags/{tag}"
+    found = json.loads(run("gh", "api", f"repos/{repository}/git/matching-refs/tags/{tag}"))
+    existing = [ref for ref in found if ref.get("ref") == name]
+    if not existing:
+        made = api(run, "POST", f"repos/{repository}/git/tags", payload)
+        api(run, "POST", f"repos/{repository}/git/refs", {"ref": name, "sha": made["sha"]})
+        return
+    target = existing[0].get("object") or {}
+    record = api(run, "GET", f"repos/{repository}/git/tags/{target.get('sha')}") if target.get("type") == "tag" else {}
+    same = (
+        record.get("tag") == tag
+        and (record.get("object") or {}).get("sha") == payload["object"]
+        and record.get("message") == payload["message"]
+    )
+    if not same:
+        raise ReleaseError(
+            f"{tag} already exists and is not this release: not this commit with this signed statement. "
+            "It cannot be moved; release the next version instead."
+        )
+
+
+def ensure_draft(run: Run, repository: str, payload: dict[str, Any]) -> dict[str, Any]:
+    """The release for the tag: the one a stopped run left, or a new draft."""
+    listed = json.loads(run("gh", "api", f"repos/{repository}/releases?per_page=100"))
+    for record in listed:
+        if record.get("tag_name") == payload["tag_name"]:
+            return record
+    return api(run, "POST", f"repos/{repository}/releases", payload)
+
+
 def publish(run: Run, commit: str, work: Path, signature: Path, repository: str, now: datetime) -> str:
     repository = repository_named(repository)
     root = repository_root(run)
@@ -260,13 +322,14 @@ def publish(run: Run, commit: str, work: Path, signature: Path, repository: str,
     tree = run("git", "rev-parse", f"{commit}^{{tree}}", cwd=root).strip()
     body = release_body(commit, tree)
 
-    made = api(run, "POST", f"repos/{repository}/git/tags", tag_payload(tag, commit, body, signed, now))
-    api(run, "POST", f"repos/{repository}/git/refs", {"ref": f"refs/tags/{tag}", "sha": made["sha"]})
-    draft = api(run, "POST", f"repos/{repository}/releases", release_payload(tag, commit, body))
-    paths = [str(work / "local" / name) for name in sorted(files)]
-    run("gh", "release", "upload", tag, *paths, "--repo", repository)
-    api(run, "PATCH", f"repos/{repository}/releases/{draft['id']}", {"draft": False})
-    record = api(run, "GET", f"repos/{repository}/releases/{draft['id']}")
+    # Each step is safe to run again, so a run that stopped part way is finished by running it again.
+    ensure_tag(run, repository, tag_payload(tag, commit, body, signed, now))
+    release = ensure_draft(run, repository, release_payload(tag, commit, body))
+    if release.get("draft") is True:
+        paths = [str(work / "local" / name) for name in sorted(files)]
+        run("gh", "release", "upload", tag, *paths, "--clobber", "--repo", repository)
+        api(run, "PATCH", f"repos/{repository}/releases/{release['id']}", {"draft": False})
+    record = api(run, "GET", f"repos/{repository}/releases/{release['id']}")
     require_published_as_meant(record, tag, commit, files)
     return f"Published bus {version} as {tag} in {repository}, from {commit}.\n"
 
