@@ -125,6 +125,36 @@ def test_the_real_fixture_signature_can_never_pass_as_a_release():
     assert fetcher.STATEMENT_HEADER + "\n" not in message
 
 
+def test_a_signature_made_with_a_touch_but_without_the_pin_is_refused():
+    """Flags 0x01. Requiring the PIN as well is what makes a stolen key useless."""
+    touched_only = KEY.sign(STATEMENT.encode(), flags=0x01)
+    touched_and_pin = KEY.sign(STATEMENT.encode(), flags=0x05)
+
+    assert signer(touched_only) is None
+    assert signer(touched_and_pin) is not None
+    with pytest.raises(fetcher.Problem, match="signature is not valid"):
+        fetcher.signed_digests(KEY.tag_message(STATEMENT, flags=0x01), "0.3.0", keys=(KEY.blob,))
+
+
+def test_a_real_worker_host_release_signature_is_refused_as_a_bus_release():
+    """
+    Cross-product replay. The worker host's releases are signed with the same hardware keys, in
+    the namespace strugglebus-release. That signature is genuine, and it is no use here.
+    """
+    release = (DATA / "worker_host_release" / "release.toml").read_bytes()
+    signature = (DATA / "worker_host_release" / "release.toml.sig").read_text(encoding="utf-8")
+
+    # Genuine, by a pinned key, for the worker host.
+    assert fetcher.signer_of(signature, release, "strugglebus-release") in PINNED_FINGERPRINTS
+    # Refused as a signature for the bus, over its own bytes or over a bus statement.
+    assert fetcher.signer_of(signature, release) is None
+    assert fetcher.signer_of(signature, STATEMENT.encode()) is None
+    # And refused when dressed up as a bus release's tag.
+    for tag_message in (release.decode() + signature, STATEMENT + signature):
+        with pytest.raises(fetcher.Problem):
+            fetcher.signed_digests(tag_message, "0.3.0")
+
+
 def test_the_pinned_keys_are_the_owners_three_hardware_keys():
     fingerprints = [fetcher.key_fingerprint(base64.b64decode(key)) for key in fetcher.RELEASE_KEYS]
     assert fingerprints == PINNED_FINGERPRINTS

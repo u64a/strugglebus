@@ -7,3 +7,7 @@
   the owner's hardware release keys, in the namespace `strugglebus-bus-release`. It lets the
   tests check a real FIDO-key signature, which no test can make. To remake it:
   `ssh-keygen -Y sign -f <release key> -n strugglebus-bus-release message.txt`
+- `worker_host_release/release.toml` and `release.toml.sig`: a real worker host release from
+  this repository (`worker-host/release.toml` at the time it was copied), signed with the same
+  hardware keys in the worker host's namespace, `strugglebus-release`. The tests use it to show
+  that a genuine signature for one product is refused for the other.

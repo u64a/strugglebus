@@ -17,6 +17,11 @@ one, and a newer one that cannot start - and checks that:
   start, without retrying it;
 - the Docker install becomes healthy, and `update.sh` does the same.
 
+An installed bus takes a release only if the project owner's hardware key signed
+it, and no test can use that key. So the three wheels built here trust a key made
+for this run instead, and each pretend release is signed with it. The updaters
+then run their whole signature check for real. Nothing built here is a release.
+
 Nothing outside the containers and a temporary folder is changed.
 """
 
@@ -31,7 +36,11 @@ import tempfile
 import time
 from pathlib import Path
 
+from release_signing import ReleaseKey, statement_for
+
 REPOSITORY = Path(__file__).resolve().parents[1]
+# The key the wheels built for this run trust in place of the owner's.
+SMOKE_KEY = ReleaseKey(application=b"ssh:strugglebus-smoke")
 SYSTEMD_IMAGE = "strugglebus-smoke-debian13"
 DEBIAN = "strugglebus-smoke-debian"
 DOCKER_HOST = "strugglebus-smoke-docker"
@@ -54,6 +63,10 @@ class Handler(BaseHTTPRequestHandler):
             body = json.dumps({"tag_name": "v" + version, "assets": [
                 {"name": n, "browser_download_url": "http://127.0.0.1:8000/files/" + n}
                 for n in names]}).encode()
+        elif self.path == "/latest/git/ref/tags/v" + version:
+            body = json.dumps({"object": {"type": "tag", "sha": "a" * 40}}).encode()
+        elif self.path == "/latest/git/tags/" + "a" * 40:
+            body = json.dumps({"tag": "v" + version, "message": open(folder + ".tag").read()}).encode()
         elif self.path.startswith("/files/") and self.path[7:] in names:
             body = open(os.path.join(folder, self.path[7:]), "rb").read()
         else:
@@ -98,6 +111,16 @@ def expect(condition: bool, what: str, detail: str = "") -> None:
     print(f"  ok  {what}", flush=True)
 
 
+def trust_smoke_key(fetcher: Path) -> None:
+    """Makes a copy of the release fetcher trust this run's key in place of the owner's."""
+    text = fetcher.read_text(encoding="utf-8")
+    start = text.index("RELEASE_KEYS = (")
+    end = text.index("\n)\n", start) + len("\n)\n")
+    fetcher.write_bytes(
+        (text[:start] + f'RELEASE_KEYS = (\n    "{SMOKE_KEY.blob}",\n)\n' + text[end:]).encode("utf-8"),
+    )
+
+
 def build_wheels(work: Path) -> dict[str, str]:
     """Build current, newer and broken wheels from copies of the source tree."""
     current = re.search(
@@ -122,6 +145,7 @@ def build_wheels(work: Path) -> dict[str, str]:
                 shutil.copy(REPOSITORY / extra, tree / extra)
         init = tree / "src/strugglebus/__init__.py"
         init.write_bytes(init.read_bytes().replace(current.encode(), version.encode()))
+        trust_smoke_key(tree / "src/strugglebus/selfhost/fetch_release.py")
         if name == "broken":
             app = tree / "src/strugglebus/app.py"
             text = app.read_text(encoding="utf-8")
@@ -140,6 +164,12 @@ def build_wheels(work: Path) -> dict[str, str]:
             for path in sorted(release.iterdir())
         )
         (release / "SHA256SUMS").write_bytes(sums.encode())
+        # The publisher's signed statement, served as the release's tag message.
+        # Only the release's own files: the build also leaves a .gitignore in the folder.
+        statement = statement_for(version, {
+            path.name: path.read_bytes() for path in release.iterdir() if not path.name.startswith(".")
+        })
+        (work / "share" / f"{name}.tag").write_bytes(SMOKE_KEY.tag_message(statement).encode())
     (work / "share" / "page.py").write_bytes(PAGE.encode())
     return versions
 
@@ -198,7 +228,8 @@ def debian(share: Path, versions: dict[str, str]) -> None:
         "daily check installs nothing while switched off", out,
     )
 
-    inside(DEBIAN, "strugglebus-update on; systemctl start strugglebus-update.service")
+    inside(DEBIAN, "strugglebus-update on; systemctl start strugglebus-update.service "
+        "|| { journalctl -u strugglebus-update.service --no-pager -n 25; exit 1; }")
     out = inside(DEBIAN, f"strugglebus-update status; {version}")
     expect(out.strip().endswith(versions["newer"]), "daily check installs the newer release", out)
     expect(inside(DEBIAN, probe + "probe ''") == "200", "bus is healthy after the update")
