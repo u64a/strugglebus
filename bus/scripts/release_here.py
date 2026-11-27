@@ -30,6 +30,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
 
+from strugglebus.release_records import (
+    LocalAsset, ReleasePublicationError, _asset_media_type, _validate_asset_records,
+)
 from strugglebus.release_signature import release_statement, signer_of
 
 REPOSITORY = "u64a/strugglebus"
@@ -256,19 +259,54 @@ def api(run: Run, method: str, path: str, payload: dict[str, Any] | None = None)
     return json.loads(run(*command, "--input", "-", stdin=json.dumps(payload)))
 
 
-def require_published_as_meant(record: dict[str, Any], tag: str, commit: str, files: dict[str, str]) -> None:
+def files_are_as_an_updater_requires(record: dict[str, Any], directory: Path, files: dict[str, str]) -> bool:
+    """
+    Whether the release's files, as GitHub describes them, pass the check an installed updater
+    makes: name, size, hash, and the exact content type of each. It is the updater's own check,
+    so a release this passes is not turned away for how it was uploaded.
+    """
+    local = {
+        name: LocalAsset(name, directory / name, (directory / name).stat().st_size, digest, _asset_media_type(name))
+        for name, digest in files.items()
+    }
+    try:
+        _validate_asset_records(record.get("assets", []), local, complete=True)
+    except ReleasePublicationError:
+        return False
+    return True
+
+
+def require_published_as_meant(
+    record: dict[str, Any], tag: str, commit: str, directory: Path, files: dict[str, str],
+) -> None:
     """After publishing, GitHub must hold exactly what was signed, and hold it unchangeably."""
-    served = {asset["name"]: str(asset.get("digest", "")).removeprefix("sha256:") for asset in record.get("assets", [])}
     checks = {
-        "its tag": record.get("tag_name") == tag,
+        "its tag": record.get("tag_name") == tag and record.get("name") == tag,
         "its commit": record.get("target_commitish") == commit,
         "being published": record.get("draft") is False and record.get("prerelease") is False,
         "being immutable": record.get("immutable") is True,
-        "its files": served == files,
+        "its files": files_are_as_an_updater_requires(record, directory, files),
     }
     wrong = [name for name, good in checks.items() if not good]
     if wrong:
         raise ReleaseError("the published release is not as it was meant, in: " + ", ".join(wrong))
+
+
+def upload(run: Run, repository: str, release: dict[str, Any], directory: Path, files: dict[str, str]) -> None:
+    """
+    Puts the five files on a draft release, each with the content type an updater requires.
+
+    The type is stated, never left to be guessed from the file's name: a guessed type is one an
+    installed updater refuses. Anything a stopped run left on the draft is removed first.
+    """
+    for left in json.loads(run("gh", "api", f"repos/{repository}/releases/{release['id']}/assets?per_page=100")):
+        run("gh", "api", "--method", "DELETE", f"repos/{repository}/releases/assets/{int(left['id'])}")
+    for name in sorted(files):
+        run(
+            "gh", "api", "--method", "POST", "-H", f"Content-Type: {_asset_media_type(name)}",
+            f"https://uploads.github.com/repos/{repository}/releases/{release['id']}/assets?name={name}",
+            "--input", str(directory / name),
+        )
 
 
 def ensure_tag(run: Run, repository: str, payload: dict[str, Any]) -> None:
@@ -326,11 +364,14 @@ def publish(run: Run, commit: str, work: Path, signature: Path, repository: str,
     ensure_tag(run, repository, tag_payload(tag, commit, body, signed, now))
     release = ensure_draft(run, repository, release_payload(tag, commit, body))
     if release.get("draft") is True:
-        paths = [str(work / "local" / name) for name in sorted(files)]
-        run("gh", "release", "upload", tag, *paths, "--clobber", "--repo", repository)
+        upload(run, repository, release, work / "local", files)
+        # Checked while it can still be put right: once published, nothing about it can change.
+        draft = api(run, "GET", f"repos/{repository}/releases/{release['id']}")
+        if not files_are_as_an_updater_requires(draft, work / "local", files):
+            raise ReleaseError("the files on the draft release are not as an updater requires; run this again")
         api(run, "PATCH", f"repos/{repository}/releases/{release['id']}", {"draft": False})
     record = api(run, "GET", f"repos/{repository}/releases/{release['id']}")
-    require_published_as_meant(record, tag, commit, files)
+    require_published_as_meant(record, tag, commit, work / "local", files)
     return f"Published bus {version} as {tag} in {repository}, from {commit}.\n"
 
 
