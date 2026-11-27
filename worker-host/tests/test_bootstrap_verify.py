@@ -553,6 +553,14 @@ def test_a_different_trust_root_is_kept_and_said_never_replaced_silently(shell, 
     assert got == {"none": True, "same": True, "copy": "allowed_signers.before-S", "kept": "AQI="}
 
 
+@pytest.mark.parametrize("shell", SHELLS)
+def test_each_hosts_offboarding_record_is_its_own_file(shell):
+    got = run("ConvertTo-Json @((Get-AccountRecordPath 'sbworker' 'C:\\P'), (Get-AccountRecordPath 'sbworker2' 'C:\\P'))",
+              shell)
+    assert got == ["C:\\P\\host-account-sbworker.json", "C:\\P\\host-account-sbworker2.json"]
+    assert "'host-account.json'" not in SCRIPT.read_text(encoding="ascii")  # never one shared record again
+
+
 def test_still_ascii_and_lf_only():
     raw = SCRIPT.read_bytes()
     assert max(raw) < 128 and b"\r" not in raw

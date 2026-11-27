@@ -585,7 +585,11 @@ function Get-VerifiedRelease([string]$git, [string]$work, [string]$repo = $Relea
 # groups, and (after the engine sign-in, step 7) denied every logon but the scheduled task's.
 
 $SbRoot = Join-Path $env:ProgramData 'strugglebus'
-$AccountRecord = Join-Path $SbRoot 'host-account.json'
+function Get-AccountRecordPath([string]$account, [string]$root = $SbRoot) {
+    # Pure: one offboarding record PER ACCOUNT. One shared host-account.json was overwritten by a second host's install
+    # on the same PC (seen on the test VM, 28 Nov), losing the first host's record.
+    return Join-Path $root "host-account-$account.json"
+}
 $PinnedSigners = Join-Path $SbRoot 'allowed_signers'
 $PinnedCa = Join-Path $SbRoot 'bus-ca.crt'
 
@@ -627,7 +631,7 @@ function Get-FreeAccountName([string]$base = 'sbworker') {
 }
 
 function New-HostAccount([string]$hostPrefix, $password) {
-    # Step 4: a standard local user, not an administrator, recorded in host-account.json for offboarding.
+    # Step 4: a standard local user, not an administrator, recorded in host-account-<name>.json for offboarding.
     $name = Get-FreeAccountName
     $user = New-LocalUser -Name $name -Password $password -PasswordNeverExpires -UserMayNotChangePassword `
         -AccountNeverExpires -Description "StruggleBus worker host $hostPrefix" -ErrorAction Stop
@@ -647,7 +651,7 @@ function New-HostAccount([string]$hostPrefix, $password) {
     New-ItemProperty -Path $list -Name $name -Value 0 -PropertyType DWord -Force | Out-Null
     $record = [ordered]@{ account = $name; sid = $user.SID.Value; created_by_bootstrap = $true; host_prefix = $hostPrefix
                           created_at = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ') }
-    [IO.File]::WriteAllText($AccountRecord, ((ConvertTo-Json $record) + "`n"), (New-Object Text.UTF8Encoding($false)))
+    [IO.File]::WriteAllText((Get-AccountRecordPath $name), ((ConvertTo-Json $record) + "`n"), (New-Object Text.UTF8Encoding($false)))
     Say "created the host's account $name (standard user, hidden from sign-in, password random and never stored)"
     return $user
 }
