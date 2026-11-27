@@ -77,7 +77,7 @@ class Commands:
         self.release = {
             "id": 81, "tag_name": TAG, "target_commitish": COMMIT, "draft": False, "prerelease": False,
             "immutable": True,
-            "name": TAG,
+            "name": TAG, "body": here.release_body(COMMIT, TREE),
             "assets": [served(number, name) for number, name in enumerate(NAMES, 100)],
         }
         self.left_on_draft: list[dict] = []
@@ -314,16 +314,36 @@ def test_nothing_is_published_if_the_builds_no_longer_agree(commands, tmp_path):
 
 
 @pytest.mark.parametrize("field,value,named", [
-    ("tag_name", "bus/v9.9.9", "its tag"), ("target_commitish", "main", "its commit"),
+    ("target_commitish", "main", "its commit"),
     ("draft", True, "being published"), ("prerelease", True, "being published"),
     ("immutable", False, "being immutable"), ("name", "A name", "its tag"),
+    ("body", "Something else", "its source"),
 ])
 def test_a_release_that_was_not_published_as_meant_is_reported(commands, tmp_path, field, value, named):
-    work, signature, _ = prepared(tmp_path)
+    work, signature, files = prepared(tmp_path)
+    leave_tag(commands, files, signature)
     commands.release = {**commands.release, field: value}
+    commands.listed = [{**commands.release, "draft": False}]
 
     with pytest.raises(here.ReleaseError, match=f"not as it was meant, in: {named}"):
         here.publish(commands, COMMIT, work, signature, here.REPOSITORY, NOW)
+
+
+@pytest.mark.parametrize("field,value", [
+    ("target_commitish", "main"), ("body", "Something else"), ("name", "A name"), ("tag_name", "bus/v9.9.9"),
+])
+def test_a_draft_that_does_not_say_what_this_release_says_is_never_published(commands, tmp_path, field, value):
+    """A draft left by a stopped run, or by anyone else, is checked before anything is uploaded to it."""
+    work, signature, files = prepared(tmp_path)
+    leave_tag(commands, files, signature)
+    wrong = {**commands.release, "draft": True, field: value}
+    commands.listed = [wrong if field != "tag_name" else {**wrong, "tag_name": TAG, "name": "bus/v9.9.9"}]
+
+    with pytest.raises(here.ReleaseError, match="already exists and does not name this commit and source"):
+        here.publish(commands, COMMIT, work, signature, here.REPOSITORY, NOW)
+
+    assert commands.sent == []
+    assert not any("uploads.github.com" in " ".join(call) for call in commands.calls)
 
 
 def test_a_trial_may_go_to_a_scratch_repository_and_nowhere_else(commands, tmp_path):

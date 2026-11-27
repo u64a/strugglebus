@@ -276,13 +276,21 @@ def files_are_as_an_updater_requires(record: dict[str, Any], directory: Path, fi
     return True
 
 
+def says_what_was_meant(record: dict[str, Any], expected: dict[str, Any]) -> dict[str, bool]:
+    """Whether a release names the tag, the commit and the source it was meant to."""
+    return {
+        "its tag": record.get("tag_name") == expected["tag_name"] and record.get("name") == expected["name"],
+        "its commit": record.get("target_commitish") == expected["target_commitish"],
+        "its source": record.get("body") == expected["body"],
+    }
+
+
 def require_published_as_meant(
-    record: dict[str, Any], tag: str, commit: str, directory: Path, files: dict[str, str],
+    record: dict[str, Any], expected: dict[str, Any], directory: Path, files: dict[str, str],
 ) -> None:
     """After publishing, GitHub must hold exactly what was signed, and hold it unchangeably."""
     checks = {
-        "its tag": record.get("tag_name") == tag and record.get("name") == tag,
-        "its commit": record.get("target_commitish") == commit,
+        **says_what_was_meant(record, expected),
         "being published": record.get("draft") is False and record.get("prerelease") is False,
         "being immutable": record.get("immutable") is True,
         "its files": files_are_as_an_updater_requires(record, directory, files),
@@ -362,16 +370,23 @@ def publish(run: Run, commit: str, work: Path, signature: Path, repository: str,
 
     # Each step is safe to run again, so a run that stopped part way is finished by running it again.
     ensure_tag(run, repository, tag_payload(tag, commit, body, signed, now))
-    release = ensure_draft(run, repository, release_payload(tag, commit, body))
+    expected = release_payload(tag, commit, body)
+    release = ensure_draft(run, repository, expected)
     if release.get("draft") is True:
+        # Everything is checked while it can still be put right: once published, nothing can change.
+        # A draft left by a stopped run, or by anyone else, must say what this release says.
+        if not all(says_what_was_meant(release, expected).values()):
+            raise ReleaseError(
+                f"a draft release for {tag} already exists and does not name this commit and source; "
+                "delete that draft and run this again"
+            )
         upload(run, repository, release, work / "local", files)
-        # Checked while it can still be put right: once published, nothing about it can change.
         draft = api(run, "GET", f"repos/{repository}/releases/{release['id']}")
         if not files_are_as_an_updater_requires(draft, work / "local", files):
             raise ReleaseError("the files on the draft release are not as an updater requires; run this again")
         api(run, "PATCH", f"repos/{repository}/releases/{release['id']}", {"draft": False})
     record = api(run, "GET", f"repos/{repository}/releases/{release['id']}")
-    require_published_as_meant(record, tag, commit, work / "local", files)
+    require_published_as_meant(record, expected, work / "local", files)
     return f"Published bus {version} as {tag} in {repository}, from {commit}.\n"
 
 
