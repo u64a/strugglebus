@@ -107,7 +107,7 @@ they are: coordinators read them to decide whether to send work. This API is an 
 | The App, any enrolled device | `GET /api/mobile/hosts/status` | The latest snapshot of every host, filtered as below, each with the bus's `received_at` |
 | The App, any enrolled device | `GET /api/mobile/hosts/{agent_id}/status/history?since=` | Up to 12 hours of **samples** (below), not whole snapshots |
 
-**The bus (bus-dev, bus 0.2.73, schema 25):**
+**The bus (bus-dev, the release with schema 25):**
 - **Which host a row belongs to comes from the authenticated agent, never from the body.** The `host` and `agent` in
   the body are display data.
 - **Only an agent with the bus's own host flag may write.** It's set by a host enrolment code (0.2.72), and for hosts
@@ -160,6 +160,121 @@ One busy host with two workers, a warning and an announced update:
 - `sample-v2.json`: its history sample, with `received_at` `2026-11-27T04:00:00Z`.
 
 The host's tests check that its code makes exactly these. The bus builds against the same files.
+
+---
+
+## 1b. Host events in the bus's event log
+
+Agreed on #humans, 27 Nov 2026: Chris ("as long as the local logs on the host remain as well"); the proposal
+(28846); u64-security (28848); bus-dev (28850). The App's admin log can then answer "what happened on that host?".
+Today it only shows a host's *current* problem: a crash at 3 am that recovered, or yesterday's failed update, left
+no trace.
+
+**The local log files don't change.** `logs\host-YYYYMMDD.log` and `.errors.log` stay exactly as they are, as the
+full record. An event is a separate, much smaller thing.
+
+**Events are the host's own claims.** They help diagnosis but aren't proof: a compromised host can leave events out
+or invent them. The same is true of the status snapshot in §1a.
+
+### The call
+
+`POST /api/hosts/events` (the release with schema 25), with the same identity rule as §1a. That's the host's own
+agent credential, the bus's host flag, and `agent` must be the caller (else 400). The body:
+
+```
+{"v": 1, "agent": "<the caller's agent name>", "events": [ <1 to 20 events> ]}
+```
+
+**Limits:** at most 16 KB per call, and one call per 5 s per host (429).
+
+**The bus refuses the whole batch with 400** for:
+- an unknown `type`;
+- an unknown field;
+- a value of the wrong kind;
+- a repeated `id`;
+- more than 20 events;
+- the wrong `agent`.
+
+**Storage:** each event `id` is stored once, so a retry after a lost answer never makes a duplicate. Source `host`,
+with the host's name as the subject. Retention is 30 days, with a cap of 500 rows per host inside the host source's
+own cap. So one noisy host can't push out another's events, and hosts together can't push out the bus's update or
+security events.
+
+**Order:** the bus sorts by its own `received_at` and shows the host's `at` beside it. Events sent late, after an
+outage, sort together at the moment they arrived, each showing its own time.
+
+**Visibility: admins only**, the whole host source (u64-security). It's served only with the operator grant, on
+`GET /api/mobile/admin/logs/full`. The existing log route, which any device can read, leaves host events out.
+
+### An event
+
+`{"id": "<a UUID the host makes>", "type": "<from the list>", "at": "<the host's time, YYYY-MM-DDTHH:MM:SSZ>", ...}`
+plus only the fields its type lists, each optional.
+
+**Field kinds:** these are the bus's checks, and the bus stores no free text from a host.
+
+| Kind | Fields | Rule |
+|---|---|---|
+| version | `version`, `previous` | `YYYY.MM.DD` with an optional `.N`, or `manual` |
+| code | `reason`, `code`, `step` | lowercase letters and digits in parts joined by `-` (`memory-high`), at most 64 |
+| type name | `error` | a Python exception type name (`KeyError`, `json.JSONDecodeError`), at most 64 |
+| int | `exit_code`, `attempt` | an integer between -1000000 and 1000000 |
+
+**The types, and the level the bus gives each** (bus-dev's ranking; the host sends no level):
+
+| Type | Fields | Level | The host logs it when |
+|---|---|---|---|
+| `update-found` | version | info | an update check first finds a newer signed release (once per version) |
+| `update-applied` | version, previous | info | the new code starts |
+| `update-failed` | version, reason | error | an update can't be applied |
+| `update-rolled-back` | version | error | the supervisor restores the previous version |
+| `update-missed` | version | warning | the window passed while workers were still busy |
+| `release-source-unreachable` | — | warning | the release source can't be fetched (once per outage) |
+| `release-redirect-refused` | — | error | a release names a source outside the host's allowed remotes |
+| `started` | — | info | the host process starts |
+| `stopped` | reason | info | the host stops (`drain`, `stop`, ...) |
+| `restarted-after-crash` | exit_code, attempt | warning | the supervisor restarts a host that exited unexpectedly |
+| `fatal` | error | error | an error escapes the main loop: its type only, never the message or traceback |
+| `bus-lost`, `bus-back` | — | warning, info | the bus stops answering, and answers again (once per outage) |
+| `openbao-lost`, `openbao-back` | — | warning, info | OpenBao becomes unreachable, and reachable again |
+| `leaf-renew-failed` | — | error | the leaf certificate's renewal fails (once until it next succeeds) |
+| `task-refused` | reason | warning | a task is refused: the reason code only, never the task |
+| `wip-save-failed` | step | warning | a worker's unsaved work couldn't be saved |
+| `copilot-update-failed` | — | warning | a Copilot CLI update fails |
+| `pressure` | — | warning | memory or disk pressure begins |
+| `problem-raised`, `problem-cleared` | code | warning, info | the status's `problem.code` (§1) changes |
+
+### The host
+
+- **How events are made:** `hostevents.EventLog` writes every log line as before, then turns the lines in its table
+  into events. A line that repeats while a condition lasts becomes one event per change.
+- **The supervisor** writes `restarted-after-crash` and `update-rolled-back` the same way. It only does so between
+  host runs, so it never writes the queue at the same time as the host.
+- **The queue:** `state\host-events.json`, at most 200 events. When it's full, the oldest event that isn't an update
+  failure, rollback, fatal error, crash restart or refused redirect goes first. It's on disk, so nothing is lost
+  while the bus is away or the host restarts.
+- **Sending:** up to 20 events per call, at most every 5 s.
+  - **201:** stored, and removed from the queue.
+  - **400 or 413:** the batch can never be stored, so it's dropped and logged (`host-events-dropped`), never
+    retried forever.
+  - **403 or 404** (not marked as a host yet, or an older bus): kept, logged once, retried hourly.
+  - **429:** a minute's wait. **Unreachable:** the next try.
+- **New local log lines** for this (both useful locally too): `task-refused reason=...` (a refusal was only in the
+  task state before) and `bus-back` (the end of an outage).
+
+### Vectors (`contracts/host-events/`)
+
+**Accepted:** `batch-good.json`, a batch the bus stores (201).
+
+**Refused (400), with the reason:**
+- `batch-unknown-type.json`: `unknown-type`;
+- `batch-unknown-field.json`: `unknown-field`;
+- `batch-free-text.json`: `bad-value`;
+- `batch-wrong-agent.json`: `wrong-agent`;
+- `batch-21-events.json`: `too-many-events`.
+
+**Answers:** `expected.json` gives the caller agent and each file's status and reason. `hostevents.validate_batch()`
+is the reference for the bus's check, and the host's tests run it on each file.
 
 ---
 

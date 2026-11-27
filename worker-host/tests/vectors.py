@@ -12,7 +12,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 LOCAL = ROOT / "tests" / "data" / "vectors"
 CONTRACTS = ROOT.parent / "contracts"
-NAMES = ("host-command", "fleet", "host-enrol", "host-status")
+NAMES = ("host-command", "fleet", "host-enrol", "host-status", "host-events")
 
 PINNED = {
     "fleet/allowed_signers": "ce7633fea544aca440d9e3bf8f8e59bacbfc67f3883109af2f9883e4e18a6e84",
@@ -48,6 +48,13 @@ PINNED = {
     "host-command/cmd-update.json.sig": "2632b35e593ae3c7ed4e410f2bbc2312bc78e2764f98f444f5de5ded693f33a0",
     "host-command/expected.json": "b785b0887fe90390d2795d611a884dc1748ddb681c91a002b30d18b571761920",
     "host-enrol/sbhost-enrol.json": "42d75e14b586793374addfa1e22f1627bb887fea0eb88af7f16fdb06d61e9782",
+    "host-events/batch-21-events.json": "fd6829da23ad0ef0b08dcbe31b3e4892552cbd5098c274392d892e20a8a7dac6",
+    "host-events/batch-free-text.json": "57c7d53c20999b248d6bcd54e7c176d02f7e3b6b588d88490201e66a460cf4d7",
+    "host-events/batch-good.json": "5c44f56c43fecdef291402af215d66b2ba271a66bddc07561181634c935080ce",
+    "host-events/batch-unknown-field.json": "1d18126b7320e48773ade472911b546e87ce6f74a7dc6eff2e0791b8c1a24554",
+    "host-events/batch-unknown-type.json": "0635459985075b2b1347a8bde778a99f2be11f493ce5b1a47a4436e276b46bc5",
+    "host-events/batch-wrong-agent.json": "7d28fc908d328aabd9b7d19c1940436dd279071a4d9ed79efc3575a8b72b3c9a",
+    "host-events/expected.json": "fdded42ff4c8d4eee4654a8917cc5c143edf23c577ec7400cff0d3389be5fa55",
     "host-status/sample-v2.json": "f0377cc9142d2c9a2382d18ae9d9c5eaeb2d89a5815077964f45b238fa1e3ca3",
     "host-status/snapshot-v2-device.json": "aadb5bca41c1dac6c7538a8aefe3f99951928be07016360f9965d5b49ce93d4a",
     "host-status/snapshot-v2.json": "07261a78e8724a173d0d9482db4ed109711dd29a8d012e15ffd134220036f2fb",

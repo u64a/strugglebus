@@ -32,6 +32,8 @@ from .busclient import Bus, BusError, bootstrap, onboard
 from .busclient import retire as retire_identity
 from .claim import ClaimSession, from_pinned, parse_reply, reply_text
 from .config import Config
+from . import hostevents
+from .hostevents import EventLog
 from .logs import HostLog
 from .state import StateStore, atomic_write_json, take_controls
 from .validate import (REPLY_KIND, TASK_KIND, UUID_RE, WORKER_RE, Context, Decision, Pin, Policy, classify,
@@ -52,6 +54,9 @@ STATUS_PUSH_PATH = "/api/hosts/status"
 STATUS_PUSH_SECONDS = 60     # at least this often
 STATUS_PUSH_MIN_GAP = 10     # at most this often (the bus refuses more than one push per 10 s)
 STATUS_PUSH_BACKOFF = 3600   # after a refusal (an older bus, or not marked as a host yet)
+# Host events for the bus's event log (section 1b).
+EVENTS_PATH = "/api/hosts/events"
+EVENTS_MIN_GAP = 5           # the bus takes one call per 5 s per host
 WIP_PUSH_TIMEOUT = 120
 
 
@@ -194,7 +199,9 @@ class Host:
         cfg = self.cfg
         for d in (cfg.home, cfg.state_dir, cfg.logs_dir, cfg.briefs_dir, cfg.control_dir):
             d.mkdir(parents=True, exist_ok=True)
-        self.log = self.log or HostLog(cfg.logs_dir, echo=self.echo)
+        # EventLog: the host log, plus a few lines queued as events for the bus's event log (section 1b). The local
+        # log files are unchanged and stay the full record.
+        self.log = self.log or EventLog(cfg.logs_dir, cfg.state_dir, echo=self.echo)
         # Host secrets: OpenBao when [openbao] enabled (docs/openbao-design.md), else the DPAPI store as before.
         self.openbao: openbao_mod.Client | None = None
         self.openbao_ok = True
@@ -218,6 +225,10 @@ class Host:
         # The Hosts dashboard push (push_status_if_due): when, what was last accepted, and a refusal being backed off.
         self.push_at, self.push_after, self.push_key = 0.0, 0.0, None
         self.push_refused: int | None = None
+        # Host events (section 1b): the problem code last seen, and the sender's timing.
+        self.problem_checked, self.problem_code = 0.0, None
+        self.events_at, self.events_after = 0.0, 0.0
+        self.events_refused: int | None = None
         self.game_paused = False
         self.pressure_posted = False
         self.maintenance = False
@@ -366,6 +377,12 @@ class Host:
             self.pins["host"] = Pin(rec["agent_id"], rec["agent_name"])
 
     # --- posting ------------------------------------------------------------------------------
+    def bus_is_ok(self) -> None:
+        """The bus answered. After an outage, one `bus-back` line (and event, section 1b) marks its end."""
+        if self.bus_state == "down":
+            self.log("bus-back")
+        self.bus_state = "ok"
+
     def post(self, kind: str, text: str, reply_to: int | None = None, queue: bool = True,
              metadata: dict | None = None) -> int | None:
         """metadata goes only with a direct post (the status object); a queued post is sent later without it. A bus
@@ -384,7 +401,7 @@ class Host:
                         seq = self.bus.post(self.cfg.channel, kind, text, reply_to)
                 else:
                     seq = self.bus.post(self.cfg.channel, kind, text, reply_to)
-                self.bus_state = "ok"
+                self.bus_is_ok()
                 return seq
             except (BusError, OSError, ValueError):
                 self.bus_state = "down"
@@ -670,7 +687,8 @@ class Host:
                 self.channel_state = "ok"
                 return
             msgs = self.bus.read_all(self.cfg.channel, int(self.st.data["cursor"]))
-            self.channel_state = self.bus_state = "ok"
+            self.channel_state = "ok"
+            self.bus_is_ok()
         except BusError as e:
             if e.status == 404:
                 if self.channel_state != "missing":
@@ -811,6 +829,7 @@ class Host:
                 extra["field"] = decision.field
             if task_id:
                 self.st.mark_terminal(task_id, "refused", seq=seq, reason=decision.reason)
+                self.log("task-refused", reason=decision.reason)  # the reason code only (section 1b)
             self.reply("refuse", task_id, decision.digest, seq, queue=False, **extra)
             return
         self.reserve(m, decision)
@@ -885,6 +904,7 @@ class Host:
             verdict = self.resource_verdict_excluding_self()
             if verdict:
                 self.st.mark_terminal(task_id, "refused", reason=verdict[0])
+                self.log("task-refused", reason=verdict[0])
                 s.post("refuse", reason=verdict[0], **verdict[1])
                 continue
             if self.cfg.messages_mutable and not self.still_same(p):
@@ -1542,6 +1562,55 @@ class Host:
                 self.push_refused = code
             self.push_after = now + STATUS_PUSH_BACKOFF
 
+    def track_problem(self) -> None:
+        """A `problem-raised` / `problem-cleared` line (and event, section 1b) when the status's problem code changes.
+        Checked at most every 10 s, whatever the bus says."""
+        now = time.time()
+        if now - self.problem_checked < STATUS_PUSH_MIN_GAP:
+            return
+        self.problem_checked = now
+        code = hoststatus.problem_of(self.status_facts())
+        if code == self.problem_code:
+            return
+        if self.problem_code:
+            self.log("problem-cleared", code=self.problem_code)
+        if code:
+            self.log("problem-raised", code=code)
+        self.problem_code = code
+
+    def push_events_if_due(self) -> None:
+        """Send queued host events (section 1b) to the bus, up to 20 a call, at most every 5 s. The queue is on disk,
+        so nothing is lost while the bus is away. A 400 means the batch can never be stored (a contract mismatch):
+        it is dropped and logged, so it can't block the queue. 403 or 404 (an older bus, or not marked as a host
+        yet): kept, retried hourly. 429: a minute."""
+        queue = getattr(self.log, "events", None)
+        call = getattr(self.bus, "call", None)
+        now = time.time()
+        if queue is None or call is None or now < self.events_after or now - self.events_at < EVENTS_MIN_GAP:
+            return
+        batch = queue.first(self.cfg.host_agent)
+        if not batch:
+            return
+        self.events_at = now
+        try:
+            code, _ = call("POST", EVENTS_PATH, body=hostevents.body(self.cfg.host_agent, batch))
+        except (BusError, OSError, ValueError) as e:
+            self.log("host-events-failed", error=type(e).__name__)
+            return
+        if code in (200, 201, 204):
+            queue.remove({e["id"] for e in batch})
+            self.events_refused = None
+        elif code in (400, 413):
+            queue.remove({e["id"] for e in batch})
+            self.log("host-events-dropped", status=code, events=len(batch))
+        elif code == 429:
+            self.events_after = now + 60
+        else:
+            if self.events_refused != code:
+                self.log("host-events-refused", status=code)
+                self.events_refused = code
+            self.events_after = now + STATUS_PUSH_BACKOFF
+
     def status_if_changed(self) -> None:
         """Post the status at once when something the App shows changes (state, warnings, problem, update, engines'
         sign-in, fleet), at most every 30 seconds; otherwise it goes with the next heartbeat."""
@@ -2191,6 +2260,8 @@ class Host:
         self.heartbeat_if_due()
         self.status_if_changed()
         self.push_status_if_due()
+        self.track_problem()
+        self.push_events_if_due()
         self.maintain()
         if self.st.data["draining"] and not self.runs and not self.pending:
             self.stopped("drain")

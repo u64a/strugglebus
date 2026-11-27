@@ -293,6 +293,75 @@ def test_task_totals_count_only_this_host_processes_tasks(pushing):
                                      "yielded": 0, "cancelled": 0}
 
 
+@pytest.fixture
+def events_host(pushing, tmp_path):
+    """The pushing host, with the real EventLog (so its lines become queued events)."""
+    from workerhost import hostevents
+
+    h, pushes, logged, answer, clock = pushing
+    h.log = hostevents.EventLog(tmp_path / "evlogs", tmp_path / "evstate")
+    return h, pushes, answer, clock
+
+
+def event_calls(pushes):
+    return [body for _, path, body in pushes if path == "/api/hosts/events"]
+
+
+def test_queued_events_go_to_the_bus_and_leave_the_queue_once_stored(events_host):
+    h, pushes, answer, clock = events_host
+    for _ in range(25):
+        h.log("pressure")
+    h.push_events_if_due()
+    (first,) = event_calls(pushes)
+    assert first["agent"] == "host-box1-host" and len(first["events"]) == 20 and first["v"] == 1
+    assert len(h.log.events.load()) == 5
+    clock["t"] += 2
+    h.push_events_if_due()
+    assert len(event_calls(pushes)) == 1  # at most one call per 5 s
+    clock["t"] += 5
+    h.push_events_if_due()
+    assert len(event_calls(pushes)) == 2 and h.log.events.load() == []
+
+
+def test_a_bus_without_the_route_keeps_the_events_and_tries_hourly(events_host):
+    h, pushes, answer, clock = events_host
+    h.log("task-refused", reason="memory-high")
+    answer["code"] = 404
+    h.push_events_if_due()
+    assert len(h.log.events.load()) == 1 and h.events_refused == 404
+    clock["t"] += 600
+    h.push_events_if_due()
+    assert len(event_calls(pushes)) == 1  # backed off
+    answer["code"] = 201
+    clock["t"] += 3600
+    h.push_events_if_due()
+    assert len(event_calls(pushes)) == 2 and h.log.events.load() == [] and h.events_refused is None
+
+
+def test_a_batch_the_bus_can_never_store_is_dropped_not_retried_forever(events_host):
+    h, pushes, answer, clock = events_host
+    h.log("pressure")
+    answer["code"] = 400
+    h.push_events_if_due()
+    assert h.log.events.load() == []
+
+
+def test_a_change_of_problem_is_raised_and_cleared_once(events_host):
+    h, pushes, answer, clock = events_host
+    h.track_problem()
+    assert h.log.events.load() == []  # no problem
+    h.channel_state = "missing"
+    clock["t"] += 11
+    h.track_problem()
+    clock["t"] += 11
+    h.track_problem()
+    h.channel_state = "ok"
+    clock["t"] += 11
+    h.track_problem()
+    assert [(e["type"], e.get("code")) for e in h.log.events.load()] == [
+        ("problem-raised", "channel-missing"), ("problem-cleared", "channel-missing")]
+
+
 def test_the_host_sends_its_status_in_the_heartbeats_metadata(tmp_path, monkeypatch):
     from conftest import HOST_A, FakeVault, SharedBus
     from workerhost import resources

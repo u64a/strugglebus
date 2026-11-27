@@ -24,6 +24,7 @@ from . import creds, ghcp, panel, signing, winapi
 from . import fleet as fleet_mod
 from .busclient import Bus, BusError, bootstrap, onboard
 from .host import Host, load_pins, save_pins
+from .hostevents import EventLog
 from .logs import HostLog
 from .state import StateStore, send_control
 from .supervisor import Supervisor
@@ -744,7 +745,8 @@ def cmd_supervise(cfg, args) -> int:
     if mutex is None and winapi.IS_WINDOWS:
         HostLog(cfg.logs_dir)("supervisor-already-running")
         return 3
-    log = HostLog(cfg.logs_dir)
+    # EventLog: a crash restart or a rollback is also queued for the bus's event log (section 1b); the host sends it.
+    log = EventLog(cfg.logs_dir, cfg.state_dir)
     try:
         return Supervisor(cfg, log=log).run()
     except BaseException as e:  # noqa: BLE001
