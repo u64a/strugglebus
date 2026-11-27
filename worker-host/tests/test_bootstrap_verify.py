@@ -7,6 +7,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -30,10 +31,19 @@ SIGNED = ROOT / "tests" / "data" / "signed-release"
 SIGNED_TOML, SIGNED_SIG = SIGNED / "release.toml", SIGNED / "release.toml.sig"
 
 
+def clean_env(shell: str) -> dict:
+    """Windows PowerShell 5.1 started from a PowerShell 7 session inherits 7's PSModulePath and then can't load its
+    own modules (Get-Acl, Get-AuthenticodeSignature). A fresh PC starts 5.1 directly, so the tests drop it."""
+    env = dict(os.environ)
+    if shell == WINPS:
+        env.pop("PSModulePath", None)
+    return env
+
+
 def run(body: str, shell: str):
     driver = f"$ErrorActionPreference = 'Stop'\n. '{SCRIPT}'\n{body}"
     r = subprocess.run([shell, "-NoProfile", "-NonInteractive", "-Command", driver], capture_output=True, text=True,
-                       timeout=120, stdin=subprocess.DEVNULL)
+                       timeout=120, stdin=subprocess.DEVNULL, env=clean_env(shell))
     assert r.returncode == 0, r.stderr + r.stdout
     return json.loads(r.stdout)
 
@@ -240,6 +250,41 @@ def test_setup_holds_only_files_the_installer_hash_covers():
     mr = load_make_release()
     extra = [p.name for p in (ROOT / "setup").iterdir() if not mr.INSTALLER_RE.fullmatch(f"setup/{p.name}")]
     assert extra == []  # the bootstrap refuses a release whose setup\ holds anything else
+
+
+@pytest.mark.parametrize("shell", SHELLS)
+def test_microsoft_is_read_from_the_organisation_field_only(shell):
+    names = ["CN=Microsoft Corporation, O=Microsoft Corporation, L=Redmond, S=Washington, C=US",
+             "CN=Microsoft Code Signing PCA 2011, O=Microsoft Corporation, L=Redmond, S=Washington, C=US",
+             "CN=Evil, O=Microsoft Corporation Ltd, C=US", "CN=O=Microsoft Corporation, O=Evil", "O=microsoft corporation"]
+    out = run("ConvertTo-Json @(" + ", ".join(f"(Test-MicrosoftName '{n}')" for n in names) + ")", shell)
+    assert out == [True, True, False, False, False]
+
+
+def test_the_powershell_pin_is_the_agreed_one():
+    """Three independent sources agreed on this file (#humans 28927-28929): change it only with a new agreement."""
+    text = SCRIPT.read_text(encoding="ascii")
+    assert "version = '7.6.10'; line = 'LTS'; file = 'PowerShell-7.6.10-win-x64.zip'; size = 109626781" in text
+    assert "sha256 = '7D871531806EB1646264E4BBABD9F0C30C23355591BC756BB9909448C29AE166'" in text
+    assert "url = 'https://github.com/PowerShell/PowerShell/releases/download/v7.6.10/PowerShell-7.6.10-win-x64.zip'" in text
+    assert "Microsoft.PowerShell" not in text  # never the MSIX
+
+
+@pytest.mark.parametrize("shell", SHELLS)
+def test_user_writable_folders_are_spotted(shell, tmp_path):
+    mine = tmp_path / "mine"
+    mine.mkdir()
+    out = run(f"ConvertTo-Json @((Test-UserWritable '{tmp_path / 'missing'}'), (Test-UserWritable 'C:\\Windows\\System32'))",
+              shell)
+    assert out == [True, False]  # a missing folder counts as writable; System32 is not
+
+
+def test_the_bootstrap_parses():
+    """A parse error stops the whole script loading (a "$Name:" in a string is the usual one)."""
+    r = subprocess.run([SHELLS[0], "-NoProfile", "-NonInteractive", "-Command",
+                        f"$t = $null; $e = $null; [void][Management.Automation.Language.Parser]::ParseFile('{SCRIPT}', "
+                        "[ref]$t, [ref]$e); $e.Count"], capture_output=True, text=True, timeout=60)
+    assert r.stdout.strip() == "0", r.stdout + r.stderr
 
 
 def test_still_ascii_and_lf_only():
