@@ -1,0 +1,3 @@
+Strugglebus bus release signing: test fixture.
+Signed once with a real release key, in the namespace strugglebus-bus-release,
+so the tests can check a signature made by a hardware key.

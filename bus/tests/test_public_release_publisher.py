@@ -13,6 +13,8 @@ from public_release_publish_fixtures import (
     PUBLISHER,
     bundle,
     invoke,
+    signature_for,
+    signed_for,
 )
 
 
@@ -94,6 +96,7 @@ def test_existing_public_state_fails_closed_before_mutation(
         approval=PUBLISHER.approval_phrase(tag, commit),
         assets=PUBLISHER._local_assets(directory, tag, commit, tree),
         created_at=1_700_000_000,
+        signed=signed_for(directory, commit=commit, tree=tree, tag=tag),
     )
     if conflict == "tag":
         api.public_tag_object = {
@@ -176,6 +179,7 @@ def test_identity_and_policy_failures_never_mutate(
             tree=tree,
             public_anchor_commit=ANCHOR,
             approval=approval,
+            signature=signature_for(directory, commit=commit, tree=tree, tag=tag),
             resume=False,
             now=lambda: 1_700_000_000,
         )
@@ -356,6 +360,7 @@ def test_resume_requires_exact_receipt_identity_and_approval(
             public_anchor_commit=ANCHOR,
             approval="wrong",
             resume=True,
+            signature=signature_for(directory, commit=commit, tree=tree, tag=tag),
         )
 
     assert len(api.mutations) == mutation_count

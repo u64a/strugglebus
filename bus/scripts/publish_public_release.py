@@ -29,6 +29,7 @@ from promotion_common import PromotionError
 from promotion_state import ReceiptStore
 from release_bundle import MAX_ASSET_BYTES, REPOSITORY_ID, validate_bundle
 from strugglebus.release_records import LocalAsset, _asset_media_type
+from strugglebus.release_signature import release_statement, signer_of
 from strugglebus.release_validation import ReleaseBundleError, SHA1_PATTERN, TAG_PATTERN
 
 
@@ -176,11 +177,28 @@ def tag_object_sha(payload: dict[str, Any]) -> str:
     ).hexdigest()
 
 
+def signed_statement(tag: str, assets: dict[str, LocalAsset], signature: str) -> str:
+    """
+    The owner's signed statement of this release's files, as the tag will carry it. Nothing is
+    published unless the signature is by a pinned release key over exactly these files: the
+    installed updaters will refuse the release otherwise.
+    """
+    statement = release_statement(tag.removeprefix("v"), {name: asset.digest for name, asset in assets.items()})
+    armoured = signature.strip()
+    if signer_of(armoured, statement) is None:
+        raise PublicReleaseError(
+            "the release statement is not signed by a release key for these exact files; "
+            "sign the statement that release_statement.py prints, with a touch and the PIN",
+            code=3,
+        )
+    return statement + armoured + "\n"
+
+
 def _tag_payload(
-    tag: str, anchor: str, body: str, created_at: int
+    tag: str, anchor: str, body: str, created_at: int, signed: str
 ) -> dict[str, Any]:
     return {
-        "message": f"Strugglebus public release mirror v1\n{body}\n",
+        "message": f"Strugglebus public release mirror v1\n{body}\n{signed}",
         "object": anchor,
         "tag": tag,
         "tagger": {
@@ -438,9 +456,10 @@ def _new_operation(
     approval: str,
     assets: dict[str, LocalAsset],
     created_at: int,
+    signed: str,
 ) -> dict[str, Any]:
     body = canonical_release_body(commit, tree)
-    payload = _tag_payload(tag, anchor, body, created_at)
+    payload = _tag_payload(tag, anchor, body, created_at, signed)
     return {
         "approval": approval,
         "assets": [
@@ -459,6 +478,7 @@ def _new_operation(
         "receipt_version": 1,
         "release_body": body,
         "release_id": None,
+        "signed_statement": signed,
         "source_commit": commit,
         "source_repository": SOURCE_REPOSITORY,
         "source_tree": tree,
@@ -478,10 +498,12 @@ def _validate_operation(
     anchor: str,
     approval: str,
     assets: dict[str, LocalAsset],
+    signed: str,
 ) -> dict[str, Any]:
     operation = _object(value, "public release receipt")
     expected_keys = {
         "approval",
+        "signed_statement",
         "assets",
         "created_at",
         "phase",
@@ -523,8 +545,9 @@ def _validate_operation(
         or operation["phase"] not in PHASES
         or type(operation["created_at"]) is not int
         or not 0 < operation["created_at"] <= 4_102_444_799
+        or operation.get("signed_statement") != signed
         or operation["tag_payload"]
-        != _tag_payload(tag, anchor, operation["release_body"], operation["created_at"])
+        != _tag_payload(tag, anchor, operation["release_body"], operation["created_at"], signed)
         or operation["tag_sha"] != tag_object_sha(operation["tag_payload"])
         or (
             operation["release_id"] is not None
@@ -594,6 +617,7 @@ def publish_public_release(
     public_anchor_commit: str,
     approval: str,
     resume: bool,
+    signature: str,
     now: Callable[[], float] = time.time,
 ) -> dict[str, Any]:
     tag = _tag(tag)
@@ -607,6 +631,7 @@ def publish_public_release(
         )
     directory = directory.resolve(strict=True)
     assets = _local_assets(directory, tag, commit, tree)
+    signed = signed_statement(tag, assets, signature)
 
     with store.locked():
         if resume:
@@ -618,6 +643,7 @@ def publish_public_release(
                 anchor=anchor,
                 approval=approval,
                 assets=assets,
+                signed=signed,
             )
         else:
             _validate_source(api, tag, commit, tree, assets)
@@ -631,6 +657,7 @@ def publish_public_release(
                 approval=approval,
                 assets=assets,
                 created_at=created_at,
+                signed=signed,
             )
             if (
                 api.optional_tag_object(
@@ -1214,6 +1241,10 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--approval", required=True)
     parser.add_argument("--receipt", required=True, type=Path)
     parser.add_argument("--gh", required=True)
+    parser.add_argument(
+        "--signature", required=True, type=Path,
+        help="the owner's signature of the statement release_statement.py prints",
+    )
     parser.add_argument("--resume", action="store_true")
     return parser
 
@@ -1234,6 +1265,7 @@ def main(argv: list[str] | None = None) -> int:
                 public_anchor_commit=args.public_anchor_commit,
                 approval=args.approval,
                 resume=args.resume,
+                signature=args.signature.read_text(encoding="utf-8"),
             )
         print(json.dumps(result, ensure_ascii=True, separators=(",", ":"), sort_keys=True))
         return 0
