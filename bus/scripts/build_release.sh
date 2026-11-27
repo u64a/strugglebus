@@ -75,7 +75,13 @@ export UV_CACHE_DIR="$work/cache"
 export UV_PYTHON_INSTALL_DIR="$work/python"
 export UV_NO_PROGRESS=1
 
-"$uv" python install 3.13
+# The exact interpreter, not "the newest 3.13 today". The pinned uv knows the hash of each Python
+# it can fetch and checks it, so naming the exact version makes the interpreter hash-checked too.
+# Both builds fetch the same one, so a bad interpreter would not show as a difference between them.
+python_version="3.13.15"
+export UV_PYTHON="$python_version"
+export UV_PYTHON_PREFERENCE=only-managed
+"$uv" python install "$python_version"
 "$uv" sync --locked --all-extras
 "$uv" run python scripts/check_requirements_lock.py
 "$uv" build --wheel --out-dir "$work/dist"
