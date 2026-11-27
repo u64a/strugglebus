@@ -372,6 +372,34 @@ def test_steps_4_to_6_keep_the_password_out_of_arguments_and_transcripts():
     assert text.count("PtrToStringBSTR") == 1  # the stdin write, nowhere else
 
 
+INF = ("[Unicode]\r\nUnicode=yes\r\n[Privilege Rights]\r\nSeBatchLogonRight = *S-1-5-32-544,*S-1-5-32-551\r\n"
+       "SeDenyNetworkLogonRight = *S-1-5-32-546\r\n[Version]\r\nsignature=\"$CHICAGO$\"\r\nRevision=1\r\n")
+
+
+@pytest.mark.parametrize("shell", SHELLS)
+def test_the_four_logon_denials_are_added_once_and_nothing_else_changes(shell, tmp_path):
+    f = tmp_path / "rights.inf"
+    f.write_text(INF, encoding="ascii", newline="")
+    sid = "S-1-5-21-1-2-3-1001"
+    body = (f"$t = [IO.File]::ReadAllText('{f}'); $a = Update-UserRightsInf $t '{sid}' $DeniedRights; "
+            f"$b = Update-UserRightsInf $a '{sid}' $DeniedRights; ConvertTo-Json @($a, ($a -ceq $b))")
+    out, same = run(body, shell)
+    lines = out.split("\r\n")
+    assert same is True  # running it again changes nothing
+    assert "SeDenyNetworkLogonRight = *S-1-5-32-546,*" + sid in lines  # an existing holder kept, ours added
+    for right in ("SeDenyInteractiveLogonRight", "SeDenyRemoteInteractiveLogonRight", "SeDenyServiceLogonRight"):
+        assert f"{right} = *{sid}" in lines
+    assert "SeBatchLogonRight = *S-1-5-32-544,*S-1-5-32-551" in lines  # the batch right untouched
+    assert lines.index("[Version]") > max(i for i, ln in enumerate(lines) if ln.startswith("SeDeny"))  # inside the section
+
+
+def test_the_one_time_code_never_reaches_a_command_line():
+    text = SCRIPT.read_text(encoding="ascii")
+    enrol = text.split("function Invoke-Enrol")[1].split("function Start-Host")[0]
+    assert "'--code-stdin'" in enrol and "$data.enrol_code)" not in enrol.split("Invoke-AsAccount")[1].split(")")[0]
+    assert "Clear-EnrolCode $data" in enrol  # blanked in the file straight after
+
+
 def test_still_ascii_and_lf_only():
     raw = SCRIPT.read_bytes()
     assert max(raw) < 128 and b"\r" not in raw

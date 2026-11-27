@@ -638,6 +638,131 @@ function Invoke-Install([string]$pwsh, [string]$stage, [string]$work, $data, [st
     if ($p.ExitCode -ne 0) { throw "install.ps1 failed (exit $($p.ExitCode)): see its output above" }
 }
 
+# --- sign-in, logon rights, enrolment, start (2.2 steps 7 to 9 and 12) ---------------------------------------------
+
+function New-AccountCredential([string]$account, $password) {
+    return New-Object Management.Automation.PSCredential("$env:COMPUTERNAME\$account", $password)
+}
+
+function Invoke-SignIn([string]$account, $password, $engines, $tools) {
+    # Step 7: each engine's sign-in must run AS the host's account (its tokens are stored in that profile), so a
+    # window opens under it; the operator completes the device-code sign-in in a browser, then closes the window.
+    # Skipped or failed: the host shows needs-sign-in, and `wh signin <engine>` finishes it later.
+    $cred = New-AccountCredential $account $password
+    foreach ($engine in @($engines)) {
+        $exe = $tools[$engine]
+        $cmd = if ($engine -eq 'ghcp') { "`"$exe`" login" } else { "`"$exe`"" }
+        $hint = if ($engine -eq 'ghcp') { 'follow the device-code steps, then close this window' }
+                else { 'type /login, follow the steps, then /exit and close this window' }
+        Say "signing $engine in as $account in a new window: $hint"
+        try {
+            Start-Process -FilePath (Join-Path $env:SystemRoot 'System32\cmd.exe') -ArgumentList '/k', "title Sign in $engine as $account && $cmd" `
+                -Credential $cred -LoadUserProfile -WorkingDirectory $env:SystemRoot -Wait -ErrorAction Stop
+        } catch {
+            Say "the $engine sign-in window could not open ($($_.Exception.Message)): finish later with 'wh signin $engine'"
+        }
+    }
+}
+
+$DeniedRights = 'SeDenyInteractiveLogonRight', 'SeDenyRemoteInteractiveLogonRight', 'SeDenyNetworkLogonRight', 'SeDenyServiceLogonRight'
+
+function Update-UserRightsInf([string]$inf, [string]$sid, [string[]]$rights) {
+    # Pure: a secedit export (its [Privilege Rights] section) with *SID added to each right, once; a missing right is
+    # added. Other rights and other holders are left exactly as they were.
+    $entry = "*$sid"
+    $lines = [Collections.Generic.List[string]]($inf -split "`r?`n")
+    $start = $lines.FindIndex([Predicate[string]] { param($l) $l.Trim() -eq '[Privilege Rights]' })
+    if ($start -lt 0) { $lines.Add('[Privilege Rights]'); $start = $lines.Count - 1 }
+    $end = $start + 1
+    while ($end -lt $lines.Count -and -not $lines[$end].TrimStart().StartsWith('[')) { $end++ }
+    foreach ($right in $rights) {
+        $found = $false
+        for ($i = $start + 1; $i -lt $end; $i++) {
+            if ($lines[$i] -match "^\s*$right\s*=\s*(.*)$") {
+                $holders = @($Matches[1].Split(',') | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+                if ($holders -notcontains $entry) { $holders += $entry }
+                $lines[$i] = "$right = " + ($holders -join ',')
+                $found = $true
+            }
+        }
+        if (-not $found) { $lines.Insert($end, "$right = $entry"); $end++ }
+    }
+    return ($lines -join "`r`n")
+}
+
+function Set-HostLogonRights([string]$sid) {
+    # After the sign-in (step 7): the account may run its scheduled task and nothing else: no sign-in at the PC, no
+    # Remote Desktop, no network logon (SMB, WinRM), no services (u64-security, #humans 28966).
+    $secedit = Join-Path $env:SystemRoot 'System32\secedit.exe'
+    $infFile = Join-Path $work 'rights.inf'
+    $db = Join-Path $work 'rights.sdb'
+    & $secedit /export /cfg $infFile /areas USER_RIGHTS /quiet | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw 'could not read the user rights (secedit /export)' }
+    $updated = Update-UserRightsInf ([IO.File]::ReadAllText($infFile)) $sid $DeniedRights
+    [IO.File]::WriteAllText($infFile, $updated, [Text.Encoding]::Unicode)
+    & $secedit /configure /db $db /cfg $infFile /areas USER_RIGHTS /quiet | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw 'could not set the logon denials (secedit /configure)' }
+    Say "the host's account is now denied sign-in at the PC, Remote Desktop, network and service logon"
+}
+
+function Invoke-AsAccount([string]$exe, [string[]]$arguments, [string]$account, $password, [string]$stdinLine = '') {
+    # Runs a program as the host's account (its profile loaded), with an optional stdin line; returns its output.
+    $psi = New-Object Diagnostics.ProcessStartInfo $exe
+    $psi.Arguments = ($arguments | ForEach-Object { if ($_ -match '[\s"]') { '"' + $_ + '"' } else { $_ } }) -join ' '
+    $psi.UserName = $account
+    $psi.Domain = $env:COMPUTERNAME
+    $psi.Password = $password
+    $psi.LoadUserProfile = $true
+    $psi.UseShellExecute = $false
+    $psi.RedirectStandardInput = $true
+    $psi.RedirectStandardOutput = $true
+    $psi.RedirectStandardError = $true
+    $psi.WorkingDirectory = $env:SystemRoot
+    $p = [Diagnostics.Process]::Start($psi)
+    $err = $p.StandardError.ReadToEndAsync()
+    if ($stdinLine) { $p.StandardInput.WriteLine($stdinLine) }
+    $p.StandardInput.Close()
+    $out = $p.StandardOutput.ReadToEnd()
+    $p.WaitForExit()
+    return @{ code = $p.ExitCode; out = $out; err = $err.Result }
+}
+
+function Invoke-Enrol([string]$python, [string]$hostHome, [string]$account, $password, [byte[]]$bytes, [string]$dataFile) {
+    # Step 8: `wh enrol --code-stdin` as the account (its credentials are stored as that account): the one-time code
+    # goes on stdin, never on a command line or in a log, and is blanked in the data file straight after (Q1).
+    $data = Read-SbData $bytes -SingleSigner:$SingleSigner
+    if (-not $data.enrol_code) { throw 'the data file has no enrolment code left (already used): get a new one from the App' }
+    $wh = Join-Path $hostHome 'app\wh.py'
+    $r = Invoke-AsAccount $python @('-I', $wh, '--home', $hostHome, 'enrol', '--code-stdin') $account $password $data.enrol_code
+    [IO.File]::WriteAllText((Resolve-Path -LiteralPath $dataFile).Path, (Clear-EnrolCode $data), [Text.Encoding]::ASCII)
+    Say 'the one-time code is blanked in the data file'
+    $r.out -split "`r?`n" | Where-Object { $_ } | ForEach-Object { Say "  $_" }
+    if ($r.code -ne 0) { throw "enrolment failed (exit $($r.code)): get a new code from the App and run this again" }
+    $m = [regex]::Match($r.out, 'CONFIRMATION CODE ([0-9a-f]{8})')
+    $id = [regex]::Match($r.out, 'host identity (\S+)')
+    if (-not $m.Success) { throw 'enrolment printed no confirmation code' }
+    return @{ code = $m.Groups[1].Value; identity = $id.Groups[1].Value }
+}
+
+function Start-Host([string]$python, [string]$hostHome) {
+    # Step 9: `wh start` (enables and starts the scheduled task), then wait for the host's first status.
+    & $python -I (Join-Path $hostHome 'app\wh.py') --home $hostHome start | ForEach-Object { Say "  $_" }
+    $status = Join-Path $hostHome 'state\status.json'
+    $deadline = (Get-Date).AddMinutes(3)
+    while ((Get-Date) -lt $deadline -and -not (Test-Path -LiteralPath $status)) { Start-Sleep -Seconds 5 }
+    if (Test-Path -LiteralPath $status) { Say 'the host is running and reporting' }
+    else { Say 'the host has not reported within 3 minutes: check Task Scheduler and its log under the home folder' }
+}
+
+function Remove-DataFileOffer([string]$dataFile, [bool]$yes) {
+    # Step 12: the data file's code is spent and blanked; offer to delete it.
+    if ($yes) { Say "the data file $dataFile is no longer needed (its code is spent); delete it when you like"; return }
+    if ((Read-Host '[bootstrap] delete the data file now? (yes/no)') -ceq 'yes') {
+        Remove-Item -LiteralPath $dataFile -Force
+        Say 'data file deleted'
+    }
+}
+
 if ($MyInvocation.InvocationName -eq '.') { return }
 
 if (-not $DataFile) { throw 'give the App''s data file: bootstrap.ps1 -DataFile .\sbhost-enrol.json' }
@@ -661,5 +786,15 @@ $password = New-RandomPassword
 $account = New-HostAccount $SB.host_prefix $password    # step 4
 Write-PinnedFiles $SB                                    # step 5
 Invoke-Install $tools.pwsh $verified.stage $work $SB $account.Name $password   # step 6
+$hostHome = Join-Path $SbRoot "host\$($account.Name)"
+Invoke-SignIn $account.Name $password $SB.engines $tools                         # step 7
+Set-HostLogonRights $account.SID.Value
+$enrolled = Invoke-Enrol $tools.python $hostHome $account.Name $password $bytes $DataFile   # step 8
 $password = $null
-throw 'not built yet: the steps after the install (2.2 steps 7 to 12: sign-in, logon denials, enrol, start) come in a later change'
+Start-Host $tools.python $hostHome                                                  # step 9
+Say "enrolled as $($enrolled.identity). CONFIRMATION CODE: $($enrolled.code)"
+Say 'In the App, compare this code with the one it shows for this host, then approve the host into the fleet.'
+Say 'Until then the host waits in "needs-fleet" and takes no work (step 10).'
+Say 'Note: this account''s password exists nowhere. A reinstall sets a new one, which makes the saved sign-ins and'
+Say 'secrets unreadable (DPAPI): a reinstall means signing in to the engines and enrolling again.'
+Remove-DataFileOffer $DataFile $Yes                                              # step 12
