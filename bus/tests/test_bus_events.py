@@ -110,17 +110,21 @@ def test_the_good_batch_is_stored_with_the_bus_own_levels_and_time(log) -> None:
 
 def test_the_bus_and_the_host_agree_on_every_type() -> None:
     """The host's list is the contract; the bus gives each a level and nothing more."""
-    import importlib.util
+    import ast
 
     path = Path(__file__).resolve().parents[2] / "worker-host" / "workerhost" / "hostevents.py"
     if not path.exists():
         pytest.skip("the worker host's source is not beside the bus here")
-    spec = importlib.util.spec_from_file_location("hostevents_reference", path)
-    reference = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(reference)
+    # Read, not imported: the host's module belongs to its own package.
+    assigned = {
+        node.targets[0].id: ast.literal_eval(node.value)
+        for node in ast.parse(path.read_text(encoding="utf-8")).body
+        if isinstance(node, ast.Assign) and isinstance(node.targets[0], ast.Name)
+        and node.targets[0].id in {"TYPES", "FIELDS"}
+    }
 
-    assert {name: fields for name, (fields, _) in bus_events.HOST_TYPES.items()} == reference.TYPES
-    assert bus_events.HOST_FIELDS == reference.FIELDS
+    assert {name: fields for name, (fields, _) in bus_events.HOST_TYPES.items()} == assigned["TYPES"]
+    assert bus_events.HOST_FIELDS == assigned["FIELDS"]
     assert {level for _, level in bus_events.HOST_TYPES.values()} == {"info", "warning", "error"}
 
 
