@@ -676,6 +676,17 @@ function New-AccountCredential([string]$account, $password) {
     return New-Object Management.Automation.PSCredential("$env:COMPUTERNAME\$account", $password)
 }
 
+function Stop-AccountProcesses([string]$account) {
+    # Whatever a sign-in left running as the host's account (a browser, mostly): closed, so nothing interactive keeps
+    # running under it. Its scheduled task isn't started yet.
+    $left = @(Get-Process -IncludeUserName -ErrorAction SilentlyContinue |
+        Where-Object { $_.UserName -eq "$env:COMPUTERNAME\$account" })
+    if ($left.Count) {
+        Say "closing what the sign-in left running as ${account}: $(($left.ProcessName | Sort-Object -Unique) -join ', ')"
+        $left | Stop-Process -Force -ErrorAction SilentlyContinue
+    }
+}
+
 function Invoke-SignIn([string]$account, $password, $engines, $tools) {
     # Step 7: each engine's sign-in must run AS the host's account (its tokens are stored in that profile), so a
     # window opens under it; the operator completes the device-code sign-in in a browser, then closes the window.
@@ -699,9 +710,13 @@ function Invoke-SignIn([string]$account, $password, $engines, $tools) {
         try {
             # HOME: git takes its home from HOME, then HOMEDRIVE+HOMEPATH, which a window opened this way leaves at
             # C:\Windows (seen on the test VM: gh auth setup-git could not lock C:/WINDOWS/.gitconfig).
-            Start-Process -FilePath (Join-Path $env:SystemRoot 'System32\cmd.exe') `
+            # Wait for the window only: -Wait also waits for everything it started, and a browser the sign-in opened
+            # as the account keeps running after the window closes (seen on the test VM: the script hung).
+            $p = Start-Process -FilePath (Join-Path $env:SystemRoot 'System32\cmd.exe') `
                 -ArgumentList '/k', "title Sign in $engine as $account && set `"HOME=%USERPROFILE%`" && $cmd" `
-                -Credential $cred -LoadUserProfile -WorkingDirectory $env:SystemRoot -Wait -ErrorAction Stop
+                -Credential $cred -LoadUserProfile -WorkingDirectory $env:SystemRoot -PassThru -ErrorAction Stop
+            $p.WaitForExit()
+            Stop-AccountProcesses $account
         } catch {
             Say "the $engine sign-in window could not open ($($_.Exception.Message)): finish later with 'wh signin $engine'"
         }
