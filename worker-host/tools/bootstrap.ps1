@@ -698,12 +698,12 @@ function Invoke-SignIn([string]$account, $password, $engines, $tools) {
         $exe = $tools[$engine]
         $cmd = switch ($engine) {
             'gh'    { "`"$exe`" auth login --hostname github.com --git-protocol https --web && `"$exe`" auth setup-git" }
-            'ghcp'  { "`"$exe`" login" }
+            'ghcp'  { "`"$exe`" login --device-code" }   # its default is a browser on THIS PC (a passkey can't reach a VM)
             default { "`"$exe`"" }
         }
         $hint = switch ($engine) {
             'gh'    { 'copy the one-time code, open the link, approve it, then close this window' }
-            'ghcp'  { 'follow the device-code steps, then close this window' }
+            'ghcp'  { 'open https://github.com/login/device on any PC, enter the code shown, then close this window' }
             default { 'type /login, follow the steps, then /exit and close this window' }
         }
         Say "signing $engine in as $account in a new window: $hint"
