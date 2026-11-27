@@ -697,7 +697,10 @@ function Invoke-SignIn([string]$account, $password, $engines, $tools) {
         }
         Say "signing $engine in as $account in a new window: $hint"
         try {
-            Start-Process -FilePath (Join-Path $env:SystemRoot 'System32\cmd.exe') -ArgumentList '/k', "title Sign in $engine as $account && $cmd" `
+            # HOME: git takes its home from HOME, then HOMEDRIVE+HOMEPATH, which a window opened this way leaves at
+            # C:\Windows (seen on the test VM: gh auth setup-git could not lock C:/WINDOWS/.gitconfig).
+            Start-Process -FilePath (Join-Path $env:SystemRoot 'System32\cmd.exe') `
+                -ArgumentList '/k', "title Sign in $engine as $account && set `"HOME=%USERPROFILE%`" && $cmd" `
                 -Credential $cred -LoadUserProfile -WorkingDirectory $env:SystemRoot -Wait -ErrorAction Stop
         } catch {
             Say "the $engine sign-in window could not open ($($_.Exception.Message)): finish later with 'wh signin $engine'"
