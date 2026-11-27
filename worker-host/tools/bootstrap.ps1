@@ -616,7 +616,7 @@ function Get-SiteText($data) {
     return "bus_url = `"$($data.bus_url)`"`nfleet_source = `"$($data.fleet_source)`"`nremotes = [$remotes]`n"
 }
 
-function Invoke-Install([string]$pwsh, [string]$stage, [string]$work, $data, [string]$account, $password) {
+function Invoke-Install([string]$pwsh, [string]$stage, [string]$work, $data, [string]$account, $password, $tools) {
     # Step 6: the staged, verified install.ps1, by full path, without the operator's profile, for the account; its
     # password goes on stdin and nowhere else.
     $site = Join-Path $work 'site.toml'
@@ -630,6 +630,11 @@ function Invoke-Install([string]$pwsh, [string]$stage, [string]$work, $data, [st
     $psi.UseShellExecute = $false
     $psi.RedirectStandardInput = $true
     $psi.WorkingDirectory = $stage
+    # A fresh PATH: this process started before step 2 installed the tools, so its own PATH is stale. The machine's
+    # PATH plus the tools' own folders, never the user's PATH (folders the operator can write, run elevated here).
+    $toolDirs = @($tools.Values | ForEach-Object { Split-Path $_ } | Select-Object -Unique)
+    $psi.EnvironmentVariables['Path'] = (@($toolDirs) + @([Environment]::GetEnvironmentVariable('Path', 'Machine') -split ';' |
+        Where-Object { $_ })) -join ';'
     $p = [Diagnostics.Process]::Start($psi)
     $bstr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($password)
     try { $p.StandardInput.WriteLine([Runtime.InteropServices.Marshal]::PtrToStringBSTR($bstr)) }
@@ -810,7 +815,7 @@ Protect-SbRoot
 $password = New-RandomPassword
 $account = New-HostAccount $SB.host_prefix $password    # step 4
 Write-PinnedFiles $SB                                    # step 5
-Invoke-Install $tools.pwsh $verified.stage $work $SB $account.Name $password   # step 6
+Invoke-Install $tools.pwsh $verified.stage $work $SB $account.Name $password $tools   # step 6
 $hostHome = Join-Path $SbRoot "host\$($account.Name)"
 Invoke-IsolationCheck $verified.stage $account.Name $hostHome 'C:\sb-workers'   # step 11, straight after the install
 Invoke-SignIn $account.Name $password $SB.engines $tools                         # step 7
