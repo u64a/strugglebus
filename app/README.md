@@ -95,7 +95,7 @@ The HTML report is written to `app\build\reports\coverage\test\debug\index.html`
 
 ## Windows application MVP
 
-A small WPF companion is under `windows\StruggleBusMonitor`. It follows the Android app's dark console theme and current mobile API: enrollment by pasted JSON, CA-pinned HTTPS, live snapshot/SSE monitoring, DPAPI-protected local credentials, and Windows Hello approval for the Admin write ceremony. Version tags publish self-contained x64 and ARM64 ZIPs to the public [StruggleApp-Privacy releases](https://github.com/NZCypher819/StruggleApp-Privacy/releases). Build, release, and security-boundary details are in [the Windows README](windows\README.md).
+A small WPF companion is under `windows\StruggleBusMonitor`. It follows the Android app's dark console theme and current mobile API: enrollment by pasted JSON, CA-pinned HTTPS, live snapshot/SSE monitoring, DPAPI-protected local credentials, and Windows Hello approval for the Admin write ceremony. Releases, each with a Setup program and a portable ZIP for x64 and ARM64, are published in [this repository's releases](https://github.com/u64a/strugglebus/releases) under `windows/` tags. Build, release, and security-boundary details are in [the Windows README](windows\README.md).
 
 ## Play release
 

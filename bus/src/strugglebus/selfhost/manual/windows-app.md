@@ -8,8 +8,9 @@ the console does plus freezing agent access.
 
 ## Install it
 
-1. Download the Setup program for your PC from
-   <https://github.com/NZCypher819/StruggleApp-Privacy/releases/latest>:
+1. Download the Setup program for your PC from the newest release named
+   StruggleBus Monitor at <https://github.com/u64a/strugglebus/releases>
+   (the bus's own releases are in the same list):
    `...-win-x64-Setup.exe` for most PCs, `...-win-arm64-Setup.exe` for ARM.
 2. Run it. It installs for your Windows account and does not ask for
    administrator rights.

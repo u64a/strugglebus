@@ -23,7 +23,8 @@ Presence is derived from each agent's `last_seen_at`: active within 5 minutes, i
 ## Install and updates
 
 Download `NZCypher819.StruggleBusMonitor-win-x64-Setup.exe` (or the `win-arm64` one) from the
-[StruggleApp-Privacy releases](https://github.com/NZCypher819/StruggleApp-Privacy/releases) and run it once on
+newest release named **StruggleBus Monitor** in [this repository's releases](https://github.com/u64a/strugglebus/releases)
+(the bus's releases are in the same list, named by their `bus/` tag) and run it once on
 each PC. It installs per user with no administrator prompt, and from then on the app updates itself.
 A copy run from the Portable ZIP or from a development build does not self-update; Settings says so.
 
@@ -32,8 +33,9 @@ releases tagged `windows/vX.Y.Z`. The bus publishes here too, under `bus/` tags,
 reads those. It asks GitHub once for the tags, then reads the newest few releases' files from their
 download addresses. A tag whose release is not published yet is passed over; if GitHub is limiting
 requests, or the tags cannot be read, Settings says so instead of saying the app is up to date.
-Versions before 1.7.5 look in `NZCypher819/StruggleApp-Privacy`, which is where 1.7.5 itself is
-published so that they can reach it.
+Versions before 1.7.5 look in `NZCypher819/StruggleApp-Privacy`. 1.7.5 is published there as well
+as here, so that they can reach it, and is the last release there; [1.7.4 and earlier](https://github.com/NZCypher819/StruggleApp-Privacy/releases)
+are only there.
 
 The enrollment and operator grant live in `%LOCALAPPDATA%\StruggleBusMonitor` and are not touched by
 installing, updating or uninstalling. Theme and window preferences are in `settings.json` beside them.
@@ -75,10 +77,15 @@ cloud and only works on a PC where the owner is logged in to it. GitHub's runner
 2. **The signing PC signs and publishes.** With SimplySign Desktop logged in, run
    `app\windows\release-signed.ps1`. It checks the tag is a commit on `main` and that its run
    passed, downloads that build, signs the app and the Setup program, packs each runtime with
-   [Velopack](https://velopack.io) (`vpk`), checks every signature, and uploads to the matching
-   release in the public
-   [`NZCypher819/StruggleApp-Privacy`](https://github.com/NZCypher819/StruggleApp-Privacy/releases)
-   repository. It asks before it uploads.
+   [Velopack](https://velopack.io) (`vpk`), checks every signature, and publishes the release in
+   this repository on that same tag. It asks before it uploads.
+
+A published release here can never be changed, and the tag can never be moved or deleted. So
+`app\windows\release-github.ps1`, which the signing script calls, makes the release as a draft,
+compares every file GitHub holds with the file on the PC, and only then publishes it. It goes by
+tag throughout, never by "the newest release", because the bus's releases are in the same list.
+If publishing stops part way, the signing script keeps the signed packages and prints the command
+that publishes those same files, because signing again would make different ones.
 
 Each runtime is its own update channel, so an x64 install only ever receives x64 builds.
 
@@ -88,8 +95,10 @@ git push origin windows/v1.7.2
 pwsh app\windows\release-signed.ps1 -Version 1.7.2
 ```
 
-Publishing uses the GitHub login that `gh` already holds, which needs write access to the releases
-repository. To try the signing step without publishing, add `-SkipUpload`.
+Publishing uses the GitHub login that `gh` already holds, which needs write access to this
+repository. To try the signing step without publishing, add `-SkipUpload`. The publishing step can
+be rehearsed without the signing key against a scratch repository named `u64a/...-release-test`;
+see the top of `release-github.ps1`.
 
 ## Development against the mock server
 

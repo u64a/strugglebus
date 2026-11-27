@@ -12,7 +12,7 @@ sbworkerhost-project and u64-security.
 | Product | Built from | Published to | What holds it there | Status |
 |---|---|---|---|---|
 | Worker host | private `NZCypher819/strugglebus-worker-host` | the same private repository, as a signed file | hosts read `release.toml` there | **Moving now** |
-| Windows App | this repository, tag `windows/vX.Y.Z` | `NZCypher819/StruggleApp-Privacy` releases | every installed App checks that repository | Not started |
+| Windows App | this repository, tag `windows/vX.Y.Z` | this repository's releases, on that tag, from 1.7.5 | Apps older than 1.7.5 check `NZCypher819/StruggleApp-Privacy` | **Moving now**, see step 2 |
 | Bus | private `NZCypher819/strugglebus` | `NZCypher819/strugglebus-releases` releases | the updaters have that repository built in | Planned, see step 3 |
 
 ## The rule that makes one repository safe
@@ -98,8 +98,18 @@ Afterwards the private repository stays only for `fleet.toml`, until hosts read 
       `windows/` tag that has no release, it found the app release and downloaded a package whose
       hash matched.
 - [x] Release tags protected here (see "Before or with the move").
-- [ ] A signed App release, published at the old place, that reads updates from here.
-- [ ] `release-signed.ps1` publishes here. `NZCypher819/StruggleApp-Privacy` kept read-only.
+- [x] The App reads updates from here (pull request 62).
+- [x] `release-signed.ps1` publishes here, through `release-github.ps1`: a draft, every file
+      compared, then published. Rehearsed on 27 November 2026 (UTC) in
+      `u64a/strugglebus-2-release-test` with a stand-in app: three releases, small update
+      packages made from the previous release, a second publish of the same version refused,
+      and a leftover draft replaced.
+- [ ] 1.7.5, the bridging release: signed once, published both at the old place (so older Apps
+      reach it) and here. The signing script does both for that one version and only here for
+      every other.
+- [ ] An installed 1.7.5 seen to take 1.7.6 from here.
+- [ ] `NZCypher819/StruggleApp-Privacy` kept read-only, with 1.7.5 as its last release. It also
+      hosts the privacy policy page and the support issue tracker, which stay.
 
 Copies older than that release keep reading the old place, so it must stay up.
 
