@@ -48,6 +48,15 @@ class Commands:
             {"id": 11, "expired": True, "workflow_run": {"id": 110}},
         ]
         self.github_changed: str | None = None
+        good = {
+            "path": here.BUILD_WORKFLOW, "event": "workflow_dispatch", "head_sha": COMMIT,
+            "head_repository": {"full_name": "u64a/strugglebus"}, "conclusion": "success",
+        }
+        self.runs: dict[int, dict] = {70: dict(good), 90: dict(good), 110: dict(good)}
+        self.refs: list[dict] = []
+        self.tag_record: dict = {}
+        self.listed: list[dict] = []
+        self.fail_on: str | None = None
         self.local_changed: str | None = None
         self.release = {
             "id": 81, "tag_name": TAG, "target_commitish": COMMIT, "draft": False, "prerelease": False,
@@ -63,6 +72,18 @@ class Commands:
 
     def answer(self, command: tuple[str, ...]) -> str:
         text = " ".join(command)
+        if self.fail_on is not None and self.fail_on in text:
+            raise here.ReleaseError("the network dropped")
+        if "/actions/runs/" in text:
+            return json.dumps(self.runs[int(text.rsplit("/", 1)[1])])
+        if "/git/matching-refs/tags/" in text:
+            return json.dumps(self.refs)
+        if "--method GET" in text and "/git/tags/" in text:
+            return json.dumps(self.tag_record)
+        if text.endswith("/releases?per_page=100"):
+            return json.dumps(self.listed)
+        if text.startswith("gh api --method POST") and text.endswith("/releases --input -"):
+            return json.dumps({**self.release, "draft": True})
         if text.startswith("git rev-parse --show-toplevel"):
             return str(self.root) + "\n"
         if text.startswith("git merge-base") and not self.on_main:
@@ -185,7 +206,7 @@ def test_an_existing_work_folder_is_refused(commands, tmp_path):
 def test_without_githubs_build_there_is_nothing_to_compare(commands, tmp_path):
     commands.artifacts = [{"id": 11, "expired": True, "workflow_run": {"id": 110}}]
 
-    with pytest.raises(here.ReleaseError, match="Start the 'Bus release build' workflow"):
+    with pytest.raises(here.ReleaseError, match="Start that workflow by hand"):
         here.compare(commands, COMMIT, tmp_path / "work")
 
     assert not any(call[0] == "docker" for call in commands.calls)
@@ -241,8 +262,8 @@ def test_publish_makes_the_signed_tag_then_the_release_and_checks_it(commands, t
     }
     assert published == {"draft": False}
     upload = next(call for call in commands.calls if call[:3] == ("gh", "release", "upload"))
-    assert upload[3] == TAG and upload[-2:] == ("--repo", "u64a/strugglebus")
-    assert [Path(path).name for path in upload[4:-2]] == sorted(NAMES)
+    assert upload[3] == TAG and upload[-3:] == ("--clobber", "--repo", "u64a/strugglebus")
+    assert [Path(path).name for path in upload[4:-3]] == sorted(NAMES)
     # The updater that is installed accepts exactly this tag message.
     from strugglebus.release_signature import signed_digests
     assert signed_digests(tag["message"], VERSION) == files
@@ -294,6 +315,118 @@ def test_a_trial_may_go_to_a_scratch_repository_and_nowhere_else(commands, tmp_p
     for elsewhere in ("someone/strugglebus-release-test", "u64a/other", "NZCypher819/strugglebus-releases"):
         with pytest.raises(here.ReleaseError, match="releases are published to"):
             here.publish(commands, COMMIT, work, signature, elsewhere, NOW)
+
+
+# ---- which build is GitHub's --------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("field,value", [
+    ("path", ".github/workflows/bus.yml"),
+    ("event", "pull_request"),
+    ("head_sha", "d" * 40),
+    ("head_repository", {"full_name": "someone/strugglebus"}),
+    ("head_repository", None),
+    ("conclusion", "failure"),
+])
+def test_an_artifact_of_the_right_name_from_any_other_run_is_not_githubs_build(commands, tmp_path, field, value):
+    """A pull request, even from a fork, can offer an artifact with any name and contents."""
+    for run in commands.runs.values():
+        run[field] = value
+
+    with pytest.raises(here.ReleaseError, match="made by the 'Bus release build' workflow"):
+        here.compare(commands, COMMIT, tmp_path / "work")
+
+    assert not any(call[:3] == ("gh", "run", "download") for call in commands.calls)
+    assert not any(call[0] == "docker" for call in commands.calls)
+
+
+def test_a_fork_pull_requests_newer_artifact_does_not_displace_the_real_build(commands, tmp_path):
+    commands.runs[90] = {**commands.runs[90], "event": "pull_request", "head_repository": {"full_name": "fork/strugglebus"}}
+
+    here.compare(commands, COMMIT, tmp_path / "work")
+
+    download = next(call for call in commands.calls if call[:3] == ("gh", "run", "download"))
+    assert download[3] == "70"
+
+
+# ---- carrying on after a run that stopped part way ----------------------------------------------
+
+
+def expected_tag(files: dict[str, str], signature: Path) -> dict:
+    signed = here.signed_statement(VERSION, files, signature.read_text(encoding="utf-8"))
+    return here.tag_payload(TAG, COMMIT, here.release_body(COMMIT, TREE), signed, NOW)
+
+
+def leave_tag(commands: Commands, files: dict[str, str], signature: Path, **changed) -> None:
+    payload = expected_tag(files, signature)
+    commands.refs = [
+        {"ref": f"refs/tags/{TAG}-other", "object": {"type": "tag", "sha": "e" * 40}},
+        {"ref": f"refs/tags/{TAG}", "object": {"type": "tag", "sha": "c" * 40}},
+    ]
+    commands.tag_record = {"tag": TAG, "object": {"sha": COMMIT}, "message": payload["message"], **changed}
+
+
+def test_a_run_that_stopped_after_the_tag_is_finished_by_running_it_again(commands, tmp_path):
+    work, signature, files = prepared(tmp_path)
+    commands.fail_on = "release upload"
+    with pytest.raises(here.ReleaseError, match="network dropped"):
+        here.publish(commands, COMMIT, work, signature, here.REPOSITORY, NOW)
+
+    # The tag and the draft are there now, and the tag can never be moved.
+    leave_tag(commands, files, signature)
+    commands.listed = [{"tag_name": "windows/v1.7.3", "id": 5}, {**commands.release, "draft": True}]
+    commands.fail_on, commands.sent = None, []
+
+    said = here.publish(commands, COMMIT, work, signature, here.REPOSITORY, NOW)
+
+    assert said.startswith(f"Published bus {VERSION} as {TAG}")
+    # Nothing is made twice: only the release is published.
+    assert commands.sent == [{"draft": False}]
+    assert any(call[:3] == ("gh", "release", "upload") for call in commands.calls)
+
+
+def test_a_run_that_stopped_before_the_draft_makes_only_the_draft(commands, tmp_path):
+    work, signature, files = prepared(tmp_path)
+    leave_tag(commands, files, signature)
+
+    here.publish(commands, COMMIT, work, signature, here.REPOSITORY, NOW)
+
+    assert [sorted(sent)[0] for sent in commands.sent] == ["body", "draft"]
+
+
+def test_a_release_already_published_is_only_checked(commands, tmp_path):
+    work, signature, files = prepared(tmp_path)
+    leave_tag(commands, files, signature)
+    commands.listed = [commands.release]
+
+    here.publish(commands, COMMIT, work, signature, here.REPOSITORY, NOW)
+
+    assert commands.sent == []
+    assert not any(call[:3] == ("gh", "release", "upload") for call in commands.calls)
+
+
+@pytest.mark.parametrize("changed", [
+    {"object": {"sha": "d" * 40}},
+    {"message": "Strugglebus public release mirror v1\nsomething else\n"},
+    {"tag": "bus/v9.9.9"},
+])
+def test_an_existing_tag_that_is_not_this_release_stops_it(commands, tmp_path, changed):
+    work, signature, files = prepared(tmp_path)
+    leave_tag(commands, files, signature, **changed)
+
+    with pytest.raises(here.ReleaseError, match="already exists and is not this release"):
+        here.publish(commands, COMMIT, work, signature, here.REPOSITORY, NOW)
+
+    assert commands.sent == []
+
+
+def test_an_existing_tag_that_is_not_annotated_stops_it(commands, tmp_path):
+    work, signature, files = prepared(tmp_path)
+    leave_tag(commands, files, signature)
+    commands.refs = [{"ref": f"refs/tags/{TAG}", "object": {"type": "commit", "sha": COMMIT}}]
+
+    with pytest.raises(here.ReleaseError, match="already exists and is not this release"):
+        here.publish(commands, COMMIT, work, signature, here.REPOSITORY, NOW)
 
 
 # ---- the command line ---------------------------------------------------------------------------
