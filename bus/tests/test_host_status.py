@@ -96,11 +96,13 @@ def test_schema_twenty_five_adds_the_host_and_event_tables(surface) -> None:  # 
     with sqlite3.connect(store.database_path) as connection:
         tables = {row[0] for row in connection.execute("SELECT name FROM sqlite_schema WHERE type = 'table'")}
         assert {"host_agents", "host_agent_audit", "host_status", "host_status_samples", "bus_events"} <= tables
-        for statement in (
-            "UPDATE host_agent_audit SET reason = 'x'", "DELETE FROM host_agent_audit",
-            "UPDATE host_status_samples SET sample = '{}'", "UPDATE bus_events SET level = 'info'",
-        ):
-            connection.execute(statement)  # No rows yet: the triggers fire per row.
+        connection.execute(
+            "INSERT INTO bus_events (event_id, received_at, source, level, type, subject, fields) "
+            "VALUES (?, 'now', 'bus', 'info', 'started', '', '{}')", (str(uuid.uuid4()),),
+        )
+        with pytest.raises(sqlite3.IntegrityError, match="immutable"):
+            connection.execute("UPDATE bus_events SET level = 'error'")
+        connection.execute("DELETE FROM bus_events")
 
 
 # ---- the check of a snapshot ------------------------------------------------------------------

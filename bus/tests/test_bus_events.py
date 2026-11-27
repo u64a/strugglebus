@@ -60,6 +60,9 @@ def log(hosts):  # noqa: F811
     """The marked host of ``hosts``, with the event log on the same clock."""
     client, secret, grant, key, target, clock, store, agents = hosts
     client.app.state.event_log = bus_events.BusEventLog(store, clock=clock)
+    with sqlite3.connect(store.database_path) as connection:
+        # The bus noted its own start; these tests count what they store themselves.
+        connection.execute("DELETE FROM bus_events")
     return client, secret, grant, key, target, clock, store, agents
 
 

@@ -89,7 +89,7 @@ HOST_TYPES: dict[str, tuple[tuple[str, ...], str]] = {
 
 #: The bus's own event types, by source: the fields each may carry and its level. ``reason`` is
 #: always one of the bus's own short codes, never an upstream message.
-BUS_FIELDS = {"version": "bus-version", "previous": "bus-version", "reason": "code", "schema": "int", "previous_schema": "int"}
+BUS_FIELDS = {"version": "bus-version", "previous": "bus-version", "reason": "code", "schema": "int"}
 BUS_TYPES: dict[str, dict[str, tuple[tuple[str, ...], str]]] = {
     "update": {
         "update-check-failed": (("reason",), "warning"),
@@ -108,7 +108,6 @@ BUS_TYPES: dict[str, dict[str, tuple[tuple[str, ...], str]]] = {
     },
     "bus": {
         "started": (("version", "schema"), "info"),
-        "schema-migrated": (("schema", "previous_schema"), "info"),
     },
 }
 
@@ -250,6 +249,10 @@ class BusEventLog:
         """Records one of the bus's own events. Returns whether it was stored."""
         event = bus_event(source, type_name, subject, **fields)
         return self._store.record_bus_event(event, received_at=self._clock(), cap=CAPS[source])
+
+    def store(self, event: Event) -> bool:
+        """Stores an event that already has its id. Returns whether it was new."""
+        return self._store.record_bus_event(event, received_at=self._clock(), cap=CAPS[event.source])
 
     def recent(self, limit: int, *, admin: bool) -> list[StoredEvent]:
         """The newest events, newest first. Without the grant, only the sources any device may read."""

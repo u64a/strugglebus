@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import sys
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import datetime
@@ -39,7 +40,10 @@ from strugglebus.retention import RetentionSweeper
 from strugglebus.capabilities import assert_routes_declared
 from strugglebus.host_enrollment import HostEnrollmentService
 from strugglebus.mobile import MobileService
+from strugglebus import __version__
 from strugglebus.bus_events import BusEventLog
+from strugglebus.migrations import LATEST_SCHEMA_VERSION
+from strugglebus.update_events import UpdateEventRecorder
 from strugglebus.host_status import HostStatusService
 from strugglebus.site_documents import SiteDocumentService
 from strugglebus.satellite import SatelliteService, SiteAuthority
@@ -1013,6 +1017,7 @@ def _lifespan(
         application.state.operator_auth = authority
         audit_feed = None
         retention = None
+        update_events = None
         try:
             await asyncio.to_thread(authority.prepare_setup)
             application.state.satellite_service.authority = await asyncio.to_thread(
@@ -1028,6 +1033,12 @@ def _lifespan(
             retention = asyncio.create_task(
                 RetentionSweeper(resolved_agent_service.store).run(),
             )
+            update_events = asyncio.create_task(
+                UpdateEventRecorder(
+                    application.state.event_log, lambda: application.state.updater,
+                ).run(),
+            )
+            await asyncio.to_thread(_record_start, application.state.event_log)
             # Mounted applications do not receive FastAPI lifespan events.
             async with mcp_app.router.lifespan_context(mcp_app):
                 yield
@@ -1036,6 +1047,8 @@ def _lifespan(
                 audit_feed.cancel()
             if retention is not None:
                 retention.cancel()
+            if update_events is not None:
+                update_events.cancel()
             if application.state.updater is not None:
                 application.state.updater.clear()
             application.state.updater = None
@@ -1082,6 +1095,14 @@ def _add_error_handlers(application: FastAPI) -> None:
         return JSONResponse(
             status_code=503, content={"detail": "storage is unavailable"},
         )
+
+
+def _record_start(log: BusEventLog) -> None:
+    """Notes in the event log that the bus started, and as which version. Never stops it starting."""
+    try:
+        log.record("bus", "started", version=__version__, schema=LATEST_SCHEMA_VERSION)
+    except StorageError:
+        print("strugglebus: could not record the start in the event log", file=sys.stderr, flush=True)
 
 
 def create_app(
