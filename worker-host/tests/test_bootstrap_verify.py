@@ -11,6 +11,7 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -325,6 +326,50 @@ def test_the_usage_example_skips_the_operators_profile():
     text = SCRIPT.read_text(encoding="ascii")
     assert "powershell -NoProfile -ExecutionPolicy Bypass -File .\\bootstrap.ps1" in text
     assert "powershell -ExecutionPolicy Bypass -File" not in text
+
+
+@pytest.mark.parametrize("shell", SHELLS)
+def test_the_account_password_is_long_random_and_varied(shell):
+    body = ("$a = @(1..3 | ForEach-Object { $s = New-RandomPassword; "
+            "$b = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($s); "
+            "try { [Runtime.InteropServices.Marshal]::PtrToStringBSTR($b) } finally { [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($b) } }); "
+            "ConvertTo-Json @($a)")
+    pws = run(body, shell)
+    assert len(set(pws)) == 3 and all(len(p) == 32 for p in pws)
+    for p in pws:
+        assert re.search("[A-Z]", p) and re.search("[a-z]", p) and re.search("[0-9]", p) and re.search(r"[^A-Za-z0-9]", p)
+        assert not re.search(r"[\s\"'`$]", p)  # nothing a shell or a quote could break
+
+
+@pytest.mark.parametrize("shell", SHELLS)
+def test_the_pinned_list_is_the_sites_keys_plus_the_release_keys(shell):
+    site = ['coord namespaces="strugglebus-fleet" ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIA test']
+    out = run(f"ConvertTo-Json @(Get-PinnedSignersText @('{site[0]}'))", shell)
+    lines = [ln for ln in out[0].split("\n") if ln]
+    assert lines[0] == site[0] and len(lines) == 4
+    assert all(ln.startswith('release namespaces="strugglebus-release" sk-ssh-ed25519@openssh.com ') for ln in lines[1:])
+
+
+@pytest.mark.parametrize("shell", SHELLS)
+def test_the_generated_site_file_is_one_the_host_accepts(shell, tmp_path):
+    body = ("ConvertTo-Json @(Get-SiteText @{ bus_url = 'https://bus.example.lan'; fleet_source = 'bus'; "
+            "remotes = @('https://github.com/acme/', 'https://forgejo.example.lan/') })")
+    text = run(body, shell)[0]
+    site = tmp_path / "site.toml"
+    site.write_text(text, encoding="ascii")
+    r = subprocess.run([sys.executable, "-I", str(ROOT / "workerhost" / "sitefile.py"), str(site)], capture_output=True,
+                       text=True, timeout=60)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "bus.example.lan" in r.stdout and "acme" in r.stdout
+
+
+def test_steps_4_to_6_keep_the_password_out_of_arguments_and_transcripts():
+    """u64-security, #humans 28966: the password goes to install.ps1 on stdin only; no transcript, no plain-text
+    conversion beyond that one write."""
+    text = SCRIPT.read_text(encoding="ascii")
+    assert "Start-Transcript" not in text and "ConvertFrom-SecureString" not in text
+    assert "'-PasswordStdin'" in text and "-Password $" not in text.split("function Invoke-Install")[1].split("if ($MyInvocation")[0]
+    assert text.count("PtrToStringBSTR") == 1  # the stdin write, nowhere else
 
 
 def test_still_ascii_and_lf_only():

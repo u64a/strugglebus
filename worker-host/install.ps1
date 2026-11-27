@@ -97,7 +97,9 @@ param(
     [switch]$PinSigners,
     [switch]$NoPanel,
     [switch]$Uninstall,
-    [switch]$Purge
+    [switch]$Purge,
+    [string]$Account = '',
+    [switch]$PasswordStdin
 )
 
 Set-StrictMode -Version Latest
@@ -106,6 +108,20 @@ $ErrorActionPreference = 'Stop'
 $TaskName = 'StrugglebusWorkerHost'
 $ProbeTask = 'StrugglebusWorkerHost-Probe'
 $Source = $PSScriptRoot
+
+# -Account: install for a dedicated local account (the bootstrap's step 6, docs/app-host-integration.md 2.2), not for
+# whoever runs this. The home is under ProgramData (the account has no profile yet), owned by Administrators and
+# granted to the account, SYSTEM and Administrators only; no user PATH, no panel (the account never signs in to a
+# desktop); the task runs as the account. -PasswordStdin reads its password from stdin, never from a parameter.
+if ($Account) {
+    if ($Account -notmatch '^[A-Za-z0-9][A-Za-z0-9_-]{0,19}$') { throw "-Account '$Account' is not a local account name" }
+    $me = [Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()
+    if (-not $me.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) { throw '-Account needs an elevated PowerShell' }
+    if (-not $PSBoundParameters.ContainsKey('HostHome')) { $HostHome = Join-Path $env:ProgramData "strugglebus\host\$Account" }
+    $NoPath = $true
+    $NoPanel = $true
+    $Logon = 'Password'
+}
 $HostHome = [IO.Path]::GetFullPath($HostHome)
 $App = Join-Path $HostHome 'app'
 $Config = Join-Path $HostHome 'config.toml'
@@ -135,6 +151,15 @@ function Set-LogonLine([string]$text, [string]$mode) {
     $table = [regex]::Match($text, '(?m)^\[')
     if ($table.Success) { return $text.Insert($table.Index, "$line`n`n") }
     return $text.TrimEnd() + "`n$line`n"
+}
+
+function Set-DedicatedLine([string]$text) {
+    # Pure: dedicated_account = true (the host runs as its own account; the App's "not-dedicated" warning goes).
+    $pattern = '(?m)^dedicated_account\s*=\s*(true|false)'
+    if ([regex]::IsMatch($text, $pattern)) { return [regex]::Replace($text, $pattern, 'dedicated_account = true') }
+    $table = [regex]::Match($text, '(?m)^\[')
+    if ($table.Success) { return $text.Insert($table.Index, "dedicated_account = true`n`n") }
+    return $text.TrimEnd() + "`ndedicated_account = true`n"
 }
 
 function New-HostTaskXml {
@@ -345,7 +370,23 @@ function Get-Python {
     throw 'python 3.11 or later not found on PATH (the host needs tomllib); the WindowsApps python stub does not count'
 }
 
+function Read-StdinPassword([string]$user) {
+    # -PasswordStdin: one line from stdin, straight into a SecureString; never echoed, logged or kept as text here.
+    $line = [Console]::In.ReadLine()
+    if (-not $line) { throw 'no password on stdin' }
+    $secure = New-Object Security.SecureString
+    foreach ($ch in $line.ToCharArray()) { $secure.AppendChar($ch) }
+    $line = $null
+    $secure.MakeReadOnly()
+    return New-Object Management.Automation.PSCredential($user, $secure)
+}
+
 function Get-TaskCredential {
+    if ($Account) {
+        $user = "$env:COMPUTERNAME\$Account"
+        if ($PasswordStdin) { return Read-StdinPassword $user }
+        return Get-Credential -UserName $user -Message "Windows password for $user (the worker host's own account)"
+    }
     # The identity's own name (MACHINE\user for a local account, DOMAIN\user otherwise). On a
     # workgroup machine $env:USERDOMAIN is "WORKGROUP", which Task Scheduler cannot map to a SID.
     $user = [Security.Principal.WindowsIdentity]::GetCurrent().Name
@@ -469,8 +510,22 @@ New-Item -ItemType Directory -Force -Path $HostHome, $App, (Join-Path $App 'work
 # The grant goes on the home folder only; everything under it is reset to inherit from it. Granting
 # (OI)(CI) on files with /T leaves each file an inherit-only entry, which is no access at all (the
 # second install on the dev machine could not overwrite its own files).
-& icacls $HostHome /inheritance:r /grant:r "$($env:USERNAME):(OI)(CI)F" /Q | Out-Null
+if ($Account) {
+    # The dedicated account's home: owned by Administrators; the account, SYSTEM and Administrators only.
+    & icacls $HostHome /setowner '*S-1-5-32-544' /Q | Out-Null
+    & icacls $HostHome /inheritance:r /grant:r "$($env:COMPUTERNAME)\$($Account):(OI)(CI)F" '*S-1-5-18:(OI)(CI)F' '*S-1-5-32-544:(OI)(CI)F' /Q | Out-Null
+} else {
+    & icacls $HostHome /inheritance:r /grant:r "$($env:USERNAME):(OI)(CI)F" /Q | Out-Null
+}
 if ($LASTEXITCODE -ne 0) { throw 'could not make the home folder owner-only' }
+if ($Account) {
+    # The workers' clones too: a folder made later by the host at the root of C: would inherit Modify for every
+    # signed-in user, so it is made here with the same three grants.
+    New-Item -ItemType Directory -Force -Path $WorkersRoot | Out-Null
+    & icacls $WorkersRoot /setowner '*S-1-5-32-544' /Q | Out-Null
+    & icacls $WorkersRoot /inheritance:r /grant:r "$($env:COMPUTERNAME)\$($Account):(OI)(CI)F" '*S-1-5-18:(OI)(CI)F' '*S-1-5-32-544:(OI)(CI)F' /Q | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw "could not restrict $WorkersRoot to the host's account" }
+}
 if (Get-ChildItem -Force $HostHome | Select-Object -First 1) {
     & icacls (Join-Path $HostHome '*') /reset /T /Q | Out-Null
     if ($LASTEXITCODE -ne 0) { throw 'could not reset the home folder contents to inherit' }
@@ -496,6 +551,7 @@ $utf8 = New-Object Text.UTF8Encoding($false)
 if (Test-Path $Config) {
     $text = [IO.File]::ReadAllText($Config)
     $updated = Set-CopilotLine (Set-LogonLine $text $Logon) $copilot
+    if ($Account) { $updated = Set-DedicatedLine $updated }
     if ($AgentPrefix) {
         $updated = Set-AgentPrefixLine $updated $AgentPrefix
     } elseif ($updated -notmatch '(?m)^agent_prefix\s*=') {
@@ -533,6 +589,7 @@ if (Test-Path $Config) {
     }
     foreach ($k in $site.Keys) { $text = $text.Replace($k, $site[$k]) }  # TOML literals, checked by sitefile.py
     $text = Set-LogonLine $text $Logon
+    if ($Account) { $text = Set-DedicatedLine $text }
     if (-not $useTask) { $text = $text.Replace('scheduled_task = "StrugglebusWorkerHost"', 'scheduled_task = ""') }
     [IO.File]::WriteAllText($Config, $text, $utf8)
     Say ("wrote $Config (host_name=$HostName, logon_type=$Logon, default engine $DefaultEngine, ${ramGb} GB " +

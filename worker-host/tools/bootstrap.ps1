@@ -518,6 +518,126 @@ function Get-VerifiedRelease([string]$git, [string]$work, [string]$repo = $Relea
     return @{ release = $release; stage = $stage }
 }
 
+# --- the host's own account, the pinned keys, the install (2.2 steps 4 to 6) ---------------------------------------
+# u64-security's review of the design, #humans 28966: a standard account with a random password held in memory only;
+# recorded so offboarding deletes only an account made here; hidden from the sign-in screen, kept out of the remote
+# groups, and (after the engine sign-in, step 7) denied every logon but the scheduled task's.
+
+$SbRoot = Join-Path $env:ProgramData 'strugglebus'
+$AccountRecord = Join-Path $SbRoot 'host-account.json'
+$PinnedSigners = Join-Path $SbRoot 'allowed_signers'
+$PinnedCa = Join-Path $SbRoot 'bus-ca.crt'
+
+function Protect-SbRoot {
+    # C:\ProgramData\strugglebus: ProgramData lets Users create files and folders by default, so inheritance is cut and
+    # the folder owned by Administrators: Administrators and SYSTEM full, Users read and execute, nothing else.
+    New-Item -ItemType Directory -Force -Path $SbRoot | Out-Null
+    $icacls = Join-Path $env:SystemRoot 'System32\icacls.exe'
+    & $icacls $SbRoot /setowner '*S-1-5-32-544' /Q | Out-Null
+    & $icacls $SbRoot /inheritance:r /grant:r '*S-1-5-32-544:(OI)(CI)F' '*S-1-5-18:(OI)(CI)F' '*S-1-5-32-545:(OI)(CI)RX' /Q | Out-Null
+    if ($LASTEXITCODE -ne 0 -or (Test-UserWritable $SbRoot)) { throw "could not lock down $SbRoot" }
+}
+
+function New-RandomPassword([int]$length = 32) {
+    # A SecureString of random characters (upper, lower, digit and symbol, so any password policy accepts it). It never
+    # exists as a plain string here; the bytes are cleared after use.
+    $sets = 'ABCDEFGHJKLMNPQRSTUVWXYZ', 'abcdefghijkmnopqrstuvwxyz', '23456789', '!#%+-.:=?@^_~'
+    $all = -join $sets
+    $rng = [Security.Cryptography.RandomNumberGenerator]::Create()
+    $bytes = New-Object byte[] ($length * 2)
+    $rng.GetBytes($bytes)
+    $secure = New-Object Security.SecureString
+    for ($i = 0; $i -lt $length; $i++) {
+        $pool = if ($i -lt $sets.Count) { $sets[$i] } else { $all }   # one of each set first, then any
+        $secure.AppendChar($pool[(([int]$bytes[2 * $i] -shl 8) -bor $bytes[2 * $i + 1]) % $pool.Length])
+    }
+    [Array]::Clear($bytes, 0, $bytes.Length)
+    $secure.MakeReadOnly()
+    return $secure
+}
+
+function Get-FreeAccountName([string]$base = 'sbworker') {
+    # Pure on its input: sbworker, else sbworker2, sbworker3 ... (Get-LocalUser decides what exists).
+    for ($n = 1; $n -lt 100; $n++) {
+        $name = if ($n -eq 1) { $base } else { "$base$n" }
+        if (-not (Get-LocalUser -Name $name -ErrorAction SilentlyContinue)) { return $name }
+    }
+    throw 'no free sbworker account name'
+}
+
+function New-HostAccount([string]$hostPrefix, $password) {
+    # Step 4: a standard local user, not an administrator, recorded in host-account.json for offboarding.
+    $name = Get-FreeAccountName
+    $user = New-LocalUser -Name $name -Password $password -PasswordNeverExpires -UserMayNotChangePassword `
+        -AccountNeverExpires -Description "StruggleBus worker host $hostPrefix" -ErrorAction Stop
+    $users = Get-LocalGroup -SID 'S-1-5-32-545'
+    if (-not (Get-LocalGroupMember -Group $users -ErrorAction SilentlyContinue | Where-Object { $_.SID -eq $user.SID })) {
+        Add-LocalGroupMember -Group $users -Member $user -ErrorAction Stop
+    }
+    foreach ($remote in 'S-1-5-32-555', 'S-1-5-32-580', 'S-1-5-32-544') {   # Remote Desktop Users, Remote Management Users, Administrators
+        $g = Get-LocalGroup -SID $remote -ErrorAction SilentlyContinue
+        if ($g -and (Get-LocalGroupMember -Group $g -ErrorAction SilentlyContinue | Where-Object { $_.SID -eq $user.SID })) {
+            Remove-LocalGroupMember -Group $g -Member $user -ErrorAction Stop
+        }
+    }
+    # Hidden from the sign-in screen.
+    $list = 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon\SpecialAccounts\UserList'
+    New-Item -Path $list -Force | Out-Null
+    New-ItemProperty -Path $list -Name $name -Value 0 -PropertyType DWord -Force | Out-Null
+    $record = [ordered]@{ account = $name; sid = $user.SID.Value; created_by_bootstrap = $true; host_prefix = $hostPrefix
+                          created_at = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ') }
+    [IO.File]::WriteAllText($AccountRecord, ((ConvertTo-Json $record) + "`n"), (New-Object Text.UTF8Encoding($false)))
+    Say "created the host's account $name (standard user, hidden from sign-in, password random and never stored)"
+    return $user
+}
+
+function Get-PinnedSignersText($signerLines) {
+    # Pure: the site's keys (fleet and host commands only, as the data file's patterns allow) and the built-in release
+    # keys (releases only).
+    $site = @($signerLines)
+    return (($site + @($ReleaseKeys | ForEach-Object { 'release namespaces="strugglebus-release" ' + $_ })) -join "`n") + "`n"
+}
+
+function Write-PinnedFiles($data) {
+    # Step 5: allowed_signers and the bus CA in the locked-down folder (inherited: Administrators write, Users read).
+    [IO.File]::WriteAllText($PinnedSigners, (Get-PinnedSignersText $data.signers), [Text.Encoding]::ASCII)
+    [IO.File]::WriteAllBytes($PinnedCa, [Convert]::FromBase64String($data.bus_ca_pem))
+    $icacls = Join-Path $env:SystemRoot 'System32\icacls.exe'
+    foreach ($f in $PinnedSigners, $PinnedCa) {
+        & $icacls $f /reset /Q | Out-Null
+        & $icacls $f /setowner '*S-1-5-32-544' /Q | Out-Null
+    }
+    Say "pinned $(@($data.signers).Count) site key(s) and the 3 release keys in $PinnedSigners"
+}
+
+function Get-SiteText($data) {
+    # Pure: the site file install.ps1 reads (workerhost/sitefile.py), from the checked data file.
+    $remotes = (@($data.remotes) | ForEach-Object { '"' + $_ + '"' }) -join ', '
+    return "bus_url = `"$($data.bus_url)`"`nfleet_source = `"$($data.fleet_source)`"`nremotes = [$remotes]`n"
+}
+
+function Invoke-Install([string]$pwsh, [string]$stage, [string]$work, $data, [string]$account, $password) {
+    # Step 6: the staged, verified install.ps1, by full path, without the operator's profile, for the account; its
+    # password goes on stdin and nowhere else.
+    $site = Join-Path $work 'site.toml'
+    [IO.File]::WriteAllText($site, (Get-SiteText $data), [Text.Encoding]::ASCII)
+    $installer = Join-Path $stage 'install.ps1'
+    $psi = New-Object Diagnostics.ProcessStartInfo $pwsh
+    $parts = @('-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', $installer, '-Account', $account,
+               '-PasswordStdin', '-SiteFile', $site, '-BusCa', $PinnedCa, '-AgentPrefix', $data.host_prefix,
+               '-DefaultEngine', @($data.engines)[0])
+    $psi.Arguments = ($parts | ForEach-Object { if ($_ -match '[\s"]') { '"' + $_ + '"' } else { $_ } }) -join ' '
+    $psi.UseShellExecute = $false
+    $psi.RedirectStandardInput = $true
+    $psi.WorkingDirectory = $stage
+    $p = [Diagnostics.Process]::Start($psi)
+    $bstr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($password)
+    try { $p.StandardInput.WriteLine([Runtime.InteropServices.Marshal]::PtrToStringBSTR($bstr)) }
+    finally { [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($bstr); $p.StandardInput.Close() }
+    $p.WaitForExit()
+    if ($p.ExitCode -ne 0) { throw "install.ps1 failed (exit $($p.ExitCode)): see its output above" }
+}
+
 if ($MyInvocation.InvocationName -eq '.') { return }
 
 if (-not $DataFile) { throw 'give the App''s data file: bootstrap.ps1 -DataFile .\sbhost-enrol.json' }
@@ -536,4 +656,10 @@ $work = New-AdminOnlyFolder (Join-Path $env:ProgramData ('strugglebus\bootstrap-
 $tools = Install-Prereqs $SB.engines $work              # step 2
 $verified = Get-VerifiedRelease $tools.git $work        # step 3
 Say "verified host code staged at $($verified.stage)"
-throw 'not built yet: the install steps after the verified fetch (2.2 steps 4 to 12) come in a later change'
+Protect-SbRoot
+$password = New-RandomPassword
+$account = New-HostAccount $SB.host_prefix $password    # step 4
+Write-PinnedFiles $SB                                    # step 5
+Invoke-Install $tools.pwsh $verified.stage $work $SB $account.Name $password   # step 6
+$password = $null
+throw 'not built yet: the steps after the install (2.2 steps 7 to 12: sign-in, logon denials, enrol, start) come in a later change'
