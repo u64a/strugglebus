@@ -7,6 +7,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -30,10 +31,19 @@ SIGNED = ROOT / "tests" / "data" / "signed-release"
 SIGNED_TOML, SIGNED_SIG = SIGNED / "release.toml", SIGNED / "release.toml.sig"
 
 
+def clean_env(shell: str) -> dict:
+    """Windows PowerShell 5.1 started from a PowerShell 7 session inherits 7's PSModulePath and then can't load its
+    own modules (Get-Acl, Get-AuthenticodeSignature). A fresh PC starts 5.1 directly, so the tests drop it."""
+    env = dict(os.environ)
+    if shell == WINPS:
+        env.pop("PSModulePath", None)
+    return env
+
+
 def run(body: str, shell: str):
     driver = f"$ErrorActionPreference = 'Stop'\n. '{SCRIPT}'\n{body}"
     r = subprocess.run([shell, "-NoProfile", "-NonInteractive", "-Command", driver], capture_output=True, text=True,
-                       timeout=120, stdin=subprocess.DEVNULL)
+                       timeout=120, stdin=subprocess.DEVNULL, env=clean_env(shell))
     assert r.returncode == 0, r.stderr + r.stdout
     return json.loads(r.stdout)
 
@@ -171,6 +181,150 @@ def test_the_signed_test_release_is_a_real_one():
         "6c17021d84739891da7e55c4d8f34603e502cfa2331212d62e11cc36d4cff839"
     rel = update.parse_release(SIGNED_TOML.read_bytes())
     assert (rel.serial, rel.version) == (9, "2026.11.27.4")
+
+
+@pytest.mark.parametrize("shell", SHELLS)
+def test_the_prerequisites_follow_the_engines(shell):
+    out = run("ConvertTo-Json @(((Get-NeededPrereqs @('ghcp')) -join ','), ((Get-NeededPrereqs @('claude', 'ghcp')) -join ','), "
+              "((Get-NeededPrereqs @('evil')) -join ','))", shell)
+    assert out == ["python,git,pwsh,gh,ghcp", "python,git,pwsh,gh,claude,ghcp", "python,git,pwsh,gh"]
+
+
+def test_the_release_source_and_ssh_keygen_are_built_in_not_from_the_data_file():
+    text = SCRIPT.read_text(encoding="ascii")
+    assert "$ReleaseRepo = 'https://github.com/u64a/strugglebus'" in text and "$ReleaseFolder = 'worker-host'" in text
+    assert "System32\\OpenSSH\\ssh-keygen.exe" in text and "$SB.release" not in text
+
+
+@pytest.mark.skipif(KEYGEN is None or shutil.which("git") is None, reason="needs git and Windows OpenSSH")
+def test_the_whole_fetch_against_this_repositorys_signed_release(tmp_path):
+    """Get-VerifiedRelease against a clone of this repository's own main: the real signed release is verified and
+    exactly its host and installer files are staged. A release without installer_sha256 is refused before anything
+    is staged instead. (The VM test runs the same against github.com.)"""
+    top = Path(subprocess.run(["git", "rev-parse", "--show-toplevel"], cwd=ROOT, capture_output=True, text=True,
+                              check=True).stdout.strip())
+    folder = ROOT.relative_to(top).as_posix() if top.resolve() != ROOT.resolve() else ""
+    if not folder:
+        pytest.skip("needs the monorepo layout")
+    if subprocess.run(["git", "rev-parse", "--verify", "--quiet", "main"], cwd=top, capture_output=True).returncode:
+        pytest.skip("no local main branch to clone (a CI checkout)")
+    main_toml = subprocess.run(["git", "show", f"main:{folder}/release.toml"], cwd=top, capture_output=True).stdout
+    git = shutil.which("git")
+    body = (f"function Say([string]$t) {{ }}; $Keygen = '{KEYGEN}'; $GitTestAllow = @('-c', 'protocol.file.allow=always'); "
+            f"try {{ $r = Get-VerifiedRelease '{git}' '{tmp_path}' '{top.as_posix()}' '{folder}'; "
+            "ConvertTo-Json @(\"serial $($r.release.serial)\") } catch { ConvertTo-Json @($_.Exception.Message) }")
+    out = run(body, PWSH or SHELLS[0])
+    if b"installer_sha256" not in main_toml:
+        assert "no installer_sha256" in out[0] and not (tmp_path / "stage").exists()
+        return
+    rel = update.parse_release(main_toml)
+    assert out == [f"serial {rel.serial}"], out
+    staged = sorted(p.relative_to(tmp_path / "stage").as_posix() for p in (tmp_path / "stage").rglob("*") if p.is_file())
+    assert "wh.py" in staged and "install.ps1" in staged and any(p.startswith("setup/") for p in staged)
+    assert all(update.wanted(p) or load_make_release().INSTALLER_RE.fullmatch(p) for p in staged)
+
+
+def test_what_the_elevated_scripts_load_is_all_covered_by_the_signed_hashes():
+    """install.ps1 and setup\\*.ps1 run as administrator from the bootstrap. Every file they load from their own
+    folder must be covered by tree_sha256 or installer_sha256 (u64-security, #humans 28905), so a new helper can't
+    run unhashed. Two named exceptions: keys\\allowed_signers (only with -PinSigners, never used by the bootstrap,
+    which pins its own) and the .git existence check."""
+    mr = load_make_release()
+    allowed_exceptions = {"keys/allowed_signers", ".git"}
+    for script in [ROOT / "install.ps1", *sorted((ROOT / "setup").glob("*.ps1"))]:
+        text = script.read_text(encoding="utf-8")
+        assert not re.search(r"Import-Module|\.psm1|\.psd1|^\s*\.\s+\S", text, re.M), script.name
+        for ref in re.findall(r"Join-Path \$(?:Source|PSScriptRoot)\s+'([^']+)'", text, re.I):
+            rel = ref.replace("\\", "/")
+            base = "setup/" if script.parent.name == "setup" else ""
+            path = base + rel
+            if path in allowed_exceptions:
+                continue
+            if path.endswith("/*.py"):
+                assert path == "workerhost/*.py", path  # every one of them is in tree_sha256
+                continue
+            assert update.wanted(path) or mr.INSTALLER_RE.fullmatch(path), f"{script.name} loads {path}, not hashed"
+
+
+def test_setup_holds_only_files_the_installer_hash_covers():
+    mr = load_make_release()
+    extra = [p.name for p in (ROOT / "setup").iterdir() if not mr.INSTALLER_RE.fullmatch(f"setup/{p.name}")]
+    assert extra == []  # the bootstrap refuses a release whose setup\ holds anything else
+
+
+@pytest.mark.parametrize("shell", SHELLS)
+def test_microsoft_is_read_from_the_organisation_field_only(shell):
+    names = ["CN=Microsoft Corporation, O=Microsoft Corporation, L=Redmond, S=Washington, C=US",
+             "CN=Microsoft Code Signing PCA 2011, O=Microsoft Corporation, L=Redmond, S=Washington, C=US",
+             "CN=Evil, O=Microsoft Corporation Ltd, C=US", "CN=O=Microsoft Corporation, O=Evil", "O=microsoft corporation"]
+    out = run("ConvertTo-Json @(" + ", ".join(f"(Test-MicrosoftName '{n}')" for n in names) + ")", shell)
+    assert out == [True, True, False, False, False]
+
+
+def test_the_powershell_pin_is_the_agreed_one():
+    """Three independent sources agreed on this file (#humans 28927-28929): change it only with a new agreement."""
+    text = SCRIPT.read_text(encoding="ascii")
+    assert "version = '7.6.10'; line = 'LTS'; file = 'PowerShell-7.6.10-win-x64.zip'; size = 109626781" in text
+    assert "sha256 = '7D871531806EB1646264E4BBABD9F0C30C23355591BC756BB9909448C29AE166'" in text
+    assert "url = 'https://github.com/PowerShell/PowerShell/releases/download/v7.6.10/PowerShell-7.6.10-win-x64.zip'" in text
+    assert "Microsoft.PowerShell" not in text  # never the MSIX
+
+
+@pytest.mark.parametrize("shell", SHELLS)
+def test_user_writable_folders_are_spotted(shell, tmp_path):
+    mine = tmp_path / "mine"
+    mine.mkdir()
+    out = run(f"ConvertTo-Json @((Test-UserWritable '{tmp_path / 'missing'}'), (Test-UserWritable 'C:\\Windows\\System32'))",
+              shell)
+    assert out == [True, False]  # a missing folder counts as writable; System32 is not
+
+
+def test_the_bootstrap_parses():
+    """A parse error stops the whole script loading (a "$Name:" in a string is the usual one)."""
+    r = subprocess.run([SHELLS[0], "-NoProfile", "-NonInteractive", "-Command",
+                        f"$t = $null; $e = $null; [void][Management.Automation.Language.Parser]::ParseFile('{SCRIPT}', "
+                        "[ref]$t, [ref]$e); $e.Count"], capture_output=True, text=True, timeout=60)
+    assert r.stdout.strip() == "0", r.stdout + r.stderr
+
+
+@pytest.mark.skipif(shutil.which("git") is None, reason="needs git")
+def test_a_hostile_user_gitconfig_cannot_steer_the_elevated_git(tmp_path):
+    """The operator's ~/.gitconfig is writable by any unelevated program of theirs: an `insteadOf` to `ext::` would run
+    a command as administrator at the clone (u64-security, #humans 28966). The bootstrap's git reads no user or
+    system config and allows only https (here, plus the test's own file transport)."""
+    origin = tmp_path / "origin"
+    subprocess.run(["git", "init", "-q", "--bare", str(origin)], check=True)
+    hostile_home = tmp_path / "hostile-home"
+    hostile_home.mkdir()
+    marker = tmp_path / "PWNED.txt"
+    (hostile_home / ".gitconfig").write_text(
+        f'[url "ext::cmd.exe /c echo pwned > {marker.as_posix()}"]\n\tinsteadOf = {origin.as_posix()}\n'
+        '[protocol "ext"]\n\tallow = always\n[core]\n\tsshCommand = cmd.exe /c echo pwned\n', encoding="ascii")
+    work = tmp_path / "work"
+    work.mkdir()
+    env = dict(os.environ, HOME=str(hostile_home), USERPROFILE=str(hostile_home), XDG_CONFIG_HOME=str(hostile_home))
+    git = shutil.which("git")
+    driver = (f"$ErrorActionPreference = 'Stop'\n. '{SCRIPT}'\n$GitTestAllow = @('-c', 'protocol.file.allow=always')\n"
+              f"try {{ Invoke-GitBytes '{git}' @('clone', '--quiet', '--bare', '{origin.as_posix()}', '{(work / 'm').as_posix()}') "
+              f"'{work}' | Out-Null; 'cloned' }} catch {{ \"failed: $($_.Exception.Message)\" }}\n"
+              f"$c = Invoke-GitBytes '{git}' @('config', '--show-origin', '--list') '{work}'; [Text.Encoding]::UTF8.GetString($c)")
+    r = subprocess.run([PWSH or SHELLS[0], "-NoProfile", "-NonInteractive", "-Command", driver], capture_output=True,
+                       text=True, timeout=120, env=env)
+    assert not marker.exists(), "the hostile config ran a command"
+    assert "cloned" in r.stdout, r.stdout + r.stderr
+    assert "hostile-home" not in r.stdout and "insteadof" not in r.stdout.lower()  # the user's config wasn't read at all
+
+
+def test_winget_is_never_called_through_path():
+    text = SCRIPT.read_text(encoding="ascii")
+    assert "& winget" not in text and "& (Get-Winget)" in text
+    assert "Get-AppxPackage -Name 'Microsoft.DesktopAppInstaller'" in text
+
+
+def test_the_usage_example_skips_the_operators_profile():
+    text = SCRIPT.read_text(encoding="ascii")
+    assert "powershell -NoProfile -ExecutionPolicy Bypass -File .\\bootstrap.ps1" in text
+    assert "powershell -ExecutionPolicy Bypass -File" not in text
 
 
 def test_still_ascii_and_lf_only():

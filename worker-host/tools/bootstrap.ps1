@@ -14,7 +14,8 @@
   with "not built yet". Run nothing from this file on a real host until it says otherwise.
 
 .EXAMPLE
-  powershell -ExecutionPolicy Bypass -File .\bootstrap.ps1 -DataFile .\sbhost-enrol.json
+  powershell -NoProfile -ExecutionPolicy Bypass -File .\bootstrap.ps1 -DataFile .\sbhost-enrol.json
+  (-NoProfile: otherwise the operator's own profile.ps1, which any program they run can write, runs elevated first.)
 #>
 [CmdletBinding()]
 param(
@@ -245,11 +246,284 @@ function Test-ReleaseSignature([byte[]]$data, [string]$sig, [string]$keygen, [st
     return $true, 'good'
 }
 
-if ($MyInvocation.InvocationName -eq '.') { return }
-
 function Say([string]$text) { Write-Host "[bootstrap] $text" }
 
+# --- the machine: checks, prerequisites (2.2 steps 1 and 2) -----------------------------------------------------
+
+# Where the host code comes from, built in (like the release keys): the data file can't point the install elsewhere.
+$ReleaseRepo = 'https://github.com/u64a/strugglebus'
+$ReleaseFolder = 'worker-host'
+$Keygen = Join-Path $env:SystemRoot 'System32\OpenSSH\ssh-keygen.exe'   # Windows' own, never another on PATH
+
+# What step 2 installs, only where missing, with winget (signed packages only), machine-wide so the host's account
+# sees them too. The first existing path wins.
+$Prereqs = [ordered]@{
+    python = @{ id = 'Python.Python.3.13'; paths = @('C:\Program Files\Python313\python.exe', 'C:\Program Files\Python312\python.exe') }
+    git    = @{ id = 'Git.Git'; paths = @('C:\Program Files\Git\cmd\git.exe') }
+    pwsh   = @{ id = ''; paths = @('C:\Program Files\PowerShell\7\pwsh.exe') }   # not winget: see $PwshZip
+    gh     = @{ id = 'GitHub.cli'; paths = @('C:\Program Files\GitHub CLI\gh.exe') }
+    # Copilot CLI's package declares a dependency on the PowerShell MSIX, which won't install machine-wide (the test
+    # VM): skipped, because PowerShell 7 is already in place from its pinned, checked zip by then.
+    ghcp   = @{ id = 'GitHub.Copilot'; paths = @('C:\Program Files\WinGet\Links\copilot.exe'); skipDeps = $true }
+    claude = @{ id = 'Anthropic.ClaudeCode'; paths = @('C:\Program Files\WinGet\Links\claude.exe') }
+}
+
+function Get-NeededPrereqs($engines) {
+    # Pure: the tools this host needs: the four always, plus each chosen engine.
+    return @('python', 'git', 'pwsh', 'gh') + @(@($engines) | Where-Object { $_ -cin 'ghcp', 'claude' })
+}
+
+function Test-Windows11 { return [Environment]::OSVersion.Version.Build -ge 22000 }
+
+function Test-Elevated {
+    $p = [Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()
+    return $p.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+}
+
+function Find-Prereq([string]$name) {
+    foreach ($p in $Prereqs[$name].paths) { if (Test-Path -LiteralPath $p -PathType Leaf) { return $p } }
+    return $null
+}
+
+# PowerShell 7 is the one tool not from winget: winget has only an MSIX for it, which won't install machine-wide, and
+# the host's own account needs pwsh. So: PowerShell's own release zip, the LTS line, pinned by size and SHA-256 (three
+# independent sources agreed, #humans 28927-28929), every program and script file in it Authenticode-signed by
+# Microsoft. Updating it means a new pin here, in a signed host release.
+$PwshZip = @{
+    version = '7.6.10'; line = 'LTS'; file = 'PowerShell-7.6.10-win-x64.zip'; size = 109626781
+    sha256 = '7D871531806EB1646264E4BBABD9F0C30C23355591BC756BB9909448C29AE166'
+    url = 'https://github.com/PowerShell/PowerShell/releases/download/v7.6.10/PowerShell-7.6.10-win-x64.zip'
+}
+$PwshHome = 'C:\Program Files\PowerShell\7'
+$SignedExtensions = '.exe', '.dll', '.ps1', '.psm1', '.psd1'
+
+function Test-MicrosoftName([string]$dn) {
+    # Pure: an X.500 name whose organisation (O=) is exactly Microsoft Corporation (not text found anywhere in it).
+    return $dn -cmatch '(^|,\s*)O=Microsoft Corporation(,|$)'
+}
+
+function Get-UnsignedByMicrosoft([string]$dir) {
+    # Every file under $dir with a signable extension whose signature is not Valid with a Microsoft signer AND
+    # issuer. Empty means all good.
+    $bad = @()
+    foreach ($f in (Get-ChildItem -LiteralPath $dir -Recurse -File | Where-Object { $SignedExtensions -contains $_.Extension.ToLowerInvariant() })) {
+        $s = Get-AuthenticodeSignature -LiteralPath $f.FullName
+        $c = $s.SignerCertificate
+        if ($s.Status -ne 'Valid' -or -not $c -or -not (Test-MicrosoftName $c.Subject) -or -not (Test-MicrosoftName $c.Issuer)) {
+            $bad += "$($f.FullName.Substring($dir.Length).TrimStart('\')) ($($s.Status))"
+        }
+    }
+    return , $bad
+}
+
+$UserSids = 'S-1-1-0', 'S-1-5-11', 'S-1-5-32-545', 'S-1-5-4'   # Everyone, Authenticated Users, Users, Interactive
+
+function Test-UserWritable([string]$dir) {
+    # True if an ordinary user could add or change files in $dir (a folder that doesn't exist counts as writable:
+    # whoever creates it decides).
+    if (-not (Test-Path -LiteralPath $dir -PathType Container)) { return $true }
+    $write = [Security.AccessControl.FileSystemRights]'WriteData, AppendData, WriteExtendedAttributes, WriteAttributes, Delete, ChangePermissions, TakeOwnership'
+    # .NET directly, not Get-Acl: the same in Windows PowerShell 5.1 (.NET Framework) and PowerShell 7 (.NET).
+    $info = New-Object IO.DirectoryInfo $dir
+    $acl = if ($PSVersionTable.PSVersion.Major -ge 6) { [IO.FileSystemAclExtensions]::GetAccessControl($info) } else { $info.GetAccessControl() }
+    foreach ($r in $acl.GetAccessRules($true, $true, [Security.Principal.SecurityIdentifier])) {
+        if ($r.AccessControlType -ne 'Allow' -or ($r.FileSystemRights -band $write) -eq 0) { continue }
+        if ($UserSids -contains $r.IdentityReference.Value) { return $true }
+    }
+    return $false
+}
+
+function Install-Pwsh([string]$work) {
+    # Step 2, PowerShell 7 (u64-security's conditions, #humans 28927): download into the admin-only stage, check
+    # size and SHA-256, extract there, check every signature, then move into Program Files with an ACL of
+    # Administrators and SYSTEM full, Users read and execute; the machine PATH only if no user-writable folder
+    # comes before it.
+    $exe = Join-Path $PwshHome 'pwsh.exe'
+    if (Test-Path -LiteralPath $exe) {
+        $have = (& $exe -NoProfile -Command '$PSVersionTable.PSVersion.ToString()' 2>$null | Select-Object -First 1)
+        if ("$have" -eq $PwshZip.version) { Say "pwsh $have already at $PwshHome"; return $exe }
+        throw "a different PowerShell ($have) is already at ${PwshHome}: remove it first, or update this bootstrap's pin"
+    }
+    $zip = Join-Path $work $PwshZip.file
+    Say "downloading PowerShell $($PwshZip.version) ($($PwshZip.line)), pinned by SHA-256"
+    $old = $ProgressPreference; $ProgressPreference = 'SilentlyContinue'
+    try { Invoke-WebRequest -UseBasicParsing -Uri $PwshZip.url -OutFile $zip } finally { $ProgressPreference = $old }
+    if ((Get-Item -LiteralPath $zip).Length -ne $PwshZip.size) { throw 'the PowerShell zip is not the pinned size: refused' }
+    if ((Get-FileHash -LiteralPath $zip -Algorithm SHA256).Hash -cne $PwshZip.sha256) { throw 'the PowerShell zip does not match the pinned SHA-256: refused' }
+    $unpacked = Join-Path $work 'pwsh'
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    [IO.Compression.ZipFile]::ExtractToDirectory($zip, $unpacked)
+    $bad = Get-UnsignedByMicrosoft $unpacked
+    if ($bad.Count) { throw "PowerShell files not signed by Microsoft: $(($bad | Select-Object -First 5) -join ', '): refused" }
+    New-Item -ItemType Directory -Path (Split-Path $PwshHome) -Force | Out-Null
+    Move-Item -LiteralPath $unpacked -Destination $PwshHome
+    $icacls = Join-Path $env:SystemRoot 'System32\icacls.exe'
+    & $icacls $PwshHome /inheritance:r /grant:r '*S-1-5-32-544:(OI)(CI)F' '*S-1-5-18:(OI)(CI)F' '*S-1-5-32-545:(OI)(CI)RX' | Out-Null
+    if ($LASTEXITCODE -ne 0 -or (Test-UserWritable $PwshHome)) { throw "could not make $PwshHome writable by administrators only" }
+    $machine = [Environment]::GetEnvironmentVariable('Path', 'Machine')
+    $before = @($machine -split ';' | Where-Object { $_ })
+    $writable = @($before | Where-Object { Test-UserWritable ([Environment]::ExpandEnvironmentVariables($_)) })
+    if ($writable.Count) {
+        Say "NOT adding $PwshHome to the machine PATH: these folders before it are user-writable: $($writable -join '; ')"
+    } elseif ($before -notcontains $PwshHome) {
+        [Environment]::SetEnvironmentVariable('Path', (($before + $PwshHome) -join ';'), 'Machine')
+        Say "added $PwshHome to the machine PATH"
+    }
+    Say "PowerShell $($PwshZip.version) installed at ${PwshHome}: size, SHA-256 and every signature checked"
+    return $exe
+}
+
+$WingetExe = $null   # set by Get-Winget once found and checked
+
+function Get-Winget {
+    # The real winget.exe by full path, never the PATH alias: that lives in the user-writable
+    # %LOCALAPPDATA%\Microsoft\WindowsApps, which any unelevated program of the operator's can replace (u64-security,
+    # #humans 28966). The App Installer package's own folder under Program Files\WindowsApps is admin-protected; the
+    # file must also carry a valid Microsoft signature. Found once, then remembered.
+    if ($script:WingetExe) { return $script:WingetExe }
+    $pkg = Get-AppxPackage -Name 'Microsoft.DesktopAppInstaller' -ErrorAction SilentlyContinue |
+        Sort-Object { [version]$_.Version } -Descending | Select-Object -First 1
+    if (-not $pkg) { throw 'App Installer (winget) is not installed: get "App Installer" from the Microsoft Store, then run this again' }
+    $exe = Join-Path $pkg.InstallLocation 'winget.exe'
+    $programFilesApps = Join-Path $env:ProgramFiles 'WindowsApps'
+    if (-not $exe.StartsWith($programFilesApps + '\', [StringComparison]::OrdinalIgnoreCase) -or -not (Test-Path -LiteralPath $exe)) {
+        throw "winget.exe is not where App Installer keeps it ($exe): refused"
+    }
+    $s = Get-AuthenticodeSignature -LiteralPath $exe
+    if ($s.Status -ne 'Valid' -or -not $s.SignerCertificate -or -not (Test-MicrosoftName $s.SignerCertificate.Subject) -or
+        -not (Test-MicrosoftName $s.SignerCertificate.Issuer)) { throw "winget.exe is not signed by Microsoft ($($s.Status)): refused" }
+    $script:WingetExe = $exe
+    return $exe
+}
+
+function Install-Prereqs($engines, [string]$work) {
+    # Step 2: each missing tool from winget, machine-wide (PowerShell 7 from its pinned zip). Returns name -> path;
+    # throws if one is still missing.
+    $found = [ordered]@{}
+    foreach ($name in (Get-NeededPrereqs $engines)) {
+        $path = Find-Prereq $name
+        if ($name -eq 'pwsh') { $path = Install-Pwsh $work }
+        if (-not $path) {
+            $id = $Prereqs[$name].id
+            Say "installing $id (winget, machine-wide)"
+            $wingetArgs = @('install', '--id', $id, '--exact', '--scope', 'machine', '--silent', '--accept-package-agreements',
+                            '--accept-source-agreements', '--disable-interactivity')
+            if ($Prereqs[$name].ContainsKey('skipDeps') -and $Prereqs[$name].skipDeps) { $wingetArgs += '--skip-dependencies' }
+            & (Get-Winget) @wingetArgs | Out-Host
+            $path = Find-Prereq $name
+            if (-not $path) { throw "$id did not install where expected ($($Prereqs[$name].paths -join ', '))" }
+        }
+        Say "$name`: $path"
+        $found[$name] = $path
+    }
+    return $found
+}
+
+# --- the host code: fetched, verified, staged (2.2 step 3) -------------------------------------------------------
+
+function New-AdminOnlyFolder([string]$path) {
+    # A new folder only Administrators and SYSTEM can write (inheritance cut, a fresh ACL), so nothing running as the
+    # operator unelevated can swap a file between the check and the run (u64-security, #humans 28905). Throws if it
+    # exists already: a fresh folder every run.
+    if (Test-Path -LiteralPath $path) { throw "$path exists already" }
+    New-Item -ItemType Directory -Path $path -Force | Out-Null
+    $icacls = Join-Path $env:SystemRoot 'System32\icacls.exe'
+    & $icacls $path /inheritance:r /grant:r '*S-1-5-32-544:(OI)(CI)F' '*S-1-5-18:(OI)(CI)F' | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw "could not restrict $path to Administrators and SYSTEM" }
+    return $path
+}
+
+# Git runs ELEVATED here, but reads the operator's own ~/.gitconfig (and XDG config), which any unelevated program of
+# theirs can write: `url.<ext::cmd>.insteadOf` would run a command as administrator at the clone (u64-security, #humans
+# 28966). So no system or user config at all, HOME pointed at the admin-only work folder, only https, no credential
+# helper, no prompts. $GitTestAllow is for the tests' local clone only and is empty in real use.
+$GitSafeConfig = @('-c', 'protocol.allow=never', '-c', 'protocol.https.allow=always', '-c', 'credential.helper=',
+                   '-c', 'core.askPass=')
+$GitTestAllow = @()
+
+function Invoke-GitBytes([string]$git, [string[]]$arguments, [string]$isolatedHome) {
+    # git's stdout as exact bytes (PowerShell's own capture would decode and re-encode it), with a clean environment
+    # (above): $isolatedHome is the admin-only work folder, holding an empty config file and an empty hooks folder.
+    # Throws on failure.
+    if (-not $isolatedHome) { throw 'git needs the admin-only work folder' }
+    $emptyConfig = Join-Path $isolatedHome 'empty.gitconfig'
+    $noHooks = Join-Path $isolatedHome 'no-hooks'
+    if (-not (Test-Path -LiteralPath $emptyConfig)) { [IO.File]::WriteAllText($emptyConfig, '') }
+    if (-not (Test-Path -LiteralPath $noHooks)) { New-Item -ItemType Directory -Path $noHooks | Out-Null }
+    $psi = New-Object Diagnostics.ProcessStartInfo $git
+    $all = @($GitSafeConfig) + @('-c', "core.hooksPath=$noHooks") + @($GitTestAllow) + @($arguments)
+    $psi.Arguments = ($all | ForEach-Object { if ($_ -match '[\s"]' -or $_ -eq '') { '"' + $_.Replace('"', '\"') + '"' } else { $_ } }) -join ' '
+    $psi.UseShellExecute = $false
+    $psi.RedirectStandardOutput = $true
+    $psi.RedirectStandardError = $true
+    foreach ($kv in @{ GIT_CONFIG_NOSYSTEM = '1'; GIT_CONFIG_GLOBAL = $emptyConfig; GIT_TERMINAL_PROMPT = '0'; GIT_ASKPASS = '';
+                        HOME = $isolatedHome; XDG_CONFIG_HOME = $isolatedHome; GCM_INTERACTIVE = 'never' }.GetEnumerator()) {
+        $psi.EnvironmentVariables[$kv.Key] = $kv.Value
+    }
+    foreach ($name in 'GIT_DIR', 'GIT_WORK_TREE', 'GIT_CONFIG', 'GIT_CONFIG_PARAMETERS', 'GIT_CONFIG_COUNT', 'GIT_EXEC_PATH',
+                      'GIT_SSH', 'GIT_SSH_COMMAND', 'GIT_PROXY_COMMAND', 'GIT_TEMPLATE_DIR', 'HTTPS_PROXY', 'HTTP_PROXY', 'ALL_PROXY') {
+        $psi.EnvironmentVariables.Remove($name)
+    }
+    $p = [Diagnostics.Process]::Start($psi)
+    $err = $p.StandardError.ReadToEndAsync()
+    $ms = New-Object IO.MemoryStream
+    $p.StandardOutput.BaseStream.CopyTo($ms)
+    $p.WaitForExit()
+    if ($p.ExitCode -ne 0) { throw "git $($arguments[0]) failed: $($err.Result.Trim())" }
+    return , $ms.ToArray()
+}
+
+function Get-VerifiedRelease([string]$git, [string]$work, [string]$repo = $ReleaseRepo, [string]$folder = $ReleaseFolder) {
+    # Step 3: the newest release on main, checked before ANY of it runs: the signature by a built-in release key with
+    # touch and PIN, not older than $MinReleaseSerial, then tree_sha256 and installer_sha256 over the exact bytes.
+    # Returns @{ release; stage } with the staged files (the host's and the installer's) under $work\stage.
+    $mirror = Join-Path $work 'release.git'
+    Invoke-GitBytes $git @('clone', '--quiet', '--bare', '--filter=blob:none', '--single-branch', '--branch', 'main', $repo, $mirror) $work | Out-Null
+    $g = { param([string[]]$a) Invoke-GitBytes $git (@('--git-dir', $mirror) + $a) $work }
+    $data = & $g @('cat-file', 'blob', "main:$folder/release.toml")
+    $sig = [Text.Encoding]::ASCII.GetString((& $g @('cat-file', 'blob', "main:$folder/release.toml.sig")))
+    $ok, $why = Test-ReleaseSignature $data $sig $Keygen $work
+    if (-not $ok) { throw "the release is not signed by a project release key with touch and PIN ($why): nothing installed" }
+    $release = Read-ReleaseText ([Text.Encoding]::UTF8.GetString($data))
+    if (-not (Test-ReleaseFloor $release)) {
+        if (-not $release.ContainsKey('installer_sha256')) { throw "release serial $($release.serial) has no installer_sha256 (it predates what this bootstrap needs): nothing installed" }
+        throw "release serial $($release.serial) is older than this bootstrap allows (at least $MinReleaseSerial): nothing installed"
+    }
+    $listing = [Text.Encoding]::UTF8.GetString((& $g @('ls-tree', '-r', '-z', '--full-tree', $release.commit, '--', $folder)))
+    $hostFiles = @{}; $installerFiles = @{}
+    foreach ($entry in ($listing -split "`0")) {
+        if (-not $entry) { continue }
+        $meta, $full = $entry -split "`t", 2
+        if (($meta -split ' ')[1] -ne 'blob' -or -not $full.StartsWith("$folder/")) { continue }
+        $rel = $full.Substring($folder.Length + 1)
+        if (Test-InstalledPath $rel) { $hostFiles[$rel] = & $g @('cat-file', 'blob', "$($release.commit):$full") }
+        elseif (Test-InstallerPath $rel) { $installerFiles[$rel] = & $g @('cat-file', 'blob', "$($release.commit):$full") }
+        elseif ($rel.StartsWith('setup/')) {
+            # Anything else in setup\ could be loaded by a script run as administrator without being hashed: refused
+            # (u64-security, #humans 28905), so a new helper needs installer_sha256 to cover it first.
+            throw "setup\ holds $rel, which installer_sha256 does not cover: nothing installed"
+        }
+    }
+    if ((Get-TreeSha256 $hostFiles) -cne $release.tree_sha256) { throw 'the host files do not match the signed tree_sha256: nothing installed' }
+    if ((Get-TreeSha256 $installerFiles) -cne $release.installer_sha256) { throw 'install.ps1 or setup\ does not match the signed installer_sha256: nothing installed' }
+    $stage = Join-Path $work 'stage'
+    foreach ($set in $hostFiles, $installerFiles) {
+        foreach ($rel in $set.Keys) {
+            $to = Join-Path $stage ($rel -replace '/', '\')
+            New-Item -ItemType Directory -Force (Split-Path $to) | Out-Null
+            [IO.File]::WriteAllBytes($to, [byte[]]$set[$rel])
+        }
+    }
+    Say "release $($release.version) (serial $($release.serial), $($release.commit.Substring(0, 12))): signature, PIN, tree and installer hashes all good"
+    return @{ release = $release; stage = $stage }
+}
+
+if ($MyInvocation.InvocationName -eq '.') { return }
+
 if (-not $DataFile) { throw 'give the App''s data file: bootstrap.ps1 -DataFile .\sbhost-enrol.json' }
+if (-not (Test-Windows11)) { throw 'this needs Windows 11' }
+if (-not (Test-Elevated)) { throw 'run this as administrator (right-click PowerShell, Run as administrator)' }
+if (-not (Test-Path -LiteralPath $Keygen -PathType Leaf)) { throw "Windows' own ssh-keygen is missing ($Keygen): add the optional feature OpenSSH Client" }
 $bytes = [IO.File]::ReadAllBytes((Resolve-Path -LiteralPath $DataFile).Path)
 $SB = Read-SbData $bytes -SingleSigner:$SingleSigner
 Say "data file from device $($SB.device), $($SB.written_at), for host $($SB.host_prefix) on $($SB.bus_url)"
@@ -257,4 +531,9 @@ Say "data file digest: $(Get-FileDigest $bytes)"
 foreach ($line in $SB.signers) { Say "signer: $(Get-SignerFingerprint $line)" }
 Say 'compare these with what the App shows for this host.'
 if (-not $Yes) { Read-Host '[bootstrap] press Enter to continue, or close this window to stop' | Out-Null }
-throw 'not built yet: the install steps (2.2 steps 2 to 12) come in a later change'
+
+$work = New-AdminOnlyFolder (Join-Path $env:ProgramData ('strugglebus\bootstrap-' + [guid]::NewGuid().ToString('n')))
+$tools = Install-Prereqs $SB.engines $work              # step 2
+$verified = Get-VerifiedRelease $tools.git $work        # step 3
+Say "verified host code staged at $($verified.stage)"
+throw 'not built yet: the install steps after the verified fetch (2.2 steps 4 to 12) come in a later change'
