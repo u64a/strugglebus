@@ -1,0 +1,168 @@
+"""tools/bootstrap.ps1, verifying the host code before any of it runs (docs/app-host-integration.md 2.2 step 3): the
+built-in release keys, the security-key flags, the host's own tree_sha256 rule and the release.toml reader. Each is
+checked against the host's Python code or a real signature, in PowerShell 7 and in Windows PowerShell 5.1 (all a
+fresh PC has)."""
+from __future__ import annotations
+
+import base64
+import hashlib
+import json
+import re
+import shutil
+import subprocess
+from pathlib import Path
+
+import pytest
+
+from workerhost import signing, update
+
+ROOT = Path(__file__).resolve().parent.parent
+SCRIPT = ROOT / "tools" / "bootstrap.ps1"
+PWSH = shutil.which("pwsh")
+WINPS = shutil.which("powershell")
+KEYGEN = next((k for k in signing.KEYGEN_CANDIDATES[:2] if Path(k).is_file()), None)
+SHELLS = [s for s in (PWSH, WINPS) if s]
+pytestmark = pytest.mark.skipif(not SHELLS, reason="no PowerShell")
+REAL_TOML, REAL_SIG = ROOT / "release.toml", ROOT / "release.toml.sig"
+
+
+def run(body: str, shell: str):
+    driver = f"$ErrorActionPreference = 'Stop'\n. '{SCRIPT}'\n{body}"
+    r = subprocess.run([shell, "-NoProfile", "-NonInteractive", "-Command", driver], capture_output=True, text=True,
+                       timeout=120, stdin=subprocess.DEVNULL)
+    assert r.returncode == 0, r.stderr + r.stdout
+    return json.loads(r.stdout)
+
+
+def test_the_release_keys_are_the_three_that_sign_bootstrap_pins():
+    """The same YubiKeys everywhere: bootstrap.ps1's built-in keys have exactly sign-bootstrap.ps1's fingerprints."""
+    text = SCRIPT.read_text(encoding="ascii")
+    blobs = re.findall(r"'sk-ssh-ed25519@openssh\.com (AAAA[A-Za-z0-9+/=]+)'", text)
+    fps = {"SHA256:" + base64.b64encode(hashlib.sha256(base64.b64decode(b)).digest()).decode().rstrip("=")
+           for b in blobs}
+    pinned = set(re.findall(r"SHA256:[A-Za-z0-9+/]{43}", (ROOT / "tools" / "sign-bootstrap.ps1").read_text()))
+    assert len(blobs) == 3 and fps == pinned
+
+
+@pytest.mark.parametrize("shell", SHELLS)
+def test_the_signers_file_allows_the_release_namespace_only(shell):
+    out = run("ConvertTo-Json @(Get-ReleaseSigners)", shell)
+    lines = [ln for ln in out[0].split("\n") if ln]
+    assert len(lines) == 3 and all(ln.startswith('release namespaces="strugglebus-release" sk-ssh-ed25519') for ln in lines)
+
+
+@pytest.mark.parametrize("shell", SHELLS)
+def test_the_flags_of_the_real_release_signature(shell, tmp_path):
+    if not REAL_SIG.is_file():
+        pytest.skip("no release.toml.sig in this layout")
+    out = run(f"ConvertTo-Json @(Get-SkFlags ([IO.File]::ReadAllText('{REAL_SIG}')))", shell)
+    assert out == [5]  # touch and PIN, as the host's own check reads it (workerhost/signing.py)
+
+
+@pytest.mark.parametrize("shell", SHELLS)
+def test_a_malformed_signature_throws(shell):
+    out = run("try { Get-SkFlags \"-----BEGIN SSH SIGNATURE-----`nAAAA`n-----END SSH SIGNATURE-----\"; "
+              "ConvertTo-Json @('no throw') } catch { ConvertTo-Json @('threw') }", shell)
+    assert out == ["threw"]
+
+
+@pytest.mark.parametrize("shell", SHELLS)
+def test_tree_sha256_matches_the_hosts_rule_including_its_ordinal_sort(shell, tmp_path):
+    files = {"wh.py": b"print('wh')\n", "README.md": b"# r\n", "config.template.toml": b"x = 1\n",
+             "workerhost/Zed.py": b"z\n", "workerhost/abc.py": b"a\r\n", "workerhost/_b.py": b""}
+    for p, data in files.items():
+        (tmp_path / p).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / p).write_bytes(data)
+    body = ("$f = @{}; " + "; ".join(f"$f['{p}'] = [IO.File]::ReadAllBytes('{tmp_path / p}')" for p in files)
+            + "; ConvertTo-Json @(Get-TreeSha256 $f)")
+    assert run(body, shell) == [update.tree_sha256(files)]
+
+
+@pytest.mark.parametrize("shell", SHELLS)
+def test_the_installed_path_rule_is_the_hosts(shell):
+    paths = ["wh.py", "README.md", "config.template.toml", "workerhost/host.py", "workerhost/sub/x.py",
+             "workerhost/x.txt", "install.ps1", "tools/make-release.py", "WH.PY", "workerhost/a-b.py"]
+    out = run("ConvertTo-Json @(" + ", ".join(f"(Test-InstalledPath '{p}')" for p in paths) + ")", shell)
+    assert out == [update.wanted(p) for p in paths]
+
+
+@pytest.mark.parametrize("shell", SHELLS)
+def test_the_real_release_toml_reads(shell):
+    if not REAL_TOML.is_file():
+        pytest.skip("no release.toml in this layout")
+    out = run(f"ConvertTo-Json (Read-ReleaseText ([IO.File]::ReadAllText('{REAL_TOML}'))) -Compress", shell)
+    rel = update.parse_release(REAL_TOML.read_bytes())
+    assert (out["serial"], out["version"], out["commit"], out["tree_sha256"]) == (
+        rel.serial, rel.version, rel.commit, rel.tree_sha256)
+
+
+@pytest.mark.parametrize("text, why", [
+    ('serial = 1\nversion = "1"\ncommit = "' + "a" * 40 + '"\n', "no tree_sha256"),
+    ('serial = 1\nserial = 2\nversion = "1"\ncommit = "' + "a" * 40 + '"\ntree_sha256 = "' + "b" * 64 + '"\n', "twice"),
+    ('serial = 1\nversion = "1"\ncommit = "ABC"\ntree_sha256 = "' + "b" * 64 + '"\n', "no commit"),
+    ('serial = 1\nversion = "1"\n[t]\ncommit = "' + "a" * 40 + '"\ntree_sha256 = "' + "b" * 64 + '"\n', "no commit"),
+])
+def test_a_bad_release_toml_is_refused(text, why):
+    out = run("try { Read-ReleaseText \"" + text.replace('"', '`"').replace("\n", "`n")
+              + "\" | Out-Null; ConvertTo-Json @('read') } catch { ConvertTo-Json @($_.Exception.Message) }", SHELLS[0])
+    assert why in out[0]
+
+
+@pytest.mark.skipif(KEYGEN is None, reason="no Windows OpenSSH ssh-keygen")
+@pytest.mark.parametrize("shell", SHELLS)
+def test_the_real_release_verifies_and_a_changed_byte_does_not(shell, tmp_path):
+    if not (REAL_TOML.is_file() and REAL_SIG.is_file()):
+        pytest.skip("no signed release in this layout")
+    changed = tmp_path / "changed.toml"
+    changed.write_bytes(REAL_TOML.read_bytes().replace(b"serial = ", b"serial =  ", 1))
+    body = (f"$w = '{tmp_path}'; $sig = [IO.File]::ReadAllText('{REAL_SIG}'); "
+            f"$a = Test-ReleaseSignature ([IO.File]::ReadAllBytes('{REAL_TOML}')) $sig '{KEYGEN}' $w; "
+            f"$b = Test-ReleaseSignature ([IO.File]::ReadAllBytes('{changed}')) $sig '{KEYGEN}' $w; "
+            "ConvertTo-Json @(($a -join ':'), ($b -join ':'))")
+    assert run(body, shell) == ["True:good", "False:bad-signature"]
+
+
+def load_make_release():
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("make_release", ROOT / "tools" / "make-release.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+@pytest.mark.parametrize("shell", SHELLS)
+def test_the_installer_rule_is_the_same_in_both_places(shell):
+    mr = load_make_release()
+    paths = ["install.ps1", "setup/10-debloat.ps1", "setup/debloat.txt", "setup/sub/x.ps1", "setup/x.py",
+             "tools/bootstrap.ps1", "INSTALL.PS1", "wh.py"]
+    out = run("ConvertTo-Json @(" + ", ".join(f"(Test-InstallerPath '{p}')" for p in paths) + ")", shell)
+    assert out == [bool(mr.INSTALLER_RE.fullmatch(p)) for p in paths]
+
+
+def test_installer_sha256_covers_install_ps1_and_setup_at_a_commit():
+    """Against this repository's HEAD, in either layout (the code at the top, or in worker-host/)."""
+    mr = load_make_release()
+    top = subprocess.run(["git", "rev-parse", "--show-toplevel"], cwd=ROOT, capture_output=True, text=True,
+                         check=True).stdout.strip()
+    path = "" if Path(top).resolve() == ROOT.resolve() else ROOT.relative_to(Path(top)).as_posix()
+    files = mr.installer_files("HEAD", path)
+    assert "install.ps1" in files and any(p.startswith("setup/") for p in files)
+    assert all(mr.INSTALLER_RE.fullmatch(p) for p in files)
+    assert mr.installer_sha256("HEAD", path) == update.tree_sha256(files)
+    text = mr.release_text(9, "2026.11.28", "a" * 40, "b" * 64, False, "n", installer="c" * 64)
+    assert 'installer_sha256 = "' + "c" * 64 + '"' in text and update.parse_release(text.encode()).serial == 9
+
+
+@pytest.mark.parametrize("shell", SHELLS)
+def test_an_older_release_or_one_without_installer_sha256_is_refused(shell):
+    base = {"serial": 9, "version": "x", "commit": "a" * 40, "tree_sha256": "b" * 64}
+    cases = [dict(base, installer_sha256="c" * 64), dict(base, serial=8, installer_sha256="c" * 64), base]
+    body = "ConvertTo-Json @(" + ", ".join(
+        "(Test-ReleaseFloor @{" + "; ".join(f"{k} = '{v}'" for k, v in c.items()) + "})" for c in cases) + ")"
+    assert run(body, shell) == [True, False, False]
+
+
+def test_still_ascii_and_lf_only():
+    raw = SCRIPT.read_bytes()
+    assert max(raw) < 128 and b"\r" not in raw

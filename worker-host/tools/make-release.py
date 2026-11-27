@@ -57,11 +57,14 @@ AUTHENTICODE_THUMBPRINTS = ("3FF059FA28ED74ACB229CBA2E670CEA565015238",)
 
 def release_text(serial: int, version: str, commit: str, tree: str, needs_install: bool, notes: str,
                  bootstrap: str = "", moved_to: tuple[str, str] | None = None,
-                 thumbprints: tuple[str, ...] = AUTHENTICODE_THUMBPRINTS) -> str:
+                 thumbprints: tuple[str, ...] = AUTHENTICODE_THUMBPRINTS, installer: str = "") -> str:
     notes = re.sub(r"[\x00-\x1f\"\\]", " ", notes).strip()[:300]
+    # installer_sha256: what the bootstrap runs AS ADMINISTRATOR (install.ps1, setup\), which tree_sha256 does not
+    # cover (docs/app-host-integration.md 2.2 step 3; u64-security, #humans 28898). Hosts ignore it.
+    extra = f'installer_sha256 = "{installer}"\n' if installer else ""
     # bootstrap_sha256: tools/bootstrap.ps1 at this commit, so the App can pin the file it ships against a signed
     # value (docs/app-host-integration.md 2.1). Hosts ignore it (parse_release reads only the keys it knows).
-    extra = (f'bootstrap_sha256 = "{bootstrap}"\n' if bootstrap else "")
+    extra += (f'bootstrap_sha256 = "{bootstrap}"\n' if bootstrap else "")
     if bootstrap and thumbprints:
         # authenticode_thumbprints: who may Authenticode-sign that bootstrap.ps1 (tools/sign-bootstrap.ps1 checks it
         # before and after signing). Signed with the rest, so a new certificate needs a signed release. Hosts ignore it.
@@ -90,6 +93,29 @@ def bootstrap_sha256(commit: str, path: str = "") -> str:
     """SHA-256 of tools/bootstrap.ps1's exact bytes at the commit (it is -text in git), or "" if it has none."""
     r = subprocess.run(["git", "show", f"{commit}:{at(path, 'tools/bootstrap.ps1')}"], cwd=ROOT, capture_output=True)
     return hashlib.sha256(r.stdout).hexdigest() if r.returncode == 0 else ""
+
+
+INSTALLER_RE = re.compile(r"install\.ps1|setup/[A-Za-z0-9_.-]+\.(?:ps1|txt)")
+
+
+def installer_files(commit: str, path: str = "") -> dict[str, bytes]:
+    """install.ps1 and setup/*.ps1|txt at the commit (paths relative to the code's folder): the files the bootstrap
+    runs elevated. The same rule is in bootstrap.ps1 (Test-InstallerPath)."""
+    lead = f"{path}/" if path else ""
+    names = git("ls-tree", "-r", "--name-only", "--full-tree", commit, "--", f"{lead}install.ps1", f"{lead}setup")
+    out = {}
+    for name in names.splitlines():
+        rel = name[len(lead):]
+        if INSTALLER_RE.fullmatch(rel):
+            out[rel] = subprocess.run(["git", "show", f"{commit}:{name}"], cwd=ROOT, capture_output=True,
+                                      check=True).stdout
+    return out
+
+
+def installer_sha256(commit: str, path: str = "") -> str:
+    """tree_sha256's construction over installer_files, or "" if the commit has none."""
+    files = installer_files(commit, path)
+    return update.tree_sha256(files) if files else ""
 
 
 def resolve_commit(requested: str) -> tuple[str, str]:
@@ -239,7 +265,8 @@ def main(argv: list[str]) -> int:
     version = next_version(commit, prev)
     notes = args.notes or default_notes(prev, commit, args.path)
     boot = bootstrap_sha256(commit, args.path)
-    text = release_text(serial, version, commit, tree, args.needs_install, notes, boot, moved)
+    text = release_text(serial, version, commit, tree, args.needs_install, notes, boot, moved,
+                        installer=installer_sha256(commit, args.path))
     update.parse_release(text.encode("utf-8"))  # what hosts will parse (and refuse a bad moved_to)
     print(text)
     print(f"# {len(files)} files at {commit[:12]}; tree_sha256 {tree}; bootstrap.ps1 sha256 {boot or '-'}")
