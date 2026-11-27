@@ -391,6 +391,29 @@ def test_a_missing_page_is_told_apart_from_an_unreachable_one(monkeypatch):
     assert not isinstance(refused.value, fetch_release.Missing)
 
 
+@pytest.mark.parametrize("code,headers,limited", [
+    (403, {"x-ratelimit-remaining": "0"}, True),
+    (429, {}, True),
+    (403, {"x-ratelimit-remaining": "9"}, False),
+    (403, {}, False),
+    (500, {"x-ratelimit-remaining": "0"}, False),
+])
+def test_the_request_limit_is_said_in_plain_words(monkeypatch, code, headers, limited):
+    import urllib.error
+
+    def urlopen(request, timeout):
+        raise urllib.error.HTTPError(request.full_url, code, "Forbidden", headers, None)
+
+    monkeypatch.setattr(fetch_release.urllib.request, "urlopen", urlopen)
+
+    with pytest.raises(fetch_release.Problem) as raised:
+        fetch_release._read("https://api.github.com/x", 10)
+
+    assert raised.value.code == fetch_release.UNREACHABLE
+    assert (str(raised.value) == fetch_release.LIMITED) is limited
+    assert "60 an hour" in fetch_release.LIMITED
+
+
 def test_a_mirrors_list_counts_only_bus_tags(monkeypatch):
     _serve(monkeypatch, {"list": [
         _record("windows/v9.9.9"), _record("v9.9.8"), _record("bus/v0.3.2", draft=True),

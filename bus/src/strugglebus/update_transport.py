@@ -27,7 +27,19 @@ API = "https://api.github.com"
 API_VERSION = "2022-11-28"
 _CLOCK = time.monotonic
 _SLEEP = time.sleep
-_TRANSIENT = frozenset({429, 500, 502, 503, 504})
+# 429 is not here: asking again at once is what a limit is for stopping.
+_TRANSIENT = frozenset({500, 502, 503, 504})
+
+
+def _limited(code: int, headers: Any) -> bool:
+    """
+    Whether the source refused because of its request limit. GitHub answers 403 with no requests
+    remaining, or 429. Known apart from other refusals so the operator is told the real cause,
+    which no retry mends and which passes by itself.
+    """
+    if code == 429:
+        return True
+    return code == 403 and headers is not None and headers.get("x-ratelimit-remaining") == "0"
 _NETWORK_ERRORS = (OSError, socket.timeout, http.client.HTTPException)
 
 
@@ -172,7 +184,10 @@ class _HTTP:
             return opener.open(request, timeout=self._timeout())
         except urllib.error.HTTPError as error:
             code = error.code
+            limited = _limited(code, error.headers)
             error.close()
+            if limited:
+                raise UpdateError("rate_limited") from None
             if code in _TRANSIENT:
                 raise _Retry() from None
             if code == 404:
