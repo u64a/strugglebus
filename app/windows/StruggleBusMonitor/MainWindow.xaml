@@ -450,6 +450,7 @@
                                     <TextBlock x:Name="AdminAgentsSummary" Style="{StaticResource MutedText}" TextWrapping="Wrap" Margin="0,8,0,10"/>
                                     <TextBox x:Name="AdminAgentFilter" Tag="Find an agent by name, host or state" TextChanged="AdminAgentFilter_TextChanged"/>
                                     <ItemsControl x:Name="AdminAgentList" ItemTemplate="{StaticResource AdminRowTemplate}" Margin="0,6,0,0" Focusable="False"/>
+                                    <Button x:Name="AdminAgentsMore" Style="{StaticResource BtnGhost}" Click="AdminAgentsMore_Click" HorizontalAlignment="Left" Margin="0,10,0,0" Visibility="Collapsed"/>
                                 </StackPanel>
                             </Border>
 

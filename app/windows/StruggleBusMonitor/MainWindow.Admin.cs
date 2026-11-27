@@ -21,6 +21,9 @@ public partial class MainWindow
     /// <summary>True when the bus is too old to list managed targets, so rows come from the live roster.</summary>
     private bool _adminLegacy;
     private bool _adminLoaded;
+    private DateTimeOffset? _adminLoadedAt;
+    private IReadOnlyList<AdminRow> _adminAgentMatches = [];
+    private int _adminAgentsShowing = AdminFlow.AgentPageSize;
 
     private void InitializeAdmin()
     {
@@ -37,10 +40,14 @@ public partial class MainWindow
         ShowAdminTab();
     }
 
+    /// <summary>
+    /// Opens with the lists it already has, and fetches them again only when they are older
+    /// than a minute. Fetching every time made the page slow to open on a busy bus.
+    /// </summary>
     private void OnAdminPageShown()
     {
         UpdateGrantStatus();
-        _ = RunBusy(LoadAdminListsAsync);
+        if (AdminFlow.ListsAreStale(_adminLoadedAt, DateTimeOffset.Now)) _ = RunBusy(LoadAdminListsAsync);
     }
 
     private void AdminTab_Checked(object sender, RoutedEventArgs e)
@@ -200,7 +207,15 @@ public partial class MainWindow
 
     private void AdminAgentFilter_TextChanged(object sender, TextChangedEventArgs e)
     {
-        if (_ready) ApplyAdminAgentFilter();
+        if (!_ready) return;
+        _adminAgentsShowing = AdminFlow.AgentPageSize;
+        ApplyAdminAgentFilter();
+    }
+
+    internal void AdminAgentsMore_Click(object sender, RoutedEventArgs e)
+    {
+        _adminAgentsShowing += AdminFlow.AgentPageSize;
+        ShowAdminAgentPage();
     }
 
     private async Task LoadAdminListsAsync()
@@ -226,6 +241,7 @@ public partial class MainWindow
             principals = [];
         }
         _adminLoaded = true;
+        _adminLoadedAt = DateTimeOffset.Now;
 
         Replace(_adminDevices, AdminLogic.Filter(devices, null));
         Replace(_adminServicePrincipals, AdminLogic.Filter(principals, null));
@@ -238,8 +254,22 @@ public partial class MainWindow
 
     private void ApplyAdminAgentFilter()
     {
-        Replace(_adminAgents, AdminLogic.Filter(_adminAgentRows, AdminAgentFilter.Text));
-        AdminAgentsSummary.Text = AdminFlow.AgentsSummary(_adminLegacy, _adminAgents.Count, _adminAgentRows);
+        _adminAgentMatches = AdminLogic.Filter(_adminAgentRows, AdminAgentFilter.Text);
+        AdminAgentsSummary.Text = AdminFlow.AgentsSummary(_adminLegacy, _adminAgentMatches.Count, _adminAgentRows);
+        ShowAdminAgentPage();
+    }
+
+    /// <summary>
+    /// Puts only the first rows on screen. A row is a real control with its buttons, so a bus with
+    /// hundreds of agents made the page slow when every one was built at once. The filter box
+    /// still searches all of them.
+    /// </summary>
+    private void ShowAdminAgentPage()
+    {
+        Replace(_adminAgents, _adminAgentMatches.Take(_adminAgentsShowing));
+        var more = AdminFlow.MoreAgentsLabel(_adminAgents.Count, _adminAgentMatches.Count);
+        AdminAgentsMore.Content = more;
+        AdminAgentsMore.Visibility = VisibleWhen(more is not null);
     }
 
     private static void Replace(ObservableCollection<AdminRow> target, IEnumerable<AdminRow> rows)
