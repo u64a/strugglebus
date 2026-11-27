@@ -56,6 +56,8 @@ $out.engines_block = Get-EnginesBlock $tpl
 $out.engine_added = Set-EngineDefault "host_name = 'a'`n`n[models]`ndefault = 'x'`n`n[remotes]`nallowed = []`n" 'claude' $tpl
 $out.engine_changed = Set-EngineDefault "host_name = 'a'`n`n[engines]`ndefault = `"ghcp`"`n`n[engines.claude]`nexe = `"claude`"`ndefault = `"keep`"`n" 'claude' $tpl
 $out.engine_nodefault = Set-EngineDefault "[engines]`n`n[engines.claude]`nexe = `"c`"`n" 'ghcp' $tpl
+$out.task_line = Set-TaskNameLine $tpl 'StrugglebusWorkerHost-sbworker'
+$out.task_line_missing = Set-TaskNameLine "host_name = 'a'`n`n[models]`ndefault = 'x'`n" 'StrugglebusWorkerHost-sbworker'
 $out.panel = Get-PanelLaunch 'C:\Nowhere\python.exe' 'C:\h\app' 'C:\h'
 $out.panel_lnk = Get-PanelShortcutPath
 $out | ConvertTo-Json -Depth 4
@@ -106,6 +108,16 @@ def test_logon_mode_is_added_to_an_older_config_as_a_top_level_key(ps):
 
     raw = tomllib.loads(ps["logon_missing"])
     assert raw["logon_type"] == "Interactive" and "logon_type" not in raw["models"]
+
+
+def test_a_second_hosts_task_name_goes_into_its_config_at_the_top_level(ps):
+    """The DevBox's sbworker host beside devhost01's: wh start/stop and the status use scheduled_task."""
+    import tomllib
+
+    assert tomllib.loads(ps["task_line_missing"])["scheduled_task"] == "StrugglebusWorkerHost-sbworker"
+    tpl = ps["task_line"].replace("\r\n", "\n")  # the template, placeholders and all: not TOML until filled in
+    assert tpl.count("scheduled_task =") == 1 and '\nscheduled_task = "StrugglebusWorkerHost-sbworker"\n' in tpl
+    assert tpl.index("scheduled_task =") < tpl.index("\n[")  # top level, before the first table
 
 
 def test_agent_prefix_line_replaces_or_adds_a_top_level_key(ps):

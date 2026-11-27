@@ -99,14 +99,17 @@ param(
     [switch]$Uninstall,
     [switch]$Purge,
     [string]$Account = '',
-    [switch]$PasswordStdin
+    [switch]$PasswordStdin,
+    # Another host on this PC keeps the default name (the DevBox's devhost01 host while its sbworker host is set up
+    # beside it): the bootstrap passes a free one, and it goes into the config's scheduled_task.
+    [ValidatePattern('^StrugglebusWorkerHost(-[A-Za-z0-9]{1,20})?$')][string]$TaskName = 'StrugglebusWorkerHost'
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
-$TaskName = 'StrugglebusWorkerHost'
-$ProbeTask = 'StrugglebusWorkerHost-Probe'
+$DefaultTaskName = 'StrugglebusWorkerHost'
+$ProbeTask = "$TaskName-Probe"
 $Source = $PSScriptRoot
 
 # -Account: install for a dedicated local account (the bootstrap's step 6, docs/app-host-integration.md 2.2), not for
@@ -148,6 +151,16 @@ function Set-LogonLine([string]$text, [string]$mode) {
     $pattern = '(?m)^logon_type\s*=\s*"[^"]*"'
     if ([regex]::IsMatch($text, $pattern)) { return [regex]::Replace($text, $pattern, $line) }
     # A top-level key must come before the first [table], or TOML would put it inside that table.
+    $table = [regex]::Match($text, '(?m)^\[')
+    if ($table.Success) { return $text.Insert($table.Index, "$line`n`n") }
+    return $text.TrimEnd() + "`n$line`n"
+}
+
+function Set-TaskNameLine([string]$text, [string]$name) {
+    # Pure: scheduled_task = "<name>" (wh start/stop and the status use it). Only a name the -TaskName pattern allows.
+    $pattern = '(?m)^scheduled_task\s*=\s*"[^"]*"'
+    $line = "scheduled_task = `"$name`""
+    if ([regex]::IsMatch($text, $pattern)) { return [regex]::Replace($text, $pattern, $line) }
     $table = [regex]::Match($text, '(?m)^\[')
     if ($table.Success) { return $text.Insert($table.Index, "$line`n`n") }
     return $text.TrimEnd() + "`n$line`n"
@@ -552,6 +565,7 @@ if (Test-Path $Config) {
     $text = [IO.File]::ReadAllText($Config)
     $updated = Set-CopilotLine (Set-LogonLine $text $Logon) $copilot
     if ($Account) { $updated = Set-DedicatedLine $updated }
+    if ($TaskName -ne $DefaultTaskName -and $useTask) { $updated = Set-TaskNameLine $updated $TaskName }
     if ($AgentPrefix) {
         $updated = Set-AgentPrefixLine $updated $AgentPrefix
     } elseif ($updated -notmatch '(?m)^agent_prefix\s*=') {
@@ -591,6 +605,7 @@ if (Test-Path $Config) {
     $text = Set-LogonLine $text $Logon
     if ($Account) { $text = Set-DedicatedLine $text }
     if (-not $useTask) { $text = $text.Replace('scheduled_task = "StrugglebusWorkerHost"', 'scheduled_task = ""') }
+    elseif ($TaskName -ne $DefaultTaskName) { $text = Set-TaskNameLine $text $TaskName }
     [IO.File]::WriteAllText($Config, $text, $utf8)
     Say ("wrote $Config (host_name=$HostName, logon_type=$Logon, default engine $DefaultEngine, ${ramGb} GB " +
         "installed -> max_workers=$($cap.MaxWorkers), worker_commit_gb=$($cap.WorkerCommitGb)); review it now")

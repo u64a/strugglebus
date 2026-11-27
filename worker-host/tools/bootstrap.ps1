@@ -659,16 +659,43 @@ function Get-PinnedSignersText($signerLines) {
     return (($site + @($ReleaseKeys | ForEach-Object { 'release namespaces="strugglebus-release" ' + $_ })) -join "`n") + "`n"
 }
 
+function Save-IfDifferent([string]$file, [byte[]]$new, [string]$stamp) {
+    # This machine's trust root may already be there (a host installed before, beside the new one: the DevBox): a
+    # different one is kept as <file>.before-<stamp>, with the folder's ACL, and said, never replaced silently
+    # (u64-security, #humans 29129). Returns the copy's path, or $null.
+    if (-not (Test-Path -LiteralPath $file)) { return $null }
+    $old = [IO.File]::ReadAllBytes($file)
+    if ([Linq.Enumerable]::SequenceEqual($old, $new)) { return $null }
+    $copy = "$file.before-$stamp"
+    [IO.File]::WriteAllBytes($copy, $old)
+    Say "KEPT the previous $(Split-Path $file -Leaf) as ${copy}: this machine trusted it before this install"
+    return $copy
+}
+
 function Write-PinnedFiles($data) {
     # Step 5: allowed_signers and the bus CA in the locked-down folder (inherited: Administrators write, Users read).
-    [IO.File]::WriteAllText($PinnedSigners, (Get-PinnedSignersText $data.signers), [Text.Encoding]::ASCII)
-    [IO.File]::WriteAllBytes($PinnedCa, [Convert]::FromBase64String($data.bus_ca_pem))
+    $signers = [Text.Encoding]::ASCII.GetBytes((Get-PinnedSignersText $data.signers))
+    $ca = [Convert]::FromBase64String($data.bus_ca_pem)
+    $stamp = (Get-Date).ToString('yyyyMMdd-HHmmss')
+    $kept = @(Save-IfDifferent $PinnedSigners $signers $stamp) + @(Save-IfDifferent $PinnedCa $ca $stamp) | Where-Object { $_ }
+    [IO.File]::WriteAllBytes($PinnedSigners, $signers)
+    [IO.File]::WriteAllBytes($PinnedCa, $ca)
     $icacls = Join-Path $env:SystemRoot 'System32\icacls.exe'
-    foreach ($f in $PinnedSigners, $PinnedCa) {
+    foreach ($f in @($PinnedSigners, $PinnedCa) + @($kept)) {
         & $icacls $f /reset /Q | Out-Null
         & $icacls $f /setowner '*S-1-5-32-544' /Q | Out-Null
     }
     Say "pinned $(@($data.signers).Count) site key(s) and the 3 release keys in $PinnedSigners"
+}
+
+function Get-HostTaskName([string[]]$existing, [string]$account) {
+    # Pure: the scheduled task's name. The usual one, unless another host on this PC has it (the DevBox's devhost01
+    # host while the sbworker one is set up beside it): then one named for the account, so neither replaces the other.
+    $default = 'StrugglebusWorkerHost'
+    if (@($existing) -notcontains $default) { return $default }
+    $name = "$default-$account"
+    if (@($existing) -contains $name) { throw "a task named $name already exists: remove that host first" }
+    return $name
 }
 
 function Get-SiteText($data) {
@@ -699,9 +726,11 @@ function Invoke-Install([string]$pwsh, [string]$stage, [string]$work, $data, [st
     [IO.File]::WriteAllText($site, (Get-SiteText $data), [Text.Encoding]::ASCII)
     $installer = Join-Path $stage 'install.ps1'
     $psi = New-Object Diagnostics.ProcessStartInfo $pwsh
+    $taskName = Get-HostTaskName @(Get-ScheduledTask -ErrorAction SilentlyContinue | ForEach-Object TaskName) $account
+    if ($taskName -ne 'StrugglebusWorkerHost') { Say "another host on this PC has the usual task name: this one's task is $taskName" }
     $parts = @('-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', $installer, '-Account', $account,
                '-PasswordStdin', '-SiteFile', $site, '-BusCa', $PinnedCa, '-AgentPrefix', $data.host_prefix,
-               '-DefaultEngine', @($data.engines)[0])
+               '-DefaultEngine', @($data.engines)[0], '-TaskName', $taskName)
     $psi.Arguments = ($parts | ForEach-Object { if ($_ -match '[\s"]') { '"' + $_ + '"' } else { $_ } }) -join ' '
     $psi.UseShellExecute = $false
     $psi.RedirectStandardInput = $true
