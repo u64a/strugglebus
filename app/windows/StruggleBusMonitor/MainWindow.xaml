@@ -844,7 +844,7 @@
                             </StackPanel>
                         </Border>
 
-                        <Border x:Name="ThisPcCard" Style="{StaticResource Card}" Visibility="Collapsed">
+                        <Border x:Name="ThisPcCard" Style="{StaticResource Card}" Margin="0,16,0,0" Visibility="Collapsed">
                             <StackPanel>
                                 <TextBlock Text="THIS PC" Style="{StaticResource Label}"/>
                                 <TextBlock x:Name="ThisPcText" FontFamily="{StaticResource Mono}" TextWrapping="Wrap" Margin="0,8,0,0"/>
