@@ -422,7 +422,8 @@ def test_step_11_shows_paths_at_the_console_only_and_gives_the_host_counts():
     step = text.split("function Invoke-IsolationCheck")[1].split("function Remove-DataFileOffer")[0]
     assert "setup\\Get-WorkerIsolationHits.ps1" in step and "-Account $account -Exclude" in step
     record = step.split("$record = ")[1].split("}")[0]
-    assert "exec_hits = $exec.Count" in record and "info_hits = $info.Count" in record
+    assert "exec_hits = $execCount" in record and "info_hits = $info.Count" in record
+    assert "$execCount = -1" in step  # a check that fails counts as weak, never as clean
     assert "$h" not in record and ".Path" not in record and ".Source" not in record  # counts only, never a path
 
 

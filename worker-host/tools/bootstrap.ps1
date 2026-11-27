@@ -695,18 +695,32 @@ function Update-UserRightsInf([string]$inf, [string]$sid, [string[]]$rights) {
     return ($lines -join "`r`n")
 }
 
-function Set-HostLogonRights([string]$sid) {
-    # After the sign-in (step 7): the account may run its scheduled task and nothing else: no sign-in at the PC, no
-    # Remote Desktop, no network logon (SMB, WinRM), no services (u64-security, #humans 28966).
+function Add-UserRights([string]$sid, [string[]]$rights) {
+    # Adds the SID to these user rights (secedit export, Update-UserRightsInf, import); other holders are kept.
     $secedit = Join-Path $env:SystemRoot 'System32\secedit.exe'
-    $infFile = Join-Path $work 'rights.inf'
-    $db = Join-Path $work 'rights.sdb'
+    $tag = [guid]::NewGuid().ToString('n')
+    $infFile = Join-Path $work "rights-$tag.inf"
+    $db = Join-Path $work "rights-$tag.sdb"
     & $secedit /export /cfg $infFile /areas USER_RIGHTS /quiet | Out-Null
     if ($LASTEXITCODE -ne 0) { throw 'could not read the user rights (secedit /export)' }
-    $updated = Update-UserRightsInf ([IO.File]::ReadAllText($infFile)) $sid $DeniedRights
+    $updated = Update-UserRightsInf ([IO.File]::ReadAllText($infFile)) $sid $rights
     [IO.File]::WriteAllText($infFile, $updated, [Text.Encoding]::Unicode)
     & $secedit /configure /db $db /cfg $infFile /areas USER_RIGHTS /quiet | Out-Null
-    if ($LASTEXITCODE -ne 0) { throw 'could not set the logon denials (secedit /configure)' }
+    if ($LASTEXITCODE -ne 0) { throw "could not set $($rights -join ', ') (secedit /configure)" }
+}
+
+function Grant-BatchLogon([string]$sid) {
+    # Step 4: a standard user doesn't hold "log on as a batch job", and registering a task doesn't grant it: without it
+    # the scheduled task's logon is refused (0xC000015B, seen on the test VM). The existing hosts run as administrators,
+    # who hold it already.
+    Add-UserRights $sid @('SeBatchLogonRight')
+    Say "the host's account may log on as a batch job (its scheduled task)"
+}
+
+function Set-HostLogonRights([string]$sid) {
+    # After the sign-in and the enrolment: the account may run its scheduled task and nothing else: no sign-in at the
+    # PC, no Remote Desktop, no network logon (SMB, WinRM), no services (u64-security, #humans 28966).
+    Add-UserRights $sid $DeniedRights
     Say "the host's account is now denied sign-in at the PC, Remote Desktop, network and service logon"
 }
 
@@ -765,11 +779,20 @@ function Invoke-IsolationCheck([string]$stage, [string]$account, [string]$hostHo
     # here only; the host gets the counts (state\isolation.json), which raise its standing "isolation-weak" warning.
     $check = Join-Path $stage 'setup\Get-WorkerIsolationHits.ps1'
     if (-not (Test-Path -LiteralPath $check)) { Say 'this release has no isolation check: skipped'; return }
-    . $check
-    $hits = @(Get-WorkerIsolationHits -Account $account -Exclude @($hostHome, $workersRoot))
-    $exec = @($hits | Where-Object { $_.Severity -eq 'exec' })
-    $info = @($hits | Where-Object { $_.Severity -ne 'exec' })
-    if ($exec.Count) {
+    $execCount = -1; $info = @()
+    try {
+        Set-StrictMode -Off   # this function's scope only: the check is written without strict mode
+        . $check
+        $hits = @(Get-WorkerIsolationHits -Account $account -Exclude @($hostHome, $workersRoot))
+        $exec = @($hits | Where-Object { $_.Severity -eq 'exec' })
+        $info = @($hits | Where-Object { $_.Severity -ne 'exec' })
+        $execCount = $exec.Count
+    } catch {
+        # Unknown is not clean: the host shows isolation-weak (exec_hits -1) until the check is run again.
+        Say "ISOLATION CHECK FAILED ($($_.Exception.Message)): the host will show the isolation-weak warning"
+    }
+    if ($execCount -lt 0) {
+    } elseif ($exec.Count) {
         Say "ISOLATION: $($exec.Count) thing(s) the host's account can change would run as someone else:"
         foreach ($h in $exec) { Say "  [$($h.Kind)] $($h.Source): $($h.Path) ($($h.Why))" }
         Say 'Fix their permissions; until then the host shows the isolation-weak warning.'
@@ -777,7 +800,7 @@ function Invoke-IsolationCheck([string]$stage, [string]$account, [string]$hostHo
         Say 'isolation check: nothing the host''s account can change runs as anyone else'
     }
     if ($info.Count) { Say "  (and $($info.Count) writable top-level folder(s), lower severity)" }
-    $record = [ordered]@{ exec_hits = $exec.Count; info_hits = $info.Count
+    $record = [ordered]@{ exec_hits = $execCount; info_hits = $info.Count
                           checked_at = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ') }
     $state = Join-Path $hostHome 'state'
     New-Item -ItemType Directory -Force -Path $state | Out-Null
@@ -814,6 +837,7 @@ Say "verified host code staged at $($verified.stage)"
 Protect-SbRoot
 $password = New-RandomPassword
 $account = New-HostAccount $SB.host_prefix $password    # step 4
+Grant-BatchLogon $account.SID.Value
 Write-PinnedFiles $SB                                    # step 5
 Invoke-Install $tools.pwsh $verified.stage $work $SB $account.Name $password $tools   # step 6
 $hostHome = Join-Path $SbRoot "host\$($account.Name)"
