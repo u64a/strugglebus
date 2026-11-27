@@ -461,6 +461,24 @@ def test_enrolment_runs_before_the_sign_ins_and_the_denials_always_follow():
     assert "Set-HostLogonRights" in block[1]
 
 
+@pytest.mark.parametrize("shell", SHELLS)
+def test_a_stray_windows_gitconfig_is_refused_before_and_removed_after(shell, tmp_path):
+    stray = tmp_path / ".gitconfig"
+    body = (f"function Say {{ }}; $StrayGitConfig = '{stray}'; $r = @{{}}; "
+            "try { Test-StrayGitConfig; $r.absent = 'ok' } catch { $r.absent = $_.Exception.Message }; "
+            "Set-Content -LiteralPath $StrayGitConfig 'x'; "
+            "try { Test-StrayGitConfig; $r.before = 'ok' } catch { $r.before = 'refused' }; "
+            "Test-StrayGitConfig -Remove; $r.after = (Test-Path -LiteralPath $StrayGitConfig); ConvertTo-Json $r")
+    got = run(body, shell)
+    assert got == {"absent": "ok", "before": "refused", "after": False}
+
+
+def test_the_stray_gitconfig_is_checked_at_the_start_and_after_the_sign_ins():
+    main = SCRIPT.read_text(encoding="ascii").split("InvocationName -eq '.') { return }")[1]
+    assert main.index("Test-StrayGitConfig\n") < main.index("Install-Prereqs")
+    assert main.index("Invoke-SignIn") < main.index("Test-StrayGitConfig -Remove") < main.index("} finally {")
+
+
 def test_still_ascii_and_lf_only():
     raw = SCRIPT.read_bytes()
     assert max(raw) < 128 and b"\r" not in raw

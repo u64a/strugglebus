@@ -892,6 +892,20 @@ function Invoke-IsolationCheck([string]$stage, [string]$account, [string]$hostHo
     [IO.File]::WriteAllText((Join-Path $state 'isolation.json'), ((ConvertTo-Json $record) + "`n"), (New-Object Text.UTF8Encoding($false)))
 }
 
+$StrayGitConfig = Join-Path $env:SystemRoot '.gitconfig'
+
+function Test-StrayGitConfig([switch]$Remove) {
+    # Any git run with no HOME and no profile (SYSTEM, a service, another account's batch job) takes
+    # C:\Windows\.gitconfig as its global config, so a file there quietly steers git for them (u64-security, 29049).
+    # Before the install: refuse (someone else's file; an administrator decides). After the sign-ins: ours, removed.
+    if (-not (Test-Path -LiteralPath $StrayGitConfig)) { Say "checked: no $StrayGitConfig"; return }
+    if (-not $Remove) {
+        throw "$StrayGitConfig exists: git run without a profile (SYSTEM, services) reads it. Look at it, remove it, then run this again."
+    }
+    Remove-Item -LiteralPath $StrayGitConfig -Force
+    Say "removed $StrayGitConfig (left by a sign-in; git without a profile would read it)"
+}
+
 function Show-SignInResult([string]$python, [string]$hostHome, [string]$account, $password) {
     # After the sign-ins, still able to run as the account: its probe, so a skipped or failed sign-in shows now
     # (on the test VM a cancelled Claude sign-in otherwise went unnoticed).
@@ -929,6 +943,7 @@ foreach ($line in $SB.signers) { Say "signer: $(Get-SignerFingerprint $line)" }
 Say 'compare these with what the App shows for this host.'
 if (-not $Yes) { Read-Host '[bootstrap] press Enter to continue, or close this window to stop' | Out-Null }
 $mode = Read-SignInMode $SignIn $Yes                    # asked now, so the rest runs unattended up to the sign-ins
+Test-StrayGitConfig
 
 $work = New-AdminOnlyFolder (Join-Path $env:ProgramData ('strugglebus\bootstrap-' + [guid]::NewGuid().ToString('n')))
 $tools = Install-Prereqs $SB.engines $work              # step 2
@@ -949,6 +964,7 @@ try {
     $enrolled = Invoke-Enrol $tools.python $hostHome $account.Name $password $bytes $DataFile   # step 8
     Invoke-SignIn $account.Name $password $SB.engines $tools $mode               # step 7
     Show-SignInResult $tools.python $hostHome $account.Name $password
+    Test-StrayGitConfig -Remove
 } finally {
     $password = $null
     Set-HostLogonRights $account.SID.Value                                       # step 7's denials
