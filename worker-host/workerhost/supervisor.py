@@ -30,6 +30,7 @@ from typing import Callable
 from . import update as update_mod
 from . import winapi
 from .config import INSTALL_DIR, Config
+from .hostevents import EventLog
 from .logs import HostLog
 from .state import StateStore
 
@@ -79,7 +80,8 @@ class Supervisor:
                  spawn: Callable[[list[str]], Child] = spawn_in_job, sleep: Callable[[float], None] = time.sleep,
                  clock: Callable[[], float] = time.monotonic, app_dir=None):
         self.cfg = cfg
-        self.log = log or HostLog(cfg.logs_dir)
+        # EventLog: a crash restart or a rollback is also queued for the bus's event log (section 1b); the host sends it.
+        self.log = log or EventLog(cfg.logs_dir, cfg.state_dir)
         self.command = command or host_command(cfg)
         self.spawn, self.sleep, self.clock = spawn, sleep, clock
         self.app_dir = app_dir or INSTALL_DIR

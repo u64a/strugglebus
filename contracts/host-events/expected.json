@@ -1,0 +1,29 @@
+{
+ "caller_agent": "host-box1-host",
+ "results": {
+  "batch-good.json": {
+   "status": 201,
+   "reason": null
+  },
+  "batch-unknown-type.json": {
+   "status": 400,
+   "reason": "unknown-type"
+  },
+  "batch-unknown-field.json": {
+   "status": 400,
+   "reason": "unknown-field"
+  },
+  "batch-free-text.json": {
+   "status": 400,
+   "reason": "bad-value"
+  },
+  "batch-wrong-agent.json": {
+   "status": 400,
+   "reason": "wrong-agent"
+  },
+  "batch-21-events.json": {
+   "status": 400,
+   "reason": "too-many-events"
+  }
+ }
+}
