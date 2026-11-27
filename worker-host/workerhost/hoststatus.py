@@ -1,8 +1,14 @@
-"""The host's status for the StruggleBus App's hosts page (docs/app-host-integration.md section 1): one JSON object,
-sent in the heartbeat's metadata as `sb_host_status`, with the readable heartbeat line kept as the message body.
+"""The host's status for the StruggleBus App (docs/app-host-integration.md sections 1 and 1a).
 
-build() is pure: Host gathers the facts (Host.status_facts) and this turns them into the v1 contract. Nothing here is a
-token, credential, path or message text: the App shows it as untrusted plain text.
+v1 (build): one JSON object sent in the heartbeat's metadata as `sb_host_status`, with the readable heartbeat line
+kept as the message body. The heartbeat stays exactly as it is: coordinators read it.
+
+v2 (build_v2): the same object plus what the desktop panel shows, POSTed to the bus's own status API for the App's
+Hosts dashboard (section 1a). for_device() and sample() are what the BUS does with it, written here as the reference the
+contract vectors (contracts/host-status/) are made from.
+
+All pure: Host gathers the facts (Host.status_facts) and this turns them into the contract. Nothing here is a token,
+credential, path or message text: the App shows it as untrusted plain text.
 """
 from __future__ import annotations
 
@@ -32,6 +38,11 @@ PROBLEMS = {  # code -> the one plain sentence the App shows
     "memory-high": "Committed memory is above the safe limit; no new tasks until it drops.",
 }
 WARNINGS = ("not-dedicated", "isolation-weak")
+# v2: how each task this host process has ended so far ended (state.TERMINAL), always all seven, in this order.
+TASK_OUTCOMES = ("finished", "failed", "timed-out", "interrupted", "refused", "yielded", "cancelled")
+# v2 fields the bus returns to an admin (operator grant) only (u64-security, #humans 28828; bus-dev 28832): the
+# Windows account and its weaknesses map the weakest machine, and a host's channel may be private.
+ADMIN_ONLY = (("account",), ("dedicated",), ("warnings",), ("bus", "channel"), ("bus", "channel_state"))
 
 
 @dataclass
@@ -67,6 +78,15 @@ class Facts:
     release_source: str = "fleet"      # update.Where.label(): "fleet", or the release repository#folder
     release_unreachable: bool = False
     release_redirect_refused: bool = False
+    # v2 only (the Hosts dashboard): what the desktop panel shows.
+    running: list[dict] = field(default_factory=list)  # per worker: slot, engine, model, minutes (never a task id)
+    machine: dict = field(default_factory=dict)        # cpu_pct, ram_free_gb, disk_free_gb, commit_pct (None: unmeasured)
+    bus_state: str = "unknown"                         # ok, down, unknown
+    channel: str = ""
+    channel_state: str = "unknown"                     # ok, missing, unknown
+    model: str = ""                                    # the default model
+    ghcp_ok: bool | None = None                        # the last Copilot CLI update worked (None: not tried)
+    tasks: dict = field(default_factory=dict)          # outcome -> count since started_at (TASK_OUTCOMES)
 
 
 def state_of(f: Facts) -> str:
@@ -149,6 +169,51 @@ def build(f: Facts) -> dict:
         "problem": None if problem is None else {"code": problem, "text": PROBLEMS[problem]},
         "warnings": warnings_of(f),
     }
+
+
+MACHINE = ("cpu_pct", "ram_free_gb", "disk_free_gb", "commit_pct")
+
+
+def build_v2(f: Facts) -> dict:
+    """The v2 snapshot for the bus's status API (section 1a): v1, plus worker rows, machine, bus and task totals."""
+    s = build(f)
+    s["v"] = 2
+    s["workers"]["running"] = [{"slot": str(r.get("slot", "?")), "engine": str(r.get("engine", "?")),
+                                "model": str(r.get("model", "?")), "minutes": int(r.get("minutes", 0))}
+                               for r in f.running]
+    s["machine"] = {k: (None if f.machine.get(k) is None else round(float(f.machine[k]), 1)) for k in MACHINE}
+    s["bus"] = {"state": f.bus_state, "channel": f.channel, "channel_state": f.channel_state}
+    s["model"] = f.model
+    s["ghcp_ok"] = f.ghcp_ok
+    s["tasks"] = {k: int(f.tasks.get(k, 0)) for k in TASK_OUTCOMES}
+    return s
+
+
+def for_device(snapshot: dict) -> dict:
+    """What the bus returns to a signed-in App device without the operator grant: the snapshot less ADMIN_ONLY."""
+    out = json.loads(json.dumps(snapshot))
+    for path in ADMIN_ONLY:
+        parent = out
+        for key in path[:-1]:
+            parent = parent.get(key) or {}
+        parent.pop(path[-1], None)
+    return out
+
+
+def sample(snapshot: dict, received_at: str) -> dict:
+    """One point of the bus's 12-hour history (bus-dev, 28832): only the figures a chart needs, about 200 bytes.
+    received_at is the bus's own clock, never the host's."""
+    return {"received_at": received_at, "state": snapshot["state"],
+            "workers": {"busy": snapshot["workers"]["busy"], "max": snapshot["workers"]["max"]},
+            "machine": dict(snapshot["machine"]), "outbox": snapshot["outbox"],
+            "held_clones": snapshot["held_clones"], "tasks": dict(snapshot["tasks"])}
+
+
+def body(snapshot: dict) -> dict:
+    """The POST body, refused (ValueError) past 16 KB, the bus's cap."""
+    if len(json.dumps(snapshot, separators=(",", ":")).encode()) > MAX_BYTES:
+        raise ValueError("status snapshot over 16 KB")
+    return snapshot
 
 
 def metadata(status: dict) -> dict:

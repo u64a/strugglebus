@@ -12,7 +12,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 LOCAL = ROOT / "tests" / "data" / "vectors"
 CONTRACTS = ROOT.parent / "contracts"
-NAMES = ("host-command", "fleet", "host-enrol")
+NAMES = ("host-command", "fleet", "host-enrol", "host-status")
 
 PINNED = {
     "fleet/allowed_signers": "ce7633fea544aca440d9e3bf8f8e59bacbfc67f3883109af2f9883e4e18a6e84",
@@ -48,6 +48,9 @@ PINNED = {
     "host-command/cmd-update.json.sig": "2632b35e593ae3c7ed4e410f2bbc2312bc78e2764f98f444f5de5ded693f33a0",
     "host-command/expected.json": "b785b0887fe90390d2795d611a884dc1748ddb681c91a002b30d18b571761920",
     "host-enrol/sbhost-enrol.json": "42d75e14b586793374addfa1e22f1627bb887fea0eb88af7f16fdb06d61e9782",
+    "host-status/sample-v2.json": "f0377cc9142d2c9a2382d18ae9d9c5eaeb2d89a5815077964f45b238fa1e3ca3",
+    "host-status/snapshot-v2-device.json": "aadb5bca41c1dac6c7538a8aefe3f99951928be07016360f9965d5b49ce93d4a",
+    "host-status/snapshot-v2.json": "07261a78e8724a173d0d9482db4ed109711dd29a8d012e15ffd134220036f2fb",
 }
 
 

@@ -89,6 +89,80 @@ that cannot reach the bus shows as not alive, which is correct from the App's si
 
 ---
 
+## 1a. The Hosts dashboard: status pushed to the bus (v2)
+
+Agreed on #humans, 27 Nov 2026: Chris's decisions; the design (28827); u64-security's review (28828); bus-dev's
+changes (28832). The App gets a top-level **Hosts** page (beside Monitor, Humans and Admin). It's a dashboard of what
+each host is doing, as the desktop panel shows it, with 12 hours of history for performance reporting. Admin, Worker
+hosts stays for admin work.
+
+**The heartbeat in section 1 does not change.** The heartbeat message, its body and its v1 metadata stay exactly as
+they are: coordinators read them to decide whether to send work. This API is an addition, for humans.
+
+### The calls
+
+| Who | Call | Notes |
+|---|---|---|
+| The host | `POST /api/hosts/status`, body: the v2 snapshot | As **its own bus identity**. At most 16 KB, at most one push per 10 s |
+| The App, any enrolled device | `GET /api/mobile/hosts/status` | The latest snapshot of every host, filtered as below, each with the bus's `received_at` |
+| The App, any enrolled device | `GET /api/mobile/hosts/{agent_id}/status/history?since=` | Up to 12 hours of **samples** (below), not whole snapshots |
+
+**The bus (bus-dev, bus 0.2.73, schema 25):**
+- **Which host a row belongs to comes from the authenticated agent, never from the body.** The `host` and `agent` in
+  the body are display data.
+- **Only an agent with the bus's own host flag may write.** It's set by a host enrolment code (0.2.72), and for hosts
+  enrolled before that, by a one-off admin action in the App (operator device plus Hello, audit-logged, with a
+  matching "no longer a host"). The `host-*` name prefix never counts. A push from any other agent is refused (403).
+- **The bus stamps `received_at`,** and liveness (online, stale, offline) comes from it, never from the host's clock.
+- **Storage:** the latest snapshot whole, and every push kept for 12 hours, older ones deleted.
+- **Checks:** the schema, string lengths, 16 KB, and one push per 10 s (429).
+- **Audit:** every write gets an audit line with the agent, the outcome and the size.
+
+**Who sees what.** The bus filters when it reads; the host always sends everything:
+- **Admin only** (a request carrying the operator grant): `account`, `dedicated`, `warnings`, `bus.channel` and
+  `bus.channel_state`. Together the first three map the weakest machine. A host's channel may be private, and a
+  device has no per-channel visibility yet.
+- **Every enrolled device:** everything else, coordinator names included.
+- **Never in it at all:** task ids (they can reveal tasks on channels the reader can't see), file paths, repository
+  or clone names, task or message text, tokens.
+
+### The snapshot (v2)
+
+v2 is the whole v1 object (section 1), with `v: 2` and these additions:
+
+| Field | Type | Meaning |
+|---|---|---|
+| `workers.running` | list | One entry per running worker: `slot` (the worker's name on the host), `engine` (`ghcp`/`claude`), `model`, `minutes` running. `workers.busy`, `max` and `claiming` are as in v1 |
+| `machine` | obj | `cpu_pct`, `ram_free_gb`, `disk_free_gb`, `commit_pct`: one decimal, `null` while not yet measured |
+| `bus` | obj | `state` (`ok`, `down`, `unknown`), `channel`, `channel_state` (`ok`, `missing`, `unknown`) |
+| `model` | str | The default model |
+| `ghcp_ok` | bool or null | Whether the last Copilot CLI update worked (`null`: none tried) |
+| `tasks` | obj | How this host process's tasks have ended since `started_at`: `finished`, `failed`, `timed-out`, `interrupted`, `refused`, `yielded`, `cancelled`, always all seven. Running totals: a chart takes the differences, and a new `started_at` means they started again |
+
+**A history sample** is what the history call returns per push, about 200 bytes: `received_at`, `state`,
+`workers` (`busy`, `max`), `machine`, `outbox`, `held_clones`, `tasks`.
+
+### The host
+
+- **When:** every 60 s, and at once on a change of anything in section 1's change key, at most every 10 s.
+- **When the bus refuses:** a 404 (an older bus), a 403 (not marked as a host yet) or any other refusal is logged
+  once (`status-push-refused`) and retried hourly. So a host can be updated before its bus, and starts feeding the
+  dashboard the moment the bus accepts it (`status-push-ok`).
+- **Otherwise:** a 429 waits a minute; an unreachable bus waits for the next push.
+- **The code:** `hoststatus.build_v2()`. `hoststatus.for_device()` and `hoststatus.sample()` are the reference for
+  the bus's filter and history.
+
+### Vectors (`contracts/host-status/`)
+
+One busy host with two workers, a warning and an announced update:
+- `snapshot-v2.json`: what the host POSTs;
+- `snapshot-v2-device.json`: what a device without the operator grant gets for it;
+- `sample-v2.json`: its history sample, with `received_at` `2026-11-27T04:00:00Z`.
+
+The host's tests check that its code makes exactly these. The bus builds against the same files.
+
+---
+
 ## 2. Add a host (stage B)
 
 ### 2.1 What the App hands over: fixed code, separate data
