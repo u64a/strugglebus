@@ -161,6 +161,42 @@ public partial class MainWindow
         }
     }
 
+    /// <summary>The agents the bus has marked as worker hosts, or null from a bus too old to mark any.</summary>
+    private async Task<HashSet<string>?> MarkedHostsAsync()
+    {
+        try
+        {
+            var status = await _api.GetHostsStatusAsync(whole: false, CancellationToken.None);
+            return status.Hosts.Select(host => host.AgentId).ToHashSet(StringComparer.Ordinal);
+        }
+        catch (BusApiException error) when (AdminFlow.IsLegacyBus(error))
+        {
+            return null;
+        }
+    }
+
+    internal async void HostMark_Click(object sender, RoutedEventArgs e)
+    {
+        if ((sender as FrameworkElement)?.Tag is HostRow row) await RunBusy(() => MarkHostAsync(row), sender);
+    }
+
+    /// <summary>
+    /// Marks an agent as a worker host or takes the mark away: the operator grant first, then the
+    /// review dialog, then Windows Hello, and only then the request.
+    /// </summary>
+    private async Task MarkHostAsync(HostRow row)
+    {
+        var mark = row.Marked != true;
+        if (!_api.HasOperatorGrant()) throw new InvalidOperationException(AdminFlow.GrantNeeded);
+        if (!_platform.Confirm(this, HostsPageLogic.MarkReview(row.AgentName, mark), "Review operator action")) return;
+        await RequireHelloAsync(HostsPageLogic.MarkHelloPrompt(row.AgentName, mark));
+
+        var result = await _api.MarkHostAsync(row.AgentId, row.AgentName, mark, HostsPageLogic.MarkReason(mark), CancellationToken.None);
+        ShowAdminResult(AdminFlow.ControlResultText(result));
+        _hostsLoadedAt = null;
+        await LoadHostsAsync();
+    }
+
     /// <summary>
     /// Worker hosts are the agents named "...-host". Whether each answers comes from the bus's own
     /// last-seen time; the rest comes from the newest status that host posted about itself.
@@ -170,12 +206,13 @@ public partial class MainWindow
         if (_api.Session is null) return;
         var agents = await _api.GetAgentsAsync(CancellationToken.None);
         var principals = await HostPrincipalsAsync();
+        var marked = await MarkedHostsAsync();
         var now = DateTimeOffset.Now;
         var rows = new List<HostRow>();
         foreach (var agent in HostsLogic.HostAgents(agents))
         {
             var recent = await _api.GetHistoryAsync(null, agent.Name, null, HostsLogic.StatusLookback, CancellationToken.None);
-            rows.Add(HostsLogic.Row(agent, HostsLogic.Latest(recent, agent.Name), now, HostsLogic.PrincipalFor(agent, principals)));
+            rows.Add(HostsLogic.Row(agent, HostsLogic.Latest(recent, agent.Name), now, HostsLogic.PrincipalFor(agent, principals), marked?.Contains(agent.Id)));
         }
         _adminHostsLoaded = true;
         _adminHosts.Clear();

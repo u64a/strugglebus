@@ -369,6 +369,34 @@ public sealed class BusApi
         new(entry.Ts, entry.Source ?? string.Empty, entry.Level ?? "info", entry.Event ?? string.Empty,
             entry.Subject, entry.Actor, entry.Status, entry.RemoteAddress, entry.Detail ?? string.Empty);
 
+    /// <summary>
+    /// The same log with what worker hosts reported about themselves and the bus's security events
+    /// added. Only an administrator gets those, so this sends the operator grant. Needs StruggleBus 0.2.74.
+    /// </summary>
+    public async Task<BusLog> GetFullBusLogAsync(int limit, CancellationToken cancellationToken) =>
+        MapBusLog(await PostAsync<BusLogResponse>("api/mobile/admin/logs/full", new { grant_secret = RequireGrant(), limit }, cancellationToken));
+
+    /// <summary>
+    /// What every marked worker host last reported. With the operator grant the bus sends each
+    /// snapshot whole; without it, the account, warnings and channel are left out. Needs StruggleBus 0.2.74.
+    /// </summary>
+    public async Task<HostsStatus> GetHostsStatusAsync(bool whole, CancellationToken cancellationToken) =>
+        HostsParser.Status(whole
+            ? await PostAsync<JsonElement>("api/mobile/admin/hosts/status", new { grant_secret = RequireGrant() }, cancellationToken)
+            : await GetAsync<JsonElement>("api/mobile/hosts/status", cancellationToken));
+
+    /// <summary>Up to twelve hours of one host's samples, oldest first.</summary>
+    public async Task<IReadOnlyList<HostSample>> GetHostHistoryAsync(string agentId, CancellationToken cancellationToken) =>
+        HostsParser.History(await GetAsync<JsonElement>($"api/mobile/hosts/{Uri.EscapeDataString(agentId)}/status/history", cancellationToken));
+
+    /// <summary>Marks the agent as a worker host, or takes the mark away, exactly as it was listed.</summary>
+    public async Task<ControlResult> MarkHostAsync(string agentId, string expectedName, bool mark, string reason, CancellationToken cancellationToken)
+    {
+        var value = await PostAsync<ControlResponse>($"api/mobile/admin/agents/{Uri.EscapeDataString(agentId)}/host",
+            new { request_id = Guid.NewGuid().ToString("D"), action = mark ? "mark" : "unmark", expected_name = expectedName, reason, grant_secret = RequireGrant() }, cancellationToken);
+        return MapControl(value);
+    }
+
     /// <summary>Blocks, unblocks or retires the agent exactly as it was listed; a changed agent is refused.</summary>
     public async Task<ControlResult> ControlAgentAsync(string agentId, string expectedName, int expectedEpoch, string action, string reason, CancellationToken cancellationToken)
     {
