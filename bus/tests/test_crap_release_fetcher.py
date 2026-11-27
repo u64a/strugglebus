@@ -13,6 +13,9 @@ import pytest
 
 from test_selfhost_updates import KIT, _ReleasePage, fetch_release
 
+# What the fetcher reads before it downloads any file: the release page, then the signed tag.
+SIGNED_RELEASE_READS = ["/latest", "/latest/git/ref/tags/v0.3.0", "/latest/git/tags/" + "a" * 40]
+
 WHEEL = "strugglebus-0.3.0-py3-none-any.whl"
 
 
@@ -97,7 +100,8 @@ def test_release_missing_a_needed_file_downloads_nothing(page, tmp_path, missing
     assert problem.code == fetch_release.INVALID
     assert str(problem) == f"release v0.3.0 has no usable {missing}"
     assert not into.exists()
-    assert page.requested == ["/latest"]
+    # The release page and its signed tag were read; no file was downloaded.
+    assert page.requested == SIGNED_RELEASE_READS
 
 
 def test_existing_destination_is_never_reused(page, tmp_path):
@@ -108,7 +112,7 @@ def test_existing_destination_is_never_reused(page, tmp_path):
         page.fetch("0.2.67", into)
 
     assert list(into.iterdir()) == []
-    assert page.requested == ["/latest"]
+    assert page.requested == SIGNED_RELEASE_READS
 
 
 def test_wheel_that_does_not_match_its_checksum_is_refused(page, tmp_path):
@@ -242,11 +246,15 @@ def test_script_runs_standalone_with_only_the_standard_library(page, tmp_path):
     assert (current.returncode, current.stdout, current.stderr) == (0, "current 0.3.0\n", "")
     assert not into.exists()
 
-    ready = run_script("--installed", "0.2.67", "--into", str(into), *served)
-    assert (ready.returncode, ready.stdout, ready.stderr) == (0, "ready 0.3.0\n", "")
-    assert sorted(item.name for item in into.iterdir()) == [
-        "SHA256SUMS", "_wheel", "requirements.lock", WHEEL,
-    ]
+    # Run this way the script trusts only the owner's real keys, as an installed copy does. The
+    # page's release is signed with the test key, so it is refused and nothing is downloaded.
+    # That the refusal is the signature's shows the whole check runs on the standard library.
+    refused = run_script("--installed", "0.2.67", "--into", str(into), *served)
+    assert (refused.returncode, refused.stdout) == (fetch_release.INVALID, "")
+    assert refused.stderr == (
+        "fetch_release: the release's signature is not valid, or is not by a release key\n"
+    )
+    assert not into.exists()
 
 
 def test_script_exit_codes_for_invalid_and_unreachable_releases(page, tmp_path):
@@ -261,7 +269,9 @@ def test_script_exit_codes_for_invalid_and_unreachable_releases(page, tmp_path):
         "--api", "http://127.0.0.1:9/latest",
     )
 
+    # Run as a script it trusts only the owner's real keys, so the test page's release is
+    # refused at the signature, before the spoiled file is even downloaded.
     assert invalid.returncode == 4 and invalid.stdout == ""
-    assert invalid.stderr.startswith("fetch_release: requirements.lock does not match")
+    assert invalid.stderr.startswith("fetch_release: the release's signature is not valid")
     assert unreachable.returncode == 3 and unreachable.stdout == ""
     assert unreachable.stderr.startswith("fetch_release: could not download ")

@@ -4,3 +4,5 @@
 *.sh text eol=lf
 src/strugglebus/selfhost/** text eol=lf
 src/strugglebus/operator.css -text
+# Test vectors and signed fixtures are compared byte for byte.
+tests/data/** -text

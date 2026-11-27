@@ -9,6 +9,8 @@ from pathlib import Path
 from typing import Any, Callable, Iterator
 
 from release_fixtures import build_pre_tag_bundle, load_script
+from release_signing import TEST_KEY
+from strugglebus import release_signature
 
 
 PUBLISHER = load_script("publish_public_release")
@@ -308,6 +310,30 @@ def bundle(tmp_path: Path) -> tuple[Path, str, str, str]:
     return build_pre_tag_bundle(tmp_path)
 
 
+# The publisher refuses a release whose statement is not signed by a pinned release key. Tests
+# cannot touch the owner's hardware keys, so here it trusts the stand-in key instead.
+PUBLISHER.signer_of = lambda signature, statement: release_signature.signer_of(  # noqa: E731
+    signature, statement, keys=(TEST_KEY.blob,),
+)
+
+
+def signature_for(directory: Path, *, commit: str, tree: str, tag: str) -> str:
+    """The owner's signature of the statement for this bundle, made with the stand-in key."""
+    assets = PUBLISHER._local_assets(directory, tag, commit, tree)
+    statement = release_signature.release_statement(
+        tag.removeprefix("v"), {name: asset.digest for name, asset in assets.items()},
+    )
+    return TEST_KEY.sign(statement.encode())
+
+
+def signed_for(directory: Path, *, commit: str, tree: str, tag: str) -> str:
+    """The statement and signature as the tag carries them."""
+    return PUBLISHER.signed_statement(
+        tag, PUBLISHER._local_assets(directory, tag, commit, tree),
+        signature_for(directory, commit=commit, tree=tree, tag=tag),
+    )
+
+
 def invoke(
     api: FakePublicReleaseAPI,
     store: MemoryReceiptStore,
@@ -328,5 +354,6 @@ def invoke(
         public_anchor_commit=ANCHOR,
         approval=PUBLISHER.approval_phrase(tag, commit),
         resume=resume,
+        signature=signature_for(directory, commit=commit, tree=tree, tag=tag),
         now=lambda: 1_700_000_000,
     )

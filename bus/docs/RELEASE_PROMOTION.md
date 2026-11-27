@@ -215,8 +215,22 @@ first attempt. Create the receipt directory on native Linux storage with mode
 contain exactly the five checksum-verified assets from the immutable private
 release.
 
+The owner signs a statement of the five files first, with a hardware release key. Installed
+buses refuse a release without that signature, and the publisher refuses to publish one. See
+[RELEASE_SIGNING.md](RELEASE_SIGNING.md).
+
 ```sh
 TAG=vX.Y.Z
+python scripts/release_statement.py "$BUNDLE_DIR" --tag "$TAG" --output release-statement.txt
+```
+
+Then, in PowerShell on Windows, where the hardware key is plugged in (PIN and touch):
+
+```
+ssh-keygen -Y sign -f <release key> -n strugglebus-bus-release release-statement.txt
+```
+
+```sh
 SOURCE_COMMIT=<40-character private source commit>
 SOURCE_TREE=<40-character private source tree>
 PUBLIC_ANCHOR="$(gh api repos/NZCypher819/strugglebus-releases/branches/main --jq .commit.sha)"
@@ -229,7 +243,8 @@ python scripts/publish_public_release.py "$BUNDLE_DIR" \
   --public-anchor-commit "$PUBLIC_ANCHOR" \
   --approval "$APPROVAL" \
   --receipt "$HOME/strugglebus-public-promotion/${TAG}.json" \
-  --gh "$(command -v gh)"
+  --gh "$(command -v gh)" \
+  --signature release-statement.txt.sig
 ```
 
 The publisher revalidates the private annotated tag, immutable private release,

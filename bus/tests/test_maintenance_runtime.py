@@ -646,9 +646,10 @@ def test_installer_bundle_validation_allows_one_reviewed_forward_migration(monke
 
     def validate(directory, **kwargs):
         calls.append(kwargs)
-        return {"package_version": "0.2.50"}
+        return {"package_version": "0.2.50", "release_assets": [{"name": "a", "sha256": "0" * 64}]}
 
     monkeypatch.setattr(runtime_module, "validate_bundle", validate)
+    monkeypatch.setattr(HostReleaseInstaller, "_signed_digests", lambda self, release: {"a": "0" * 64})
     installer = HostReleaseInstaller(config_from_json(configuration()))
     installer._validate_bundle(PreparedRelease("0.2.50", Path("/prepared")))
     assert calls[0]["expected_current_schema"] == runtime_module.LATEST_SCHEMA_VERSION

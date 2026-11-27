@@ -22,6 +22,8 @@ from test_operator_dashboard import csrf, login, verifier  # noqa: F401 - fixtur
 KIT = Path(__file__).resolve().parents[1] / "src" / "strugglebus" / "selfhost"
 ORIGIN = {"Origin": "https://bus.lan"}
 
+from release_signing import TEST_KEY, statement_for  # noqa: E402
+
 _spec = importlib.util.spec_from_file_location("fetch_release", KIT / "fetch_release.py")
 fetch_release = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(fetch_release)
@@ -32,6 +34,9 @@ class _ReleasePage:
 
     def __init__(self, folder: Path, version: str) -> None:
         self.version = version
+        self.signed_message: str | None = None
+        # The copy of the fetcher these tests load trusts the test key, not the owner's.
+        fetch_release.RELEASE_KEYS = (TEST_KEY.blob,)
         self.files: dict[str, bytes] = {}
         self.requested: list[str] = []
         wheel = folder / f"strugglebus-{version}-py3-none-any.whl"
@@ -58,6 +63,10 @@ class _ReleasePage:
                             for name in page.files
                         ],
                     }).encode()
+                elif self.path == f"/latest/git/ref/tags/v{page.version}":
+                    body = json.dumps({"object": {"type": "tag", "sha": "a" * 40}}).encode()
+                elif self.path == "/latest/git/tags/" + "a" * 40:
+                    body = json.dumps({"tag": "v" + page.version, "message": page.tag_message()}).encode()
                 elif self.path.startswith("/files/") and self.path[7:] in page.files:
                     body = page.files[self.path[7:]]
                 else:
@@ -74,6 +83,16 @@ class _ReleasePage:
         self.server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
         self.base = f"http://127.0.0.1:{self.server.server_address[1]}"
         threading.Thread(target=self.server.serve_forever, daemon=True).start()
+
+    def tag_message(self) -> str:
+        """
+        The publisher's signed statement. Unless a test fixes it, it is signed afresh for
+        whatever the page serves now, so a test that spoils a file is testing the check it
+        means to and not the signature in front of it.
+        """
+        if self.signed_message is not None:
+            return self.signed_message
+        return TEST_KEY.tag_message(statement_for(self.version, self.files))
 
     def fetch(self, installed: str, into: Path) -> tuple[str, str]:
         return fetch_release.fetch(
@@ -146,7 +165,8 @@ def test_fetcher_refuses_downloads_from_outside_the_release_page(
             download_prefix=fetch_release.DOWNLOAD_PREFIX,
         )
     assert raised.value.code == fetch_release.INVALID
-    assert page.requested == ["/latest"]
+    # The release page and its signed tag were read; no file was downloaded.
+    assert page.requested == ["/latest", "/latest/git/ref/tags/v0.3.0", "/latest/git/tags/" + "a" * 40]
 
 
 def test_fetcher_reports_an_unreachable_page_and_a_bad_installed_version(tmp_path: Path, capsys):

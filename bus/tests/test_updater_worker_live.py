@@ -312,8 +312,10 @@ def _verify_durable_result(cache_path, operation_id, result, prior, failed):
         slot = cache.slot_path(prepared.operation_id)
         cache.validate_slot(prepared.operation_id, prepared.candidate)
         update_source.verify_prepared(prepared.candidate, slot, LIMITS)
-        assert {path.name for path in slot.iterdir()} == {a.name for a in prepared.candidate.assets}
-        assert len(list(slot.iterdir())) == 5
+        assert {path.name for path in slot.iterdir()} == (
+            {a.name for a in prepared.candidate.assets} | {"release-statement.txt"}
+        )
+        assert len(list(slot.iterdir())) == 6
         assert {p.name for p in cache_path.iterdir()} == {
             update_storage.JOURNAL, update_storage.LOCK, slot.name,
         }

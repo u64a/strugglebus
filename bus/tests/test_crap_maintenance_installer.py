@@ -116,6 +116,7 @@ def test_bundle_for_another_version_is_a_preparation_failure(installer, monkeypa
         return {"package_version": "0.2.51"}
 
     monkeypatch.setattr(runtime, "validate_bundle", validate)
+    monkeypatch.setattr(runtime.HostReleaseInstaller, "_signed_digests", lambda self, release: {})
     with pytest.raises(MaintenanceError) as caught:
         installer._validate_bundle(PreparedRelease(VERSION, Path("/prepared")))
     assert caught.value.code == "preparation_failed"

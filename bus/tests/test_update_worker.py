@@ -678,6 +678,9 @@ def secure_cache(monkeypatch, *, umask=0o022):
     return cache, files
 
 
+STATEMENT = "release-statement.txt"
+
+
 @pytest.mark.parametrize("umask", [0o000, 0o002, 0o022])
 def test_files_explicit_modes_durable_publication_under_umasks(monkeypatch, umask):
     cache, files = secure_cache(monkeypatch, umask=umask)
@@ -692,6 +695,7 @@ def test_files_explicit_modes_durable_publication_under_umasks(monkeypatch, umas
     value = replace(value, assets=tuple(replace(a, sha256=hashlib.sha256(b"x").hexdigest())
                                         for a in value.assets))
     node.children.update({a.name: files.node(data=b"x") for a in value.assets})
+    node.children[STATEMENT] = files.node(data=b"signed")
     cache.validate_slot(identity, value)
     cache.validate_inventory((identity,))
     cache.retire_slot(identity)
@@ -804,8 +808,15 @@ def test_prepared_hashes_sizes_exact_files_and_no_extra_copy(monkeypatch):
     with pytest.raises(UpdateError, match="verification_failed"):
         cache.validate_slot(identity, value)
     slot.children[value.assets[0].name].data = b"x"
+    # Every file is right, but the publisher's signed statement is not beside them.
+    with pytest.raises(UpdateError, match="verification_failed"):
+        cache.validate_slot(identity, value)
+    slot.children[STATEMENT] = files.node(data=b"signed")
     cache.validate_slot(identity, value)
-    assert len(slot.children) == 5
+    assert len(slot.children) == 6
+    slot.children["extra"] = files.node(data=b"x")
+    with pytest.raises(UpdateError, match="verification_failed"):
+        cache.validate_slot(identity, value)
     cache.close()
 
 
@@ -892,7 +903,7 @@ def test_artifact_aggregate_and_entry_count_bounded(monkeypatch):
     cache, files = secure_cache(monkeypatch)
     path = cache.create_slot("3" * 32)
     slot = files.root.children[path.name]
-    slot.children.update({str(index): files.node() for index in range(6)})
+    slot.children.update({str(index): files.node() for index in range(7)})
     with pytest.raises(UpdateError, match="storage_unsafe"):
         cache.create_slot("4" * 32)
     with pytest.raises(UpdateError, match="storage_unsafe"):

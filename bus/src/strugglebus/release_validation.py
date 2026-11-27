@@ -92,6 +92,12 @@ MAX_MANIFEST_BYTES = 256 * 1024
 
 MAX_CHECKSUMS_BYTES = 16 * 1024
 
+# The publisher's signed statement, as an installed updater saves it beside the release's files.
+# It is not a release asset: it comes from the release's tag, and it is what the assets are
+# checked against. See release_signature.py.
+STATEMENT_NAME = "release-statement.txt"
+MAX_STATEMENT_BYTES = 8 * 1024
+
 
 MAX_LOCK_BYTES = 10 * 1024 * 1024
 
@@ -459,6 +465,7 @@ def validate_bundle(
     required_capability: str = f"agent-access-freeze:{ACCESS_FREEZE_CAPABILITY}",
     minimum_package_version: str | None = None,
     accept_newer_schema: bool = False,
+    statement_beside: bool = False,
 ) -> dict[str, Any]:
     directory = _canonical_directory(directory)
     manifest_path = directory / MANIFEST_NAME
@@ -486,7 +493,9 @@ def validate_bundle(
 
     _validate_support(deployment_support, directory, support_name)
 
-    expected_release_assets = _validate_release_files(consumption, expected_payloads, directory)
+    expected_release_assets = _validate_release_files(
+        consumption, expected_payloads, directory, statement_beside,
+    )
 
     release_asset_facts = _release_asset_facts(expected_release_assets, directory)
 
@@ -822,8 +831,15 @@ def _validate_support(deployment_support: dict[str, Any], directory: Path, suppo
 
 
 
+def _names_beside(directory: Path, statement_beside: bool) -> set[str]:
+    """What is in the release's folder, leaving out the signed statement where one is expected."""
+    names = {entry.name for entry in directory.iterdir() if entry.name not in {".", ".."}}
+    return names - {STATEMENT_NAME} if statement_beside else names
+
+
 def _validate_release_files(
     consumption: dict[str, Any], expected_payloads: set[str], directory: Path,
+    statement_beside: bool = False,
 ) -> list[str]:
     release_assets = consumption["release_assets"]
     expected_release_assets = sorted(
@@ -831,11 +847,7 @@ def _validate_release_files(
     )
     if release_assets != expected_release_assets:
         raise ReleaseBundleError("release asset allowlist is inconsistent")
-    actual_names = {
-        entry.name
-        for entry in directory.iterdir()
-        if entry.name not in {".", ".."}
-    }
+    actual_names = _names_beside(directory, statement_beside)
     if actual_names != set(expected_release_assets):
         raise ReleaseBundleError("release directory has missing or unexpected assets")
     for name in actual_names:
