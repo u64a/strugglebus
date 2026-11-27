@@ -160,7 +160,14 @@
                                 <ListBox x:Name="ActivityList" ItemContainerStyle="{StaticResource FeedItem}" ScrollViewer.CanContentScroll="False" ScrollViewer.ScrollChanged="ActivityList_ScrollChanged" MouseDoubleClick="ActivityList_MouseDoubleClick">
                                     <ListBox.ItemTemplate>
                                         <DataTemplate>
-                                            <Grid Margin="16,11">
+                                            <Grid Margin="16,11" Background="Transparent">
+                                                <Grid.ContextMenu>
+                                                    <ContextMenu Style="{StaticResource Menu}">
+                                                        <MenuItem Header="Reply in Humans" Tag="{Binding}" Style="{StaticResource MenuRow}" Click="ReplyToMessage_Click"/>
+                                                        <MenuItem Header="Quote in Humans" Tag="{Binding}" Style="{StaticResource MenuRow}" Click="QuoteMessage_Click"/>
+                                                        <MenuItem Header="Copy" Tag="{Binding}" Style="{StaticResource MenuRow}" Click="CopyMessage_Click"/>
+                                                    </ContextMenu>
+                                                </Grid.ContextMenu>
                                                 <Grid.ColumnDefinitions>
                                                     <ColumnDefinition Width="112"/>
                                                     <ColumnDefinition Width="*"/>

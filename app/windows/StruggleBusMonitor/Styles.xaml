@@ -9,6 +9,40 @@
     <FontFamily x:Key="Mono">Cascadia Code, Cascadia Mono, Consolas</FontFamily>
     <BooleanToVisibilityConverter x:Key="BoolToVisibility"/>
 
+    <!-- A right-click menu in the app's own colours. The system's would be light on a dark theme. -->
+    <Style x:Key="Menu" TargetType="ContextMenu">
+        <Setter Property="Background" Value="{DynamicResource S1}"/>
+        <Setter Property="BorderBrush" Value="{DynamicResource Line}"/>
+        <Setter Property="BorderThickness" Value="1"/>
+        <Setter Property="Padding" Value="0,4"/>
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="ContextMenu">
+                    <Border Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}" CornerRadius="6" Padding="{TemplateBinding Padding}">
+                        <StackPanel IsItemsHost="True"/>
+                    </Border>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+    <Style x:Key="MenuRow" TargetType="MenuItem">
+        <Setter Property="Foreground" Value="{DynamicResource Fg}"/>
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="MenuItem">
+                    <Border x:Name="Row" Background="Transparent" Padding="14,7">
+                        <ContentPresenter ContentSource="Header" RecognizesAccessKey="False"/>
+                    </Border>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsHighlighted" Value="True">
+                            <Setter TargetName="Row" Property="Background" Value="{DynamicResource S2}"/>
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
     <Geometry x:Key="IconMonitor">M3,12 h4 l3,-8 l4,16 l3,-8 h4</Geometry>
     <Geometry x:Key="IconHumans">M4,5 h16 v11 h-11 l-5,4 z</Geometry>
     <Geometry x:Key="IconHosts">M4,5 h16 v6 h-16 z M4,13 h16 v6 h-16 z M7,8 h2 M7,16 h2</Geometry>
