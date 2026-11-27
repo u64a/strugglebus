@@ -441,7 +441,9 @@ The installed files are the ones `install.ps1` copies: `wh.py`, `config.template
    writes `release.toml` with serial + 1. The version is the commit date, `YYYY.MM.DD` (`.2` for a second release
    that day). The notes are the commit subjects since the last release. It opens the PR "release … (to be signed)".
 2. The owner signs and merges it with `tools/sign-config.ps1 -Pr <n> -KeyFile ...` on a signing PC. After the merge it
-   also creates the GitHub Release `v<version>` for people to read; hosts never read that page.
+   also creates the GitHub Release `v<version>` for people to read; hosts never read that page. In a shared
+   repository (`-Path worker-host`) it makes no page, because that repository's releases belong to its other
+   products (`signing-keys.md` §4).
 
 **On every host, nightly** (config.toml `[update]`, local time; they move to the signed baseline later):
 

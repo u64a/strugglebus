@@ -38,6 +38,14 @@ $ErrorActionPreference = 'Stop'
     (Test-SerialStep $null 1), (Test-SerialStep $null 2), (Test-SerialStep 3 $null)
   )
   principals = (Get-SignerPrincipals "# who`nalice namespaces=`"x`" ssh-ed25519 AAAA a`n`nbob,alice ssh-ed25519 BBBB b`n*@example.com ssh-ed25519 CCCC c`n")
+  folder_ok = @(Test-PrFiles @('worker-host/release.toml', 'worker-host/release.toml.sig') 'worker-host/')
+  folder_bad = @(Test-PrFiles @('worker-host/release.toml', 'release.toml', 'bus/release.toml', 'worker-host/wh.py') 'worker-host/')
+  prefix = @((Get-Prefix ''), (Get-Prefix 'worker-host'), (Get-Prefix 'worker-host\'), (Get-Prefix '/a/b/'))
+  prefix_bad = @('..', 'a/../b', 'a b', 'C:\x', './a' | ForEach-Object { try { Get-Prefix $_; 'accepted' } catch { 'refused' } })
+  first = @(
+    (Test-SerialStep $null 8 8), (Test-SerialStep $null 1 8), (Test-SerialStep $null 9 8),
+    (Test-SerialStep 8 9 8), (Test-SerialStep 8 8 8)
+  )
 } | ConvertTo-Json -Depth 3
 """
 
@@ -63,6 +71,22 @@ def test_the_serial_is_the_top_level_one(ps):
 
 def test_each_change_is_exactly_one_more_than_main(ps):
     assert ps["step"] == [True, False, False, False, True, False, False]
+
+
+def test_in_a_shared_repository_only_the_hosts_own_signed_files_may_change(ps):
+    assert ps["folder_ok"] == []
+    # A top-level or another product's release.toml, or the host's code, never rides in on the host's signature.
+    assert ps["folder_bad"] == ["release.toml", "bus/release.toml", "worker-host/wh.py"]
+
+
+def test_the_folder_is_a_plain_relative_name(ps):
+    assert ps["prefix"] == ["", "worker-host/", "worker-host/", "a/b/"]
+    assert ps["prefix_bad"] == ["refused"] * 5
+
+
+def test_a_continued_numbering_starts_where_asked_and_only_for_a_new_file(ps):
+    # Hosts refuse a serial not above the installed one, so a release at a new place continues the old count.
+    assert ps["first"] == [True, False, False, True, False]
 
 
 def test_the_principals_come_from_the_signers_file(ps):

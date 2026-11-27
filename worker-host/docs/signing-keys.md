@@ -207,6 +207,21 @@ changes only `release.toml`. `tools/sign-config.ps1 -Pr <n> -KeyFile <your key h
 check and apply it in their update window (`design.md` §10a). The serial rule is the same: exactly one more than
 main's.
 
+**A release in a shared repository** (the host's code in a folder, for example `worker-host/` in
+u64a/strugglebus) is the same flow with the folder named:
+- **Make it:** `python worker-host/tools/make-release.py --path worker-host`. The release goes to
+  `worker-host/release.toml`; the notes list only commits that touched the folder.
+- **Sign it:** `pwsh -File worker-host\tools\sign-config.ps1 -Pr <n> -Path worker-host -Signers <your allowed_signers
+  file> -KeyFile <your key handle>`.
+  - Only `worker-host/`'s signed files may change in that PR.
+  - The new signature is checked against the list you give, because the shared repository carries none. Hosts check
+    against their own pinned copy either way.
+  - No GitHub Release page is made: that repository's releases belong to its other products, and an App's updater
+    reads them.
+- **When the releases move there,** the first one continues the old place's count, because hosts refuse any serial
+  not above the one installed. Use `make-release.py --continue-from <the old place's release.toml> --notes "..."`,
+  then `sign-config.ps1 ... -FirstSerial <that serial>`.
+
 ## 5. Setting up a PC to sign (and after every rebuild)
 
 Any PC can sign. Nothing on the hosts changes when a signing PC is rebuilt, because the key is on the device.
@@ -284,7 +299,8 @@ What the script does, step by step:
 8. **Checks** the merged file and signature on `main` once more and prints the commit. Hosts pick up `fleet.toml`
    within 15 minutes (`wh fleet status --refresh` on a host does it at once), and each heartbeat then shows
    `fleet=<short sha>`.
-9. **For a release:** creates the GitHub Release page. Hosts read the signed `release.toml`, never the page.
+9. **For a release:** creates the GitHub Release page (not with `-Path`, in a shared repository). Hosts read the
+   signed `release.toml`, never the page.
 
 ### 6.1 By hand, if the script is broken
 
