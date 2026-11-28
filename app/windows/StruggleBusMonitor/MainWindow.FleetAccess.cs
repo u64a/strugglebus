@@ -14,6 +14,9 @@ public partial class MainWindow
 {
     private readonly ObservableCollection<FleetEntryRow> _fleetEntries = [];
     private readonly ObservableCollection<AgentChoice> _accessChoices = [];
+
+    /// <summary>Every agent that could be authorised. Only those matching the search box are put on screen.</summary>
+    private IReadOnlyList<AgentChoice> _accessAllChoices = [];
     private AgentChoice? _accessAgent;
 
     private void InitializeFleetAccess()
@@ -34,8 +37,9 @@ public partial class MainWindow
         var fleet = await ListedFleetAsync();
         var agents = await ManagedAgentsOrNoneAsync();
         Replace(_fleetEntries, FleetAccessLogic.Rows(fleet));
-        Replace(_accessChoices, FleetAccessLogic.Choices(agents, fleet, DateTimeOffset.Now));
-        ChooseAccessAgent(_accessChoices.FirstOrDefault(choice => choice.Id == _accessAgent?.Id));
+        _accessAllChoices = FleetAccessLogic.Choices(agents, fleet, DateTimeOffset.Now);
+        ShowAccessMatches();
+        ChooseAccessAgent(_accessAllChoices.FirstOrDefault(choice => choice.Id == _accessAgent?.Id));
         FleetAccessSummary.Text = fleet.Count == 0
             ? "The bus holds no fleet yet, or one this app cannot read. Publish today's signed fleet first, below."
             : $"The fleet on the bus lists {_fleetEntries.Count(row => row.Kind == "coordinator")} agent(s) that may task the hosts and {_fleetEntries.Count(row => row.Kind == "host")} worker host(s).";
@@ -75,10 +79,32 @@ public partial class MainWindow
 
     internal void AccessAgent_Click(object sender, RoutedEventArgs e) => ChooseAccessAgent(TagOf<AgentChoice>(sender));
 
+    internal void AccessAgentSearch_TextChanged(object sender, System.Windows.Controls.TextChangedEventArgs e) => ShowAccessMatches();
+
+    /// <summary>Puts the few agents that match the search on screen, and says how many more there are.</summary>
+    private void ShowAccessMatches()
+    {
+        Replace(_accessChoices, FleetAccessLogic.Matching(_accessAllChoices, AccessAgentSearch.Text));
+        AccessAgentSearchText.Text = FleetAccessLogic.SearchText(_accessAllChoices, AccessAgentSearch.Text);
+    }
+
+    /// <summary>
+    /// Keeps the site's repository locations as soon as the operator leaves the box, so they are
+    /// there after a restart without a host having to be created first.
+    /// </summary>
+    internal void HostRemotes_LostFocus(object sender, RoutedEventArgs e) => KeepRemotes();
+
+    private void KeepRemotes()
+    {
+        if (_settings.HostRemotes == HostRemotes.Text) return;
+        _settings.HostRemotes = HostRemotes.Text;
+        _settings.Save();
+    }
+
     private void ChooseAccessAgent(AgentChoice? agent)
     {
         _accessAgent = agent;
-        AccessAgentText.Text = agent is null ? "No agent chosen. Choose one from the list above." : "Chosen:  " + agent.Identity;
+        AccessAgentText.Text = agent is null ? "No agent chosen yet." : "Chosen:  " + agent.Identity;
     }
 
     private AccessForm ReadAccessForm() => new(
@@ -97,6 +123,7 @@ public partial class MainWindow
         if (!_api.HasOperatorGrant()) throw new InvalidOperationException(AdminFlow.GrantNeeded);
         var remotes = AddHostLogic.Lines(HostRemotes.Text);
         if (remotes.Count == 0) throw new InvalidOperationException(FleetAccessLogic.NoRemotes);
+        KeepRemotes();
         var entry = FleetAccessLogic.Entry(ReadAccessForm());
         var agent = _accessAgent!;
 

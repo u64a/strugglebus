@@ -199,7 +199,7 @@ public class AdminWindowTests(StaWindowAdminFixture sta)
 
     private static void FillAddHost(MainWindow window)
     {
-        window.AdminTabHosts.IsChecked = true;
+        window.AdminTabAddHost.IsChecked = true;
         window.HostName.Text = "Office1";
         window.HostSigners.Text = HostSignerLines;
         window.HostRemotes.Text = "https://github.com/acme/";

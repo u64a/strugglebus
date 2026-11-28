@@ -573,6 +573,9 @@
                                 <RadioButton x:Name="AdminTabDevices" GroupName="AdminTab" Content="Devices" Style="{StaticResource SegItem}" Margin="-1,0,0,0" Checked="AdminTab_Checked"/>
                                 <RadioButton x:Name="AdminTabSpn" GroupName="AdminTab" Content="Service principals" Style="{StaticResource SegItem}" Margin="-1,0,0,0" Checked="AdminTab_Checked"/>
                                 <RadioButton x:Name="AdminTabHosts" GroupName="AdminTab" Content="Worker hosts" Style="{StaticResource SegItem}" Margin="-1,0,0,0" Checked="AdminTab_Checked"/>
+                                <RadioButton x:Name="AdminTabAddHost" GroupName="AdminTab" Content="Add a host" Style="{StaticResource SegItem}" Margin="-1,0,0,0" Checked="AdminTab_Checked"/>
+                                <RadioButton x:Name="AdminTabFleet" GroupName="AdminTab" Content="Who may task the hosts" Style="{StaticResource SegItem}" Margin="-1,0,0,0" Checked="AdminTab_Checked"/>
+                                <RadioButton x:Name="AdminTabSecurity" GroupName="AdminTab" Content="Security" Style="{StaticResource SegItem}" Margin="-1,0,0,0" Checked="AdminTab_Checked"/>
                                 <RadioButton x:Name="AdminTabEnroll" GroupName="AdminTab" Content="Enroll" Style="{StaticResource SegItem}" Margin="-1,0,0,0" Checked="AdminTab_Checked"/>
                                 <RadioButton x:Name="AdminTabAccess" GroupName="AdminTab" Content="Access and freeze" Style="{StaticResource SegItem}" Margin="-1,0,0,0" Checked="AdminTab_Checked"/>
                                 <RadioButton x:Name="AdminTabExport" GroupName="AdminTab" Content="Export" Style="{StaticResource SegItem}" Margin="-1,0,0,0" Checked="AdminTab_Checked"/>
@@ -712,26 +715,9 @@
                                     </WrapPanel>
                                     <CheckBox x:Name="HostDedicated" Content="Create a dedicated Windows account for the host (recommended)" IsChecked="True" Style="{StaticResource Check}" Margin="0,14,0,0"/>
                                     <TextBlock Text="Without it, the host's workers run as the person who installs it and can reach everything that person can." Style="{StaticResource MutedText}" TextWrapping="Wrap" Margin="0,4,0,0"/>
-                                    <TextBlock Text="Site signers (the hardware keys that may sign the fleet; at least two)" Style="{StaticResource FieldLabel}"/>
-                                    <Button x:Name="SignerAddButton" Content="Add a hardware key" Style="{StaticResource BtnOutline}" Click="SignerAdd_Click" HorizontalAlignment="Left" Margin="0,0,0,8"/>
-                                    <Button x:Name="SignersEarlierButton" Style="{StaticResource BtnOutline}" Click="SignersEarlier_Click" HorizontalAlignment="Left" Margin="0,0,0,8" Visibility="Collapsed"/>
-                                    <TextBlock x:Name="SignersSummary" Style="{StaticResource MutedText}" TextWrapping="Wrap" Margin="0,0,0,8"/>
-                                    <ItemsControl x:Name="SignersList" Focusable="False" Margin="0,0,0,8">
-                                        <ItemsControl.ItemTemplate>
-                                            <DataTemplate>
-                                                <DockPanel Margin="0,0,0,6">
-                                                    <Button DockPanel.Dock="Right" Content="Remove" Tag="{Binding}" Style="{StaticResource BtnOutline}" Click="SignerRemove_Click" Margin="8,0,0,0"/>
-                                                    <Button DockPanel.Dock="Right" Content="Sign with this key" Tag="{Binding}" Style="{StaticResource BtnOutline}" Click="SignerUse_Click" Margin="12,0,0,0"/>
-                                                    <TextBlock Text="{Binding Fingerprint}" FontFamily="{StaticResource Mono}" FontSize="12" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"/>
-                                                </DockPanel>
-                                            </DataTemplate>
-                                        </ItemsControl.ItemTemplate>
-                                    </ItemsControl>
-                                    <TextBox x:Name="HostSigners" MinHeight="64" MaxHeight="160" AcceptsReturn="True" TextWrapping="NoWrap" HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Auto" FontFamily="{StaticResource Mono}" FontSize="12" VerticalContentAlignment="Top" IsReadOnly="True" TextChanged="HostSigners_TextChanged" Tag="owner namespaces=&quot;strugglebus-fleet,strugglebus-host-command&quot; sk-ssh-ed25519@openssh.com AAAA... key-name"/>
-                                    <TextBlock x:Name="SigningKeyText" Style="{StaticResource MutedText}" TextWrapping="Wrap" Margin="0,0,0,8"/>
-                                    <TextBlock Text="Choose a hardware key's public file (for example id_ed25519_sk_....pub in your .ssh folder) and the app writes its line here. These are the public keys a host will trust to sign the fleet and commands, and the keys this app checks a fleet's signature against. They are kept on this PC, protected for your Windows account, and change only through the buttons, with Windows Hello." Style="{StaticResource MutedText}" TextWrapping="Wrap" Margin="0,4,0,0"/>
+                                    <TextBlock Text="The new host is told to trust the site's hardware keys, which are set up on Admin, Security. At least two must be registered there first." Style="{StaticResource MutedText}" TextWrapping="Wrap" Margin="0,14,0,0"/>
                                     <TextBlock Text="Repository locations the host may work in (one per line)" Style="{StaticResource FieldLabel}"/>
-                                    <TextBox x:Name="HostRemotes" MinHeight="40" MaxHeight="120" AcceptsReturn="True" TextWrapping="NoWrap" HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Auto" FontFamily="{StaticResource Mono}" FontSize="12" VerticalContentAlignment="Top" Tag="https://github.com/your-org/"/>
+                                    <TextBox x:Name="HostRemotes" LostFocus="HostRemotes_LostFocus" MinHeight="40" MaxHeight="120" AcceptsReturn="True" TextWrapping="NoWrap" HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Auto" FontFamily="{StaticResource Mono}" FontSize="12" VerticalContentAlignment="Top" Tag="https://github.com/your-org/"/>
                                     <TextBlock Text="Where the host reads its fleet from" Style="{StaticResource FieldLabel}"/>
                                     <StackPanel Orientation="Horizontal">
                                         <RadioButton x:Name="HostFleetBus" GroupName="HostFleet" Content="This bus" IsChecked="True" Style="{StaticResource SegItem}"/>
@@ -770,7 +756,9 @@
                                         </ItemsControl.ItemTemplate>
                                     </ItemsControl>
 
-                                    <TextBlock Text="Authorise an agent: choose it from the agents enabled on the bus" Style="{StaticResource FieldLabel}"/>
+                                    <TextBlock Text="Authorise an agent: find it among the agents enabled on the bus" Style="{StaticResource FieldLabel}"/>
+                                    <TextBox x:Name="AccessAgentSearch" FontFamily="{StaticResource Mono}" Tag="type part of its name" TextChanged="AccessAgentSearch_TextChanged"/>
+                                    <TextBlock x:Name="AccessAgentSearchText" Style="{StaticResource MutedText}" TextWrapping="Wrap" Margin="0,4,0,8"/>
                                     <ItemsControl x:Name="AccessAgentsList" Focusable="False">
                                         <ItemsControl.ItemsPanel>
                                             <ItemsPanelTemplate>
@@ -783,7 +771,7 @@
                                             </DataTemplate>
                                         </ItemsControl.ItemTemplate>
                                     </ItemsControl>
-                                    <TextBlock x:Name="AccessAgentText" Text="No agent chosen. Choose one from the list above." FontFamily="{StaticResource Mono}" FontSize="12" TextWrapping="Wrap" Margin="0,0,0,4"/>
+                                    <TextBlock x:Name="AccessAgentText" Text="No agent chosen yet." FontFamily="{StaticResource Mono}" FontSize="12" TextWrapping="Wrap" Margin="0,0,0,4"/>
                                     <TextBlock Text="Project (a short name for this agent's work)" Style="{StaticResource FieldLabel}"/>
                                     <TextBox x:Name="AccessProject" FontFamily="{StaticResource Mono}" Tag="for example docs"/>
                                     <TextBlock Text="Repositories it may have the hosts work in (one per line, inside the site's locations)" Style="{StaticResource FieldLabel}"/>
@@ -810,6 +798,30 @@
                                     <Border x:Name="FleetResultPanel" Visibility="Collapsed" Background="{DynamicResource S1}" BorderBrush="{DynamicResource Accent}" BorderThickness="1" CornerRadius="6" Padding="12" Margin="0,12,0,0">
                                         <TextBox x:Name="FleetResult" IsReadOnly="True" BorderThickness="0" Background="Transparent" FontFamily="{StaticResource Mono}" FontSize="12" TextWrapping="Wrap" AcceptsReturn="True"/>
                                     </Border>
+                                </StackPanel>
+                            </Border>
+
+                            <Border x:Name="AdminSecurityPanel" Style="{StaticResource Card}">
+                                <StackPanel>
+                                    <TextBlock Text="SITE SIGNERS" Style="{StaticResource Label}"/>
+                                    <TextBlock Text="The hardware keys (YubiKeys) that may sign this site's fleet: which agents may task the worker hosts, and which PCs are hosts. Register each key you own, spares included; a site keeps at least two so that losing one does not lock it out. Choose a key's public file (for example id_ed25519_sk_....pub in your .ssh folder) and the app writes its line. Adding or removing a key shows its fingerprint to check against the key itself, and needs Windows Hello." Style="{StaticResource MutedText}" TextWrapping="Wrap" Margin="0,8,0,12"/>
+                                    <Button x:Name="SignerAddButton" Content="Add a hardware key" Style="{StaticResource BtnOutline}" Click="SignerAdd_Click" HorizontalAlignment="Left" Margin="0,0,0,8"/>
+                                    <Button x:Name="SignersEarlierButton" Style="{StaticResource BtnOutline}" Click="SignersEarlier_Click" HorizontalAlignment="Left" Margin="0,0,0,8" Visibility="Collapsed"/>
+                                    <TextBlock x:Name="SignersSummary" Style="{StaticResource MutedText}" TextWrapping="Wrap" Margin="0,0,0,8"/>
+                                    <ItemsControl x:Name="SignersList" Focusable="False" Margin="0,0,0,8">
+                                        <ItemsControl.ItemTemplate>
+                                            <DataTemplate>
+                                                <DockPanel Margin="0,0,0,6">
+                                                    <Button DockPanel.Dock="Right" Content="Remove" Tag="{Binding}" Style="{StaticResource BtnOutline}" Click="SignerRemove_Click" Margin="8,0,0,0"/>
+                                                    <Button DockPanel.Dock="Right" Content="Sign with this key" Tag="{Binding}" Style="{StaticResource BtnOutline}" Click="SignerUse_Click" Margin="12,0,0,0"/>
+                                                    <TextBlock Text="{Binding Fingerprint}" FontFamily="{StaticResource Mono}" FontSize="12" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"/>
+                                                </DockPanel>
+                                            </DataTemplate>
+                                        </ItemsControl.ItemTemplate>
+                                    </ItemsControl>
+                                    <TextBox x:Name="HostSigners" MinHeight="64" MaxHeight="160" AcceptsReturn="True" TextWrapping="NoWrap" HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Auto" FontFamily="{StaticResource Mono}" FontSize="12" VerticalContentAlignment="Top" IsReadOnly="True" TextChanged="HostSigners_TextChanged" Tag="owner namespaces=&quot;strugglebus-fleet,strugglebus-host-command&quot; sk-ssh-ed25519@openssh.com AAAA... key-name"/>
+                                    <TextBlock x:Name="SigningKeyText" Style="{StaticResource MutedText}" TextWrapping="Wrap" Margin="0,0,0,8"/>
+                                    <TextBlock Text="The box shows the lines a new host is given, read-only. They are kept on this PC, protected for your Windows account. A new host is told to trust these keys; a host already installed trusts only the keys pinned on it." Style="{StaticResource MutedText}" TextWrapping="Wrap" Margin="0,4,0,0"/>
                                 </StackPanel>
                             </Border>
 
