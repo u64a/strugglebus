@@ -65,7 +65,7 @@ public partial class MainWindow
     /// <summary>Says which key the app will ask to sign, or why it cannot ask any.</summary>
     private void ShowSigningKey()
     {
-        var key = FleetSignLogic.KeyToUse(FleetPublishLogic.Signers(HostSigners.Text), _settings.SignerKeyFiles, _settings.SigningKey, _platform.FileExists);
+        var key = KeyToUseHere();
         SigningKeyText.Text = FleetSignLogic.SigningKeyText(key, _platform.HardwareSigningTool is not null);
     }
 
