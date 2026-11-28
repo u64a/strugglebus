@@ -45,7 +45,7 @@ TASK_OUTCOMES = ("finished", "failed", "timed-out", "interrupted", "refused", "y
 # Windows account and its weaknesses map the weakest machine, and a host's channel may be private.
 ADMIN_ONLY = (("account",), ("dedicated",), ("warnings",), ("bus", "channel"), ("bus", "channel_state"),
               ("sign_in",), ("sign_in_key",), ("claude_token_since",),  # section 4a
-              ("signers",))  # the keys this host pins, so the App can warn when its set and the host's differ
+              ("signers",), ("signers_total",))  # the keys this host pins, so the App can warn on a difference
 
 
 @dataclass
@@ -96,6 +96,7 @@ class Facts:
     claude_token_since: str | None = None              # section 4a: the date the sealed Claude token arrived
     claude_token_old: bool = False                     # ... 335 days or more ago: rotate it
     signers: list[dict] | None = None                  # the pinned allowed_signers: fingerprint, key type, namespaces
+    signers_total: int | None = None                   # every non-comment line in that file, parsed or not
 
 
 def state_of(f: Facts) -> str:
@@ -221,6 +222,11 @@ def build_v2(f: Facts) -> dict:
                         if FINGERPRINT_RE.fullmatch(str(x.get("fingerprint", "")))
                         and KEY_TYPE_RE.fullmatch(str(x.get("key_type", "")))
                         and NAMESPACES_RE.fullmatch(str(x.get("namespaces", "")))]
+        # The list is capped and an unparseable line is left out, so the count of every line the file holds goes
+        # beside it: the App warns when it differs from the list (an extra trusted key must never look identical;
+        # u64-security, #humans 29227).
+        if isinstance(f.signers_total, int) and f.signers_total >= 0:
+            s["signers_total"] = min(f.signers_total, 1000)
     return s
 
 

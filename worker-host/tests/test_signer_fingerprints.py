@@ -64,6 +64,16 @@ def test_malformed_values_never_go_out_and_the_list_is_capped():
     assert out == [good] * (hoststatus.MAX_SIGNERS - 2)
 
 
+def test_the_total_counts_every_line_ssh_keygen_may_trust_so_an_extra_key_never_looks_identical(tmp_path):
+    p = tmp_path / "allowed_signers"
+    p.write_text(LINES, encoding="ascii")  # 2 parsed signers, a comment, and one line read_signers can't parse
+    assert signing.count_signer_lines(p) == 3
+    snap = hoststatus.build_v2(facts(signers=pinned(tmp_path), signers_total=signing.count_signer_lines(p)))
+    assert len(snap["signers"]) == 2 and snap["signers_total"] == 3  # the App sees the difference and warns
+    assert "signers_total" not in hoststatus.for_device(snap)
+    assert signing.count_signer_lines(tmp_path / "missing") is None
+
+
 def test_the_host_reports_its_own_pinned_file(tmp_path, monkeypatch):
     from conftest import HOST_A, FakeVault, SharedBus
     from workerhost import engines as engines_mod
@@ -77,6 +87,7 @@ def test_the_host_reports_its_own_pinned_file(tmp_path, monkeypatch):
     signers.write_text(LINES, encoding="ascii")
     h = Host(Config(host_name="box1", agent_prefix="host-box1", home=tmp_path / "home", workers_root=tmp_path / "w"),
              bus=SharedBus().client(HOST_A), vault=FakeVault(), signers=signers)
-    reported = hoststatus.build_v2(h.status_facts())["signers"]
-    assert [s["fingerprint"] for s in reported] == ["SHA256:xh5bC1DWKRzjLykESi8D5Qha6izhRNwkMJUyVMC2q2A",
-                                                    "SHA256:I621GOi+pKy3XIbahS6mmqKCn7pVnQaubqPigdMTzus"]
+    snap = hoststatus.build_v2(h.status_facts())
+    assert [s["fingerprint"] for s in snap["signers"]] == ["SHA256:xh5bC1DWKRzjLykESi8D5Qha6izhRNwkMJUyVMC2q2A",
+                                                           "SHA256:I621GOi+pKy3XIbahS6mmqKCn7pVnQaubqPigdMTzus"]
+    assert snap["signers_total"] == 3

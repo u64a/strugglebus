@@ -1565,6 +1565,7 @@ class Host:
             **self.claude_signin_facts(),
             "signers": [{"fingerprint": s.fingerprint, "key_type": s.key_type, "namespaces": s.namespaces}
                         for s in signing.read_signers(self.signers)],
+            "signers_total": signing.count_signer_lines(self.signers),
         }
 
     def claude_signin_facts(self) -> dict:
