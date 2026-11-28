@@ -37,7 +37,7 @@ public sealed class FleetAllowListVectorTests
     private static CoordinatorEntry Entry(JsonElement entry) => new(
         entry.GetProperty("agent_name").GetString()!, entry.GetProperty("agent_id").GetString()!, entry.GetProperty("project").GetString()!,
         entry.GetProperty("notes_repo").GetString()!, entry.GetProperty("notes_channel").GetString()!, Texts(entry.GetProperty("repos")),
-        entry.GetProperty("default_engine").GetString()!);
+        entry.TryGetProperty("default_engine", out var engine) ? engine.GetString() : null);  // optional (PR 97)
 
     [Theory]
     [MemberData(nameof(Cases))]

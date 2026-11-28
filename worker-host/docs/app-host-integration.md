@@ -815,7 +815,8 @@ project        = "app"                      # [a-z0-9][a-z0-9-]{0,30}
 notes_repo     = "https://github.com/acme/team-notes"    # where its briefs live
 notes_channel  = "app-notes"                # [A-Za-z0-9][A-Za-z0-9_-]{0,63}
 repos          = ["https://github.com/acme/"]           # https://<host>/ or https://<host>/<owner>/ prefixes
-default_engine = "ghcp"                     # optional: ghcp (default) or claude
+default_engine = "ghcp"                     # optional: ghcp (default) or claude. CHOOSES NOTHING: a task picks its
+                                            # engine, and the host's default applies otherwise. The App leaves it out.
 repo_instructions = true                    # optional: load AGENTS.md and the like (default true)
 worker_rules   = """
 Optional always-rules for this project's workers, at most 4,000 characters; no control characters but newline and tab.
@@ -827,6 +828,34 @@ agent_id   = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
 ```
 
 No agent_id or agent_name may appear twice across coordinators and hosts.
+
+**A fleet with no tables** (`serial = 1`, with or without `owner`) is valid. A host accepts it and, unlisted, waits
+in `needs-fleet`. That's how the App **starts a fleet** (bus-dev #humans 29301; u64-security 29299, 29303;
+`contracts/fleet/compose/start.json`):
+- **Only when** the bus holds no fleet **and** no host reports a fleet serial. Otherwise a fleet exists somewhere, and
+  a fresh one would un-list everything it names: refuse with `fleet-exists`.
+- **Always serial 1.** Then hosts and coordinators are added one signed change at a time, with the usual composers.
+
+**Taking over a fleet the hosts already accept, with no file** (planned, bus 0.2.75 and the host release after it):
+- **The host's part** (PR 100: `Host.offer_fleet_if_due`, `FleetSync.offer_body`):
+  - **When:** a host whose `fleet_source` is `bus` or `either`, whose last bus fetch answered 404 (the bus holds no
+    fleet), offers the fleet it accepted, at most once per fleet refresh.
+  - **What it sends:** `POST /api/hosts/fleet-offer` as itself, with exactly
+    `{"serial": <n>, "fleet": "<base64 of the stored accepted bytes>", "sig": "<the signature text>"}`. It sends
+    nothing if the stored copy isn't the accepted one, or if it's over the bus's caps (64 KB, and 4,200 characters
+    for the signature).
+  - **What it does with the answer:**
+    - **204:** logs `fleet-offered` once per serial.
+    - **409 `fleet-held`:** the bus holds one now, so it stops.
+    - **429:** waits a minute.
+    - **Any other refusal** (404 from a bus older than 0.2.75; 403 from a host not yet marked): logs
+      `fleet-offer-refused` once and retries hourly.
+  - **On the bus:** one offer per host is kept, the newest replacing the last. Offers are dropped once a fleet is
+    published.
+- **The App's part:** it checks each offer with every PR 75 check against its registered site signers. It publishes
+  one unchanged, after Windows Hello, **only if its signed serial equals the highest serial any host reports.** An
+  older fleet verifies too. If offers disagree on serial or bytes, it shows them all and publishes none until they
+  agree, or until the owner picks one with the highest serial. The offer is only a carrier: the signature is the trust.
 
 ## 6. Test vectors (`tests/data/vectors/`)
 
