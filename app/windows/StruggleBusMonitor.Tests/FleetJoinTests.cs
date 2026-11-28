@@ -92,7 +92,7 @@ public sealed class FleetJoinLogicTests
         Assert.Contains("The fleet the bus holds is serial 5.", sign);
         Assert.Contains("The next fleet will be serial 6.", sign);
         Assert.Contains($"[[host]]\nagent_name = \"host-office2-host\"\nagent_id   = \"{AgentId}\"", sign);
-        Assert.Contains("The app does not sign it", sign);
+        Assert.Contains("The app cannot ask a hardware key to sign it on this PC: it found no key file here", sign);
 
         var saved = FleetJoinLogic.SavedText(@"C:\work\fleet.toml", 6, Join());
         Assert.Contains(@"sign-config.ps1 -File ""C:\work\fleet.toml"" -Signers ""C:\work\fleet.toml.signers"" -KeyFile", saved);

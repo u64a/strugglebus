@@ -46,6 +46,44 @@ internal static class FleetSignLogic
     /// The key to sign with: the chosen one when its file is still there, otherwise the first
     /// held signer that has a key file on this PC. Null when none has.
     /// </summary>
+    /// <summary>
+    /// Where each site signer's key file is on this PC: the ones noted when a key was added, and,
+    /// for a signer with none noted or whose noted file has gone, a key file found beside a public
+    /// file in the .ssh folder that holds that same key. A signer kept from an earlier version, or
+    /// registered on another PC, was never noted, and the operator should not have to add it again
+    /// for the app to sign. A key file is only a handle, and every signature made with one is
+    /// still verified against the signer's own line before anything is published.
+    /// </summary>
+    public static IReadOnlyDictionary<string, string> KeyFilesHere(
+        IReadOnlyList<SiteSigner> held, IReadOnlyDictionary<string, string> noted, IEnumerable<(string Path, string Text)> publicFiles, Func<string, bool> exists)
+    {
+        var here = noted.Where(entry => exists(entry.Value)).ToDictionary(entry => entry.Key, entry => entry.Value);
+        var wanted = held.Select(signer => signer.KeyBase64).ToHashSet();
+        foreach (var (key, keyFile) in publicFiles.OrderBy(file => file.Path, StringComparer.OrdinalIgnoreCase).Select(file => Found(file.Path, file.Text, exists)))
+        {
+            if (keyFile is not null && wanted.Contains(key)) here.TryAdd(key, keyFile);
+        }
+
+        return here;
+    }
+
+    /// <summary>The key a public file holds and the key file beside it; no key file when either is missing.</summary>
+    private static (string Key, string? KeyFile) Found(string publicPath, string text, Func<string, bool> exists) =>
+        KeyOf(text) is { } key ? (key, KeyFileBeside(publicPath, exists)) : (string.Empty, null);
+
+    /// <summary>The key in a public file's text, or null when it is not a hardware key's public file.</summary>
+    private static string? KeyOf(string publicFile)
+    {
+        try
+        {
+            return FleetPublishLogic.Signers(SiteSignersLogic.LineFor(publicFile))[0].KeyBase64;
+        }
+        catch (InvalidOperationException)
+        {
+            return null;
+        }
+    }
+
     public static SigningKey? KeyToUse(IReadOnlyList<SiteSigner> held, IReadOnlyDictionary<string, string> keyFiles, string? chosen, Func<string, bool> exists)
     {
         var usable = held
@@ -92,7 +130,7 @@ internal static class FleetSignLogic
     /// <summary>Which key the app will ask to sign, or why it cannot ask any on this PC.</summary>
     public static string SigningKeyText(SigningKey? key, bool toolHere)
     {
-        if (key is null) return "The app cannot sign on this PC yet: none of the signers above has its key file here. Add the key from the .pub file beside its key file.";
+        if (key is null) return "The app cannot sign on this PC yet: none of the signers above has its key file in your .ssh folder. The key file is the one beside the .pub file, with the same name without .pub. Copy it here from the PC the key was set up on, or set up a new key above.";
         return toolHere
             ? $"The app signs the fleet with {key.Signer.Fingerprint} ({Path.GetFileName(key.KeyFile)}). To use another, plug it in and choose Sign with this key beside it."
             : NoTool;

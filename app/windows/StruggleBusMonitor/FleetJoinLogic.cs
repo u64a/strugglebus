@@ -130,7 +130,9 @@ internal static class FleetJoinLogic
         $"The next fleet will be serial {currentSerial + 1}. It is that document with one change besides the serial, these lines added at the end:",
         FleetCompose.HostBlock(join.AgentName, join.AgentId).TrimEnd('\n'),
         "",
-        "Every other byte is kept. The app does not sign it: you save it, sign it with the site's hardware key, and then publish it here.",
+        "Every other byte is kept.",
+        "",
+        "The app cannot ask a hardware key to sign it on this PC: it found no key file here for any of the site's signers (Admin, Security says which key it would use). So you save it, sign it with the site's hardware key, and then publish it here.",
         "",
         "Save the new fleet document?"
     ]);
