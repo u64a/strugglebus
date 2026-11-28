@@ -83,6 +83,34 @@ internal static class SshKeygen
     }
 
     /// <summary>
+    /// Makes a new signing key on the security key that is plugged in, and returns the path of
+    /// its public file. Windows asks for the PIN and a touch. Nothing is ever overwritten: a name
+    /// already in the folder is refused before the tool is started, and the tool, given no
+    /// input, answers its own overwrite question with no. Throws <see cref="SshSigningException"/>
+    /// with what the tool said when no key was made. See <see cref="NewKeyLogic.Arguments"/>.
+    /// </summary>
+    public static Task<string> CreateKeyAsync(string tool, string folder, string name, TimeSpan patience) =>
+        CreateKeyAsync(folder, name, arguments => RunToEndAsync(tool, arguments, patience));
+
+    internal static async Task<string> CreateKeyAsync(string folder, string name, Func<string[], Task<(int Exit, string Said)>> run)
+    {
+        var keyFile = UnusedKeyFile(folder, name);
+        Directory.CreateDirectory(folder);
+        var (exit, said) = await run(NewKeyLogic.Arguments(name, keyFile));
+        var publicFile = keyFile + ".pub";
+        return exit == 0 && File.Exists(publicFile) ? publicFile : throw new SshSigningException(said);
+    }
+
+    /// <summary>Where the new key's file will go. Throws, in words, for a name that cannot be used or is already taken.</summary>
+    private static string UnusedKeyFile(string folder, string name)
+    {
+        if (NewKeyLogic.NameProblem(name) is { } problem) throw new InvalidOperationException(problem);
+        var keyFile = Path.Combine(folder, NewKeyLogic.FileName(name));
+        var taken = File.Exists(keyFile) || File.Exists(keyFile + ".pub");
+        return taken ? throw new InvalidOperationException(NewKeyLogic.Exists(Path.GetFileName(keyFile))) : keyFile;
+    }
+
+    /// <summary>
     /// The only namespaces this app may ever ask a hardware key to sign for: the site's own fleet
     /// and commands to its hosts. The same keys sign software releases under other namespaces, and
     /// this is the lowest place a signature can be asked for, so the refusal lives here: no screen

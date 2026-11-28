@@ -35,6 +35,7 @@ public partial class MainWindow
     {
         if (_api.Session is null) return;
         var (held, fleet) = await ListedFleetAsync();
+        NoteFleetForSetup(held, fleet);
         var agents = await ManagedAgentsOrNoneAsync();
         FleetStartPanel.Visibility = VisibleWhen(!held);
         Replace(_fleetEntries, FleetAccessLogic.Rows(fleet));
@@ -194,6 +195,7 @@ public partial class MainWindow
     {
         if (_settings.HostRemotes == HostRemotes.Text) return;
         _settings.HostRemotes = HostRemotes.Text;
+        ShowSetup();
         _settings.Save();
     }
 

@@ -33,12 +33,14 @@ public partial class MainWindow
     }
 
     /// <summary>The one path every key takes to become a site signer, found or chosen: the fingerprint, the question, Windows Hello.</summary>
-    private async Task AddSignerFromAsync(string path)
+    private Task AddSignerFromAsync(string path) => AddSignerFromAsync(path, SiteSignersLogic.AddReview);
+
+    private async Task AddSignerFromAsync(string path, Func<SiteSigner, string, string> review)
     {
         var chosen = new FileInfo(path).Length <= SshSignature.MaxLength ? await File.ReadAllTextAsync(path) : string.Empty;
         var next = SiteSignersLogic.Add(HostSigners.Text, SiteSignersLogic.LineFor(chosen));
         var signer = FleetPublishLogic.Signers(next)[^1];
-        if (!_platform.Confirm(this, SiteSignersLogic.AddReview(signer, Path.GetFileName(path)), "Add a site signer")) return;
+        if (!_platform.Confirm(this, review(signer, Path.GetFileName(path)), "Add a site signer")) return;
         await RequireHelloAsync(SiteSignersLogic.AddHelloPrompt(signer));
         RememberKeyFile(signer, path);
         KeepSigners(next);
@@ -116,6 +118,7 @@ public partial class MainWindow
         SignersList.ItemsSource = FleetPublishLogic.Signers(HostSigners.Text);
         ShowSigningKey();
         ShowFoundKeys();
+        ShowSetup();
     }
 
     /// <summary>
