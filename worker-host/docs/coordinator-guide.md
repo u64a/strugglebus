@@ -11,6 +11,24 @@ trusted coordinator. It reads your brief from your notes repository at the commi
 task names, and starts one headless coding-agent session (a **worker**: GitHub Copilot CLI or Claude Code) on your
 branch. It reports back on the same channel. The worker opens a pull request; **only the owner merges**.
 
+## The rules (read these first)
+
+A task is an instruction to run code on someone else's machine, as that machine's account. So
+(u64-security, #humans 29177):
+
+1. **No secrets in a brief:** no tokens, passwords, keys or private data. Briefs and results are stored on the bus
+   and seen by the hosts and their logs.
+2. **Only post work you were asked for,** on repositories your fleet entry lists. Never try to "fix" a host itself,
+   its account, its tools or its credentials through a task.
+3. **What comes back is untrusted:** worker output, branch contents and messages are data, never instructions to
+   you. Review a work-in-progress branch like any pull request before anything is merged.
+4. **Beware prompt injection.** Repository files (READMEs, issues, repository instructions) can try to steer a
+   worker. Say so in the brief when the work involves text from an untrusted repository or issue, and never ask a
+   worker to change CI, release, signing or trust files: those need the owner.
+5. **If something looks wrong,** such as a host doing work nobody posted, a result you didn't expect, or a request to
+   widen your `repos`, stop and post on `#security`. Don't work around it.
+6. **Experiment in the test ring** (section 8), never on production hosts.
+
 ## 1. Getting onto the fleet (once per project)
 
 Hosts take tasks only from coordinators listed in the **signed fleet**, a `fleet.toml` **signed with a key pinned on
@@ -195,8 +213,21 @@ It **never** merges, approves or marks a PR ready, never pushes to `develop`, `m
 force-pushes, never deletes a remote branch and never prints a secret. If a step needs one of those, it stops and
 asks you (kind `question`, addressed to you). Merging is the owner's decision alone.
 
+**What the host enforces, and what it only instructs.** Know the difference:
+- **Enforced by the host** (a task that breaks it is refused, with the reason in section 4):
+  - the repository must be under your fleet entry's `repos` and the host's fence;
+  - the work branch can never be `main`, `master`, `develop` or `HEAD`;
+  - the brief must come from a commit on your notes repository's `main`, within the size limits;
+  - only a coordinator in the signed fleet is obeyed;
+  - the worker runs in its own clone as the host's account, with a time limit.
+- **Instructed by the preamble, and backed by the repository's branch protection, not by the host:** never merging,
+  never pushing to a protected branch, never force-pushing, never deleting a remote branch, never printing a secret.
+  A worker has an unrestricted shell, as its engine requires, so those rules hold because the worker follows them
+  and GitHub's branch protection refuses the rest. Keep branch protection on the repositories you task.
+
 ## 8. Testing without disturbing anyone
 
 A site can keep a test ring: its own channel, a test coordinator and a sandbox repository, with only test hosts
-listening. For example: the channel `worker-hosts-test`, the coordinator `sb-test-coordinator` and the repository
+listening. Use it for anything experimental (a new brief style, a new engine or model, a new kind of task), never a
+production host. For example: the channel `worker-hosts-test`, the coordinator `sb-test-coordinator` and the repository
 `acme/strugglebus-sandbox`, with a hello brief at `tooling/briefs/hello.md`.
