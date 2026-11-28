@@ -48,6 +48,12 @@ public sealed class AppSettings
     /// <summary>Closing the window hides it to the system tray and the app keeps running. Off unless chosen.</summary>
     public bool KeepInTray { get; set; }
 
+    /// <summary>
+    /// Flash the taskbar button when an agent addresses the operator in #humans while the app is
+    /// not the window in use. On unless turned off.
+    /// </summary>
+    public bool FlashWhenAddressed { get; set; } = true;
+
     /// <summary>The "still running in the tray" notice has been shown once, so it is not shown again.</summary>
     public bool TrayNoticeShown { get; set; }
 

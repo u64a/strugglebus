@@ -8,7 +8,8 @@ internal sealed record HumansChange(
     IReadOnlyList<(BusMessage Message, BusMessage? Parent)> Added,
     IReadOnlyList<long> Trimmed,
     int Fresh,
-    int FreshFromAgents);
+    int FreshFromAgents,
+    int FreshForOperator = 0);
 
 /// <summary>The loaded #humans messages and how far the operator has read. No UI types.</summary>
 internal sealed class HumansThread
@@ -38,7 +39,9 @@ internal sealed class HumansThread
 
         var trimmed = TrimOldest();
         if (_lastSeenInitialized)
-            return new HumansChange(added, trimmed, added.Count, added.Count(item => !HumansLogic.IsOperator(item.Message)));
+            return new HumansChange(
+                added, trimmed, added.Count, added.Count(item => !HumansLogic.IsOperator(item.Message)),
+                added.Count(item => HumansLogic.AddressesOperator(item.Message, item.Parent)));
 
         _lastSeenInitialized = true;
         LastSeenSeq = NewestSeq();

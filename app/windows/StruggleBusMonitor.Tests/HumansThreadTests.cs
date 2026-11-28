@@ -46,7 +46,53 @@ public sealed class HumansThreadTests
         Assert.Equal([2L, 3L], change.Added.Select(item => item.Message.Seq));
         Assert.Equal(2, change.Fresh);
         Assert.Equal(1, change.FreshFromAgents);
+        Assert.Equal(0, change.FreshForOperator);
         Assert.Equal(1, thread.Unread);
+    }
+
+    private static BusMessage Said(long seq, string agent, string body, long? replyTo = null) =>
+        new(seq, HumansLogic.Channel, agent, body, "chat", Timestamp, replyTo);
+
+    [Fact]
+    public void Record_CountsOnlyAgentMessagesThatAreForTheOperator()
+    {
+        var thread = new HumansThread();
+        thread.Record([Said(1, HumansLogic.OperatorAuthor, "a question from me"), Said(2, "agent-a", "agents talking")]);
+
+        var change = thread.Record(
+        [
+            Said(3, "agent-a", "@agent-b over to you"),
+            Said(4, "agent-b", "@agent-a @human:operator please sign"),
+            Said(5, "agent-a", "an answer", replyTo: 1),
+            Said(6, "agent-b", "a reply to an agent", replyTo: 2),
+            Said(7, HumansLogic.OperatorAuthor, "@human:operator a note to myself")
+        ]);
+
+        Assert.Equal((5, 4, 2), (change.Fresh, change.FreshFromAgents, change.FreshForOperator));
+    }
+
+    [Theory]
+    [InlineData("@human:operator", true)]
+    [InlineData("Hello @HUMAN:Operator, it is done.", true)]
+    [InlineData("see (@human:operator)", true)]
+    [InlineData("@human:operator-two is someone else", false)]
+    [InlineData("@human:operators", false)]
+    [InlineData("@human:operator_x then @human:operator.", true)]
+    [InlineData("human:operator without the at", false)]
+    [InlineData("", false)]
+    public void AMessageNamesTheOperatorOnlyByTheirWholeName(string body, bool expected) =>
+        Assert.Equal(expected, HumansLogic.AddressesOperator(Said(9, "agent-a", body), null));
+
+    [Fact]
+    public void TheTaskbarFlashesOnlyForTheOperatorAndOnlyWhenTheyWantIt()
+    {
+        var forOperator = new HumansChange([], [], 3, 3, 1);
+        var amongAgents = new HumansChange([], [], 3, 3, 0);
+
+        Assert.True(HumansLogic.Flashes(forOperator, flashWhenAddressed: true));
+        Assert.False(HumansLogic.Flashes(forOperator, flashWhenAddressed: false));
+        Assert.False(HumansLogic.Flashes(amongAgents, flashWhenAddressed: true));
+        Assert.True(new AppSettings().FlashWhenAddressed);
     }
 
     [Fact]
