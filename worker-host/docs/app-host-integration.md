@@ -155,6 +155,12 @@ v2 is the whole v1 object (section 1), with `v: 2` and these additions:
   once (`status-push-refused`) and retried hourly. So a host can be updated before its bus, and starts feeding the
   dashboard the moment the bus accepts it (`status-push-ok`).
 - **Otherwise:** a 429 waits a minute; an unreachable bus waits for the next push.
+- **A bus without the newer admin-only fields** (`sign_in`, `sign_in_key`, `claude_token_since`, `signers`,
+  `signers_total`; `hoststatus.NEWER_FIELDS`) refuses the whole snapshot with 400 (`unknown-field`). The host then
+  sends without them from the next push (after the 10 s gap), logs `status-push-without-newer-fields` once, and
+  offers them again hourly. So a host release can go out before the bus learns them, and the dashboard keeps
+  working; they appear on their own once the bus accepts them. A 400 on a snapshot without any newer field is an
+  ordinary refusal.
 - **The code:** `hoststatus.build_v2()`. `hoststatus.for_device()` and `hoststatus.sample()` are the reference for
   the bus's filter and history.
 

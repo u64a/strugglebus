@@ -256,6 +256,19 @@ def sign_in_field(raw: dict) -> dict:
     return out
 
 
+# Admin-only fields added after the v2 schema the bus first shipped (section 4a, and the pinned signers). A bus that
+# doesn't know one refuses the whole snapshot (400), so the host leaves them out for an hour and offers them again.
+NEWER_FIELDS = ("sign_in", "sign_in_key", "claude_token_since", "signers", "signers_total")
+
+
+def has_newer(snapshot: dict) -> bool:
+    return any(k in snapshot for k in NEWER_FIELDS)
+
+
+def without_newer(snapshot: dict) -> dict:
+    return {k: v for k, v in snapshot.items() if k not in NEWER_FIELDS}
+
+
 def for_device(snapshot: dict) -> dict:
     """What the bus returns to a signed-in App device without the operator grant: the snapshot less ADMIN_ONLY."""
     out = json.loads(json.dumps(snapshot))

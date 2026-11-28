@@ -315,6 +315,45 @@ def test_a_refusal_is_logged_once_and_retried_hourly_so_a_host_is_ready_before_i
     assert logged[-1] == ("status-push-ok", {"after": code}) and h.push_refused is None
 
 
+def test_a_bus_that_does_not_know_the_newer_fields_still_gets_the_snapshot(pushing):
+    """Serial 14 on a bus without the newer admin-only fields (sign_in_key, signers...): it refuses the snapshot
+    (400), so the host leaves them out from the next push, offers them again hourly, and sends them once accepted."""
+    h, pushes, logged, answer, clock = pushing
+    knows_newer = {"v": False}
+
+    def call(method, path, body=None, **k):
+        pushes.append((method, path, body))
+        if not knows_newer["v"] and hoststatus.has_newer(body):
+            return 400, None  # unknown-field, as bus/src/strugglebus/host_status.py refuses it
+        return 201, None
+
+    h.bus.call = call
+    h.status_facts = lambda f=h.status_facts: replace(f(), signers=[], signers_total=0)  # a newer field to send
+    h.push_status_if_due()
+    assert hoststatus.has_newer(pushes[-1][2]) and logged == [("status-push-without-newer-fields", {})]
+    clock["t"] += 11
+    h.push_status_if_due()
+    assert not hoststatus.has_newer(pushes[-1][2]) and h.push_refused is None  # stored: the dashboard keeps working
+    clock["t"] += 61
+    h.push_status_if_due()
+    assert not hoststatus.has_newer(pushes[-1][2])  # still without, within the hour
+    knows_newer["v"] = True  # the bus is updated
+    clock["t"] += 3600
+    h.push_status_if_due()
+    assert hoststatus.has_newer(pushes[-1][2])  # offered again after the hour, and accepted
+    clock["t"] += 61
+    h.push_status_if_due()
+    assert hoststatus.has_newer(pushes[-1][2]) and logged == [("status-push-without-newer-fields", {})]
+
+
+def test_a_400_without_newer_fields_is_still_a_refusal(pushing):
+    h, pushes, logged, answer, clock = pushing
+    h.status_facts = lambda f=h.status_facts: replace(f(), signers=None, signers_total=None)
+    answer["code"] = 400
+    h.push_status_if_due()
+    assert logged == [("status-push-refused", {"status": 400})]
+
+
 def test_a_busy_bus_and_an_unreachable_one_are_not_refusals(pushing):
     h, pushes, logged, answer, clock = pushing
     answer["code"] = 429
