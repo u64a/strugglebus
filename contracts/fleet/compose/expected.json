@@ -1,0 +1,21 @@
+{
+ "_about": "The Windows App's step 10 (worker-host/docs/app-host-integration.md 2.2 step 10; bus-dev #humans 29130, u64-security 29131): read the bus's current fleet strictly, add one [[host]], raise the serial. Each case: the current document, what to add, the bus's stored serial, the serials hosts report, and the result: the exact bytes to write, or the refusal. The reference is worker-host/tests/test_fleet_compose_vectors.py.",
+ "cases": [
+  {"name": "add", "current": "before.toml", "add": {"agent_name": "host-office2-host", "agent_id": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"}, "bus_serial": 5, "reported": [5, 4], "result": "after.toml"},
+  {"name": "host-already-listed-by-name", "current": "before.toml", "add": {"agent_name": "host-office1-host", "agent_id": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"}, "bus_serial": 5, "reported": [5], "result": "refuse:host-listed"},
+  {"name": "host-already-listed-by-id", "current": "before.toml", "add": {"agent_name": "host-office2-host", "agent_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"}, "bus_serial": 5, "reported": [5], "result": "refuse:host-listed"},
+  {"name": "a-host-reports-a-higher-serial", "current": "before.toml", "add": {"agent_name": "host-office2-host", "agent_id": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"}, "bus_serial": 5, "reported": [5, 9], "result": "refuse:serial-ahead"},
+  {"name": "the-bus-serial-is-not-the-documents", "current": "before.toml", "add": {"agent_name": "host-office2-host", "agent_id": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"}, "bus_serial": 4, "reported": [], "result": "refuse:serial-mismatch"},
+  {"name": "unknown-table", "current": "unknown-table.toml", "add": {"agent_name": "host-office2-host", "agent_id": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"}, "bus_serial": 5, "reported": [], "result": "refuse:unknown-key"},
+  {"name": "duplicate-id", "current": "duplicate-id.toml", "add": {"agent_name": "host-office2-host", "agent_id": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"}, "bus_serial": 5, "reported": [], "result": "refuse:duplicate-agent"},
+  {"name": "duplicate-name", "current": "duplicate-name.toml", "add": {"agent_name": "host-office2-host", "agent_id": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"}, "bus_serial": 5, "reported": [], "result": "refuse:duplicate-agent"},
+  {"name": "serial-missing", "current": "serial-missing.toml", "add": {"agent_name": "host-office2-host", "agent_id": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"}, "bus_serial": 5, "reported": [], "result": "refuse:serial-line"},
+  {"name": "serial-twice", "current": "serial-twice.toml", "add": {"agent_name": "host-office2-host", "agent_id": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"}, "bus_serial": 5, "reported": [], "result": "refuse:serial-line"}
+ ],
+ "flags": {
+  "_about": "The flags byte of an SSHSIG by a security key; the App and the hosts require 0x05 (touch and PIN). These are structurally real SSHSIGs with made-up key and signature bytes: for the flags reader only, they verify against nothing.",
+  "sk-touch-pin.sig": 5,
+  "sk-touch-only.sig": 1,
+  "plain-ed25519.sig": null
+ }
+}

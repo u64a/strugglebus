@@ -527,6 +527,40 @@ def test_the_release_record_is_written_right_after_the_install():
     assert main.index("Invoke-Install") < main.index("Write-ReleaseRecord $hostHome $verified.release") < main.index("Start-Host")
 
 
+@pytest.mark.parametrize("existing, want", [
+    ([], "StrugglebusWorkerHost"),
+    (["Other"], "StrugglebusWorkerHost"),
+    (["StrugglebusWorkerHost"], "StrugglebusWorkerHost-sbworker"),                 # the DevBox, beside devhost01's host
+    (["StrugglebusWorkerHost", "StrugglebusWorkerHost-sbworker"], "error"),       # never replaces either
+])
+@pytest.mark.parametrize("shell", SHELLS)
+def test_a_second_host_on_a_pc_gets_its_own_task_name(existing, want, shell):
+    names = ", ".join(f"'{n}'" for n in existing) or ""
+    got = run(f"try {{ ConvertTo-Json @(Get-HostTaskName @({names}) 'sbworker') }} catch {{ ConvertTo-Json @('error') }}", shell)
+    assert got == [want]
+
+
+@pytest.mark.parametrize("shell", SHELLS)
+def test_a_different_trust_root_is_kept_and_said_never_replaced_silently(shell, tmp_path):
+    f = tmp_path / "allowed_signers"
+    body = (f"function Say {{ }}; $f = '{f}'; $r = @{{}}; "
+            "$r.none = (Save-IfDifferent $f ([byte[]](1,2)) 'S') -eq $null; "
+            "[IO.File]::WriteAllBytes($f, [byte[]](1,2)); "
+            "$r.same = (Save-IfDifferent $f ([byte[]](1,2)) 'S') -eq $null; "
+            "$c = Save-IfDifferent $f ([byte[]](3)) 'S'; $r.copy = Split-Path $c -Leaf; "
+            "$r.kept = [Convert]::ToBase64String([IO.File]::ReadAllBytes($c)); ConvertTo-Json $r")
+    got = run(body, shell)
+    assert got == {"none": True, "same": True, "copy": "allowed_signers.before-S", "kept": "AQI="}
+
+
+@pytest.mark.parametrize("shell", SHELLS)
+def test_each_hosts_offboarding_record_is_its_own_file(shell):
+    got = run("ConvertTo-Json @((Get-AccountRecordPath 'sbworker' 'C:\\P'), (Get-AccountRecordPath 'sbworker2' 'C:\\P'))",
+              shell)
+    assert got == ["C:\\P\\host-account-sbworker.json", "C:\\P\\host-account-sbworker2.json"]
+    assert "'host-account.json'" not in SCRIPT.read_text(encoding="ascii")  # never one shared record again
+
+
 def test_still_ascii_and_lf_only():
     raw = SCRIPT.read_bytes()
     assert max(raw) < 128 and b"\r" not in raw

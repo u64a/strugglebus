@@ -1,0 +1,10 @@
+serial = 5
+owner = "Alex"
+
+[[host]]
+agent_name = "host-office1-host"
+agent_id   = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+
+[[host]]
+agent_name = "host-office1-host"
+agent_id   = "cccccccc-cccc-4ccc-8ccc-cccccccccccc"

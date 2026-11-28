@@ -4,3 +4,7 @@
 # The public half of the worker host project's published test key (an ssh-rsa
 # public key in a test vector). It is not a secret; its private half was discarded.
 f4b7f84984c81021a022dccce1725362d30288c8:app/windows/StruggleBusMonitor.Tests/HostEnrolFileTests.cs:generic-api-key:9
+
+# The SHA-256 pin of contracts/fleet/compose/plain-key.sig (a made-up signature vector, since renamed
+# plain-ed25519.sig so the pin no longer reads like a key) in that commit of PR 74's branch. A digest, not a secret.
+887f7aa6f1a87b937a38964d5c54a7fe27921955:worker-host/tests/vectors.py:generic-api-key:24

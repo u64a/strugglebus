@@ -30,6 +30,11 @@
 
   -Test: signs a throwaway text and verifies it, to check this PC can sign (after a rebuild).
 
+  -File <path> -Signers <file>: signs one loose file (the fleet.toml the Windows App composes and saves for a new host,
+  spec 2.2 step 10), in the namespace its name gives (fleet.toml, baseline.toml or release.toml), and writes
+  <path>.sig beside it. It shows the serial and SHA-256, asks "sign?", verifies the new signature against -Signers as
+  a host would, and checks it carries the YubiKey's touch AND PIN (flags 0x05), which the hosts require. No git, no PR.
+
   Nothing secret passes through this script: the private key never leaves the YubiKey, and the PIN
   goes from you to ssh-keygen directly.
 
@@ -53,8 +58,12 @@
   pwsh -File tools\sign-config.ps1 -Pr 31
 .EXAMPLE
   pwsh -File worker-host\tools\sign-config.ps1 -Pr 21 -Path worker-host -FirstSerial 8 -Signers <file> -KeyFile <file>
+.PARAMETER File
+  A loose file to sign (no PR): fleet.toml, baseline.toml or release.toml by name. Needs -Signers.
 .EXAMPLE
   pwsh -File tools\sign-config.ps1 -Test
+.EXAMPLE
+  pwsh -File worker-host\tools\sign-config.ps1 -File C:\Users\me\Desktop\fleet.toml -Signers <file> -KeyFile <file>
 #>
 [CmdletBinding()]
 param(
@@ -64,7 +73,8 @@ param(
     [switch]$NoMerge,
     [string]$Path = '',
     [int]$FirstSerial = 0,
-    [string]$Signers = ''
+    [string]$Signers = '',
+    [string]$File = ''
 )
 
 Set-StrictMode -Version Latest
@@ -128,8 +138,42 @@ function Get-SignerPrincipals([string]$signersText) {
     return , $out.ToArray()
 }
 
+function Get-FileNamespace([string]$path) {
+    # Pure: the namespace a loose file is signed in, from its name alone; anything else is refused.
+    $leaf = Split-Path $path -Leaf
+    if (-not $Signed.Contains($leaf)) { throw "-File signs only $($Signed.Keys -join ', ') (by name): not $leaf" }
+    return $Signed[$leaf]
+}
+
+function Get-SigFlags([string]$armored) {
+    # Pure: the flags byte of an SSHSIG made by a security key (sk-*), or $null for any other key type. 0x01 is the
+    # touch, 0x04 the PIN; the hosts require both (0x05). Layout: "SSHSIG", version, then strings publickey,
+    # namespace, reserved, hash algorithm, signature; inside the signature: string type, string sig, byte flags.
+    $b64 = (($armored -split "`r?`n") | Where-Object { $_ -and -not $_.StartsWith('-----') }) -join ''
+    $b = [Convert]::FromBase64String($b64)
+    if ($b.Length -lt 10 -or [Text.Encoding]::ASCII.GetString($b, 0, 6) -ne 'SSHSIG') { throw 'not an SSHSIG signature' }
+    $script:sigPos = 10
+    function Read-SshString {
+        if ($script:sigPos + 4 -gt $b.Length) { throw 'the signature is cut short' }
+        $n = ([int]$b[$script:sigPos] -shl 24) -bor ([int]$b[$script:sigPos + 1] -shl 16) -bor ([int]$b[$script:sigPos + 2] -shl 8) -bor [int]$b[$script:sigPos + 3]
+        if ($n -lt 0 -or $script:sigPos + 4 + $n -gt $b.Length) { throw 'the signature is cut short' }
+        $s = [byte[]]$b[($script:sigPos + 4)..($script:sigPos + 3 + $n)]
+        if ($n -eq 0) { $s = [byte[]]@() }
+        $script:sigPos += 4 + $n
+        return , $s
+    }
+    foreach ($skip in 1..4) { Read-SshString | Out-Null }   # publickey, namespace, reserved, hash algorithm
+    $sig = Read-SshString
+    $b = $sig; $script:sigPos = 0
+    $type = [Text.Encoding]::ASCII.GetString((Read-SshString))
+    if (-not $type.StartsWith('sk-')) { return $null }
+    Read-SshString | Out-Null
+    if ($script:sigPos -ge $b.Length) { throw 'the signature is cut short' }
+    return [int]$b[$script:sigPos]
+}
+
 if ($MyInvocation.InvocationName -eq '.') { return }
-if ($Test -eq ($Pr -gt 0)) { throw 'give either -Pr <number> or -Test' }
+if (@(@($Test.IsPresent, ($Pr -gt 0), [bool]$File) | Where-Object { $_ }).Count -ne 1) { throw 'give one of -Pr <number>, -Test or -File <path>' }
 $prefix = Get-Prefix $Path
 if ($Signers -and -not (Test-Path -LiteralPath $Signers -PathType Leaf)) { throw "no signers file $Signers" }
 
@@ -181,13 +225,14 @@ function Resolve-KeyFile {
 }
 
 function Invoke-Sign([string]$keygen, [string]$key, [string]$namespace, [byte[]]$data, [string]$work) {
-    $file = Join-Path $work ([guid]::NewGuid().ToString('n'))
-    [IO.File]::WriteAllBytes($file, $data)
+    # $unsigned, never $file: names are case-insensitive, so that would be the -File parameter.
+    $unsigned = Join-Path $work ([guid]::NewGuid().ToString('n'))
+    [IO.File]::WriteAllBytes($unsigned, $data)
     Say "signing ($namespace): enter the YubiKey PIN when asked, then touch the key when it blinks"
     # Interactive on purpose: ssh-keygen talks to you for the PIN, not to this script.
-    & $keygen -Y sign -f $key -n $namespace $file
-    if ($LASTEXITCODE -ne 0 -or -not (Test-Path "$file.sig")) { throw 'ssh-keygen -Y sign failed (wrong PIN, no touch, or the wrong key handle)' }
-    return , [IO.File]::ReadAllBytes("$file.sig")
+    & $keygen -Y sign -f $key -n $namespace $unsigned
+    if ($LASTEXITCODE -ne 0 -or -not (Test-Path "$unsigned.sig")) { throw 'ssh-keygen -Y sign failed (wrong PIN, no touch, or the wrong key handle)' }
+    return , [IO.File]::ReadAllBytes("$unsigned.sig")
 }
 
 function Test-Signature([string]$keygen, [string]$signers, [string]$namespace, [byte[]]$data, [byte[]]$sig, [string]$work) {
@@ -207,6 +252,32 @@ $keygen = Find-SshKeygen
 $key = Resolve-KeyFile
 $work = Join-Path ([IO.Path]::GetTempPath()) ("sign-config-" + [guid]::NewGuid().ToString('n'))
 New-Item -ItemType Directory -Path $work | Out-Null
+
+if ($File) {
+    try {
+        if (-not $Signers) { throw '-File needs -Signers <the allowed_signers file the hosts pin>' }
+        $target = (Resolve-Path -LiteralPath $File).Path
+        $namespace = Get-FileNamespace $target
+        if (Test-Path -LiteralPath "$target.sig") { throw "$target.sig already exists: remove it first, so an old signature is never mistaken for this one" }
+        $data = [IO.File]::ReadAllBytes($target)
+        $text = [Text.Encoding]::UTF8.GetString($data)
+        $sha = -join ([Security.Cryptography.SHA256]::Create().ComputeHash($data) | ForEach-Object { $_.ToString('x2') })
+        Write-Host ''
+        Write-Host "=== $target ($namespace): serial $(Get-Serial $text), $($data.Length) bytes, SHA-256 $sha ==="
+        Write-Host $text
+        if ((Read-Host "Sign exactly this? Type yes") -cne 'yes') { Say 'not signed: nothing changed'; return }
+        $sig = Invoke-Sign $keygen $key $namespace $data $work
+        Say (Test-Signature $keygen (Resolve-Path -LiteralPath $Signers).Path $namespace $data $sig $work)
+        $flags = Get-SigFlags ([Text.Encoding]::ASCII.GetString($sig))
+        if ($flags -ne 5) { throw "the signature's flags are $flags, not 0x05 (touch and PIN): the hosts would refuse it. Not written." }
+        [IO.File]::WriteAllBytes("$target.sig", $sig)
+        Say "wrote $target.sig (touch and PIN). Give the Windows App this file to publish."
+    } finally {
+        Remove-Item -Recurse -Force $work -ErrorAction SilentlyContinue
+    }
+    return
+}
+
 $root = Invoke-Git @('rev-parse', '--show-toplevel')
 Set-Location $root
 
