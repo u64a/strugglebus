@@ -85,6 +85,11 @@ HOST_TYPES: dict[str, tuple[tuple[str, ...], str]] = {
     "pressure": ((), "warning"),
     "problem-raised": (("code",), "warning"),
     "problem-cleared": (("code",), "info"),
+    # Signing in again (worker-host/docs/app-host-integration.md 4a): the tool in `code`, never the one-time code.
+    "sign-in-requested": (("code",), "info"),
+    "sign-in-code-issued": (("code",), "info"),
+    "sign-in-done": (("code",), "info"),
+    "sign-in-failed": (("reason",), "warning"),
 }
 
 #: The bus's own event types, by source: the fields each may carry and its level. ``reason`` is
