@@ -54,7 +54,8 @@ The operator follows the [install guide](../bus/src/strugglebus/selfhost/INSTALL
 kind of machine. Two different codes are involved, and they are easy to confuse:
 
 1. **The setup code**, shown once on the bus machine's own console. It is typed at the bus's
-   web page (`/setup`) to set the operator's password. It never leaves that machine's screen.
+   web page (`/setup`), which may be opened from another PC, to set the operator's password.
+   It is not to be shared, pasted into a chat, or written to a log.
 2. **The enrolment for the app**, made afterwards in the signed-in web console
    (Administration, Devices). It is a block of text that lasts three minutes and is pasted into
    the app in step 2.
@@ -227,12 +228,14 @@ repositories. The hardware key signs, Windows Hello confirms.
 
 | What happened | What the operator does | State |
 |---|---|---|
-| **The app's PC is lost or stolen** | **First, from another enrolled device or the bus's web console: revoke that device (Admin, Devices) and replace the operator grant.** That PC held the device's enrolment and saved operator access; until it is revoked, whoever has the PC and its Windows sign-in is an operator. Then install the app on a new PC, enrol it, set up Windows Hello, restore each hardware key's file from the key, and enter the site's repository locations again. The fleet is on the bus | Revoking and re-enrolling work today. **Gap:** restoring a key's file from the key (step 3); this procedure is not written down for the operator |
+| **The app's PC is lost or stolen** | **First, from another enrolled device or the bus's web console: revoke that device (Admin, Devices) and replace the operator grant.** That PC held the device's enrolment and saved operator access; until it is revoked, whoever has the PC and its Windows sign-in is an operator. Then install the app on a new PC, enrol it, set up Windows Hello, get each hardware key's file back (from the key itself if it is a resident key; from a protected copy if it is not), register the keys as site signers again on that PC, and enter the site's repository locations again. The fleet is on the bus | Revoking and re-enrolling work today. **Gap:** restoring a key's file from the key (step 3); this procedure is not written down for the operator |
 | A security key is lost | A finder also needs its PIN, and the key locks itself after a few wrong tries, so this is "replace it soon", not an emergency. Register its replacement on Security, then remove the lost one (never below two). Hosts already installed keep trusting it until it is removed on each host | Built in the app. **Gap:** removing it from the hosts needs a visit to each one |
 | A security key is stolen and its PIN may be known | Remove it on Security at once. If any fleet change appears that you did not make, freeze agent access and check the fleet's history of serials | Built. **Gap:** the fleet's history is not shown in the app |
 | A replacement key is added later | Registers it on Security. New hosts trust it. Hosts already installed do not, until re-pinned | **Gap:** the app does not yet show which hosts trust which keys. The hosts report it (bus 0.2.75); the app needs a warning where its set and a host's differ |
 | A host's program sign-in lapses (an expired token, a lapsed licence, an old Claude token) | Signs it in again from the app (step 7) | **Gap:** not built; today only a reinstall |
-| A host PC is lost, stolen or retired | Removes it from the fleet (Who may task the hosts), then retires its agent and revokes its service principal on Admin | Built |
+| A host PC is lost or stolen | Removes it from the fleet (Who may task the hosts), then retires its agent and revokes its service principal on Admin. That shuts it off the bus | Built |
+| A host PC is retired or reused | The same, off the bus. The PC itself still holds the host's Windows account, its scheduled task, its profile and its saved sign-ins | Off the bus: built. **Gap:** clearing the PC itself (stop the task, the processes, the profile, the account), which is the worker host's offboarding and is not built |
+| A worker-host update goes wrong | Nothing. After three quick failures the host puts back the release it had and never retries the failed one. Hosts shows each host's release | Built |
 | The wrong PC used a host code | The comparison in step 6 catches it and shuts it out | Built |
 | An agent misbehaves | Blocks or retires it on Admin, Agents, or freezes agent access | Built |
 | The bus's machine fails | Restores a tested backup of the **whole** deployment (the container, or the stopped Docker data volume), not the database alone: the bus's configuration and its web server's state are needed too. Then checks the HTTPS name still answers and that a signed-in read works, before going on | Outside the app. In the install guide |
@@ -272,6 +275,7 @@ bus, hosts listed, agents listed). Nothing new is stored.
 | 11 | Recovery written down for the operator (lost PC, lost or stolen key, failed bus) | Step 10 | The manual |
 | 12 | The fleet's history of serials, shown in the app | Step 10 | The app and the bus |
 | 13 | Prove a new key is real hardware (attestation) | Step 3 | The app, later |
+| 14 | Clear a retired host's PC: its account, task, profile and saved sign-ins | Step 10 | The worker host (offboarding) |
 
 ## Open questions for the owner
 
