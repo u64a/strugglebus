@@ -42,10 +42,15 @@ public partial class MainWindow
     {
         var stored = (await _api.GetSiteDocumentAsync(FleetPublishLogic.DocumentName, CancellationToken.None))?.Serial;
         if (FleetPublishLogic.SerialProblem(fleet.Serial, stored) is { } stale) throw new InvalidOperationException(stale);
-        if (!_platform.Confirm(this, FleetPublishLogic.ConfirmText(fleet, stored), "Publish the fleet")) return false;
+        var question = FleetPublishLogic.ConfirmText(fleet, stored) + ComposedNote(fleet);
+        if (!_platform.Confirm(this, question, "Publish the fleet")) return false;
         await RequireHelloAsync(FleetPublishLogic.HelloPrompt(fleet.Serial));
         return true;
     }
+
+    /// <summary>Says so when the document being published is the one this app composed in this run.</summary>
+    private string ComposedNote(SignedFleet fleet) =>
+        _composedFleet is { } composed && composed.AsSpan().SequenceEqual(fleet.Body) ? "\n\n" + FleetJoinLogic.ComposedNote(_composedFor!) : string.Empty;
 
     /// <summary>The document and the signature beside it, checked against the signer lines on this PC's Add a host form.</summary>
     private async Task<SignedFleet> ReadSignedFleetAsync(string path)

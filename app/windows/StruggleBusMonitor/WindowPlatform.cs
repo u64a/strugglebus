@@ -22,6 +22,9 @@ internal interface IWindowPlatform
     /// <summary>Asks where to save a worker host's enrolment data file. Null when the operator cancels.</summary>
     string? PickHostFilePath(Window owner, string suggestedName);
 
+    /// <summary>Asks where to save a composed fleet document for signing. Null when the operator cancels.</summary>
+    string? PickFleetSavePath(Window owner);
+
     /// <summary>Asks which signed fleet document to publish. Null when the operator cancels.</summary>
     string? PickFleetFile(Window owner);
 
@@ -98,6 +101,22 @@ internal sealed class WindowPlatform : IWindowPlatform
         get => SignInStart.IsOn;
         set => SignInStart.Set(value);
     }
+
+    public string? PickFleetSavePath(Window owner)
+    {
+        var dialog = FleetSaveDialog();
+        return dialog.ShowDialog(owner) == true ? dialog.FileName : null;
+    }
+
+    internal static SaveFileDialog FleetSaveDialog() => new()
+    {
+        Filter = "Fleet document (*.toml)|*.toml|All files (*.*)|*.*",
+        FileName = "fleet.toml",
+        DefaultExt = ".toml",
+        AddExtension = true,
+        OverwritePrompt = true,
+        Title = "Save the new fleet document for signing"
+    };
 
     public string? PickFleetFile(Window owner)
     {
