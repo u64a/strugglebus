@@ -396,24 +396,41 @@ checked as Microsoft-signed, never through the user-writable PATH alias.
        administrator, which `tree_sha256` doesn't cover. Hosts ignore it.
      - **Nothing from the fetched tree runs** until the signature, the PIN flag, the floor, `tree_sha256` and
        `installer_sha256` have all passed.
+   As built (PR 64, PR 68; tested end to end on a VM, 28 Nov 2026), the order is 4, 5, 6, 11, 8, 7, then the logon
+   denials and 9: the enrolment code lasts 15 minutes and the sign-ins take as long as the operator needs.
 4. **The account:**
-   - with `Dedicated`, it creates a standard local user (`sbworker`, or `sbworker2`... if taken), not an administrator,
-     with a long random password handed straight to Task Scheduler and never shown or stored. It denies that
-     account interactive and RDP logon once step 7 is done.
-   - Without `Dedicated`, it uses the operator's own account (the status shows `dedicated: false`).
+   - a standard local user (`sbworker`, or `sbworker2`... if taken), not an administrator, with a random 32-character
+     password held only in memory: it goes to `install.ps1` on stdin and from there to Task Scheduler, and is never
+     shown or stored. It's hidden from the sign-in screen, kept out of Administrators, Remote Desktop Users and
+     Remote Management Users, and recorded in `host-account.json` for offboarding.
+   - It's granted "log on as a batch job" (registering a task doesn't grant it to a standard user).
+   - `ProgramData\strugglebus` is locked down first: owned by Administrators, inheritance cut, Users read only.
 5. **Pins the signers:**
    - the site's lines go to `C:\ProgramData\strugglebus\allowed_signers` (administrators write, users read);
    - the project release key goes in with namespace `strugglebus-release` only;
    - every fingerprint is printed. No confirmation prompt: the App is the trusted source, and the operator approved
      the App's request with Windows Hello.
-6. **Installs** with the existing `install.ps1`, with a site file generated from the data file and the CA written from
-   `bus_ca_pem`. The scheduled task runs as the chosen account.
-7. **Engine sign-in:**
-   - device-code sign-in has to happen as the host's account, so the bootstrap starts each sign-in under that account
-     (`copilot login --device-code`, `claude` then `/login`) in a window the operator completes;
-   - with a dedicated account, this is the only time it is used interactively; step 4's logon denial follows it;
-   - skipped sign-ins leave the host in `needs-sign-in`, shown in the App, with `wh signin <engine>` to finish later.
-8. **Enrols with the code:**
+6. **Installs** with the verified `install.ps1 -Account <name> -PasswordStdin`, with a site file generated from the
+   data file and the CA written from `bus_ca_pem`. The home is `ProgramData\strugglebus\host\<name>`, for the account,
+   SYSTEM and Administrators only. The scheduled task runs as the account.
+   - **It records the release it installed** in `app\RELEASE.json`: the release step 3 verified, with
+     `moved_to` = the bootstrap's built-in place (u64a/strugglebus, `worker-host`). Without it the new host would never
+     update itself: `install.ps1` alone writes "manual", and a bus-fleet site has no fleet repository to fall back on.
+     The file sits in the account-writable home, so a compromised host account could edit it; the updater still
+     fences any redirect against the site's remotes, and releases still need the admin-only pinned key (u64-security,
+     #humans 29111). That is the known limit of anything the host's own account can write.
+7. **Sign-in, as the account (after step 8):**
+   - each sign-in runs in a window under the host's account (its tokens live in that profile): `gh auth login --web`
+     plus `gh auth setup-git` (the host uses gh, and git uses it for GitHub), `copilot login`, and `claude` then
+     `/login`;
+   - the operator chooses **a device code**, approved on any PC (the default; works for a VM, or a passkey on another
+     machine), or **a browser on this PC**;
+   - the host's probe then shows, as the account, which sign-ins took. A skipped one leaves that engine unavailable
+     until section 4a adds it;
+   - **then the logon denials** (in a `finally`, so they apply even if enrolment or a sign-in failed): no sign-in at
+     the PC, no Remote Desktop, no network logon, no service logon. Only the scheduled task's batch logon is left. A
+     `C:\Windows\.gitconfig` is refused before the install and removed if a sign-in left one.
+8. **Enrols with the code (before step 7):**
    - `wh enrol --code-stdin` redeems the code (bus 1: `POST /api/hosts/enrollments/redeem`, with a request id kept in
      the host's state, so a retry after a dropped connection gets the same answer);
    - it stores the returned SPN credential as today (DPAPI under the host's account, or OpenBao), onboards
@@ -578,6 +595,151 @@ A host more than 2 minutes off refuses commands with `bad-time`, which the App s
     malformed field, a wrong `v` or `type`, over the size caps);
   - every vector in `tests/data/vectors/expected.json` gives its expected result through the real verifier
     (tests/test_commands.py), including a fleet signature replayed as a command and a command for another host.
+
+---
+
+## 4a. Signing in again, after the lock-down (design, for review)
+
+Proposed on #humans 29048; accepted by u64-security with conditions (29049). **Not built yet.** This section is the
+design for u64-security and bus-dev to review before any of it is built.
+
+**The problem:** a sign-in lapses (a token expires, a licence changes) or was skipped at install (§2.2 step 7). But:
+- the host's account can no longer run interactively: its password exists nowhere, and the logon denials refuse
+  every logon but the task's batch logon;
+- resetting the password would lose every secret DPAPI holds for that account, the host's own bus credential
+  included, so it would mean enrolling again.
+
+**The principle:** the host signs itself in, as its own account, under the batch logon it already runs in. The
+operator starts it with a signed host command (§4). No password, no window, no lifting of the denials.
+
+### The commands
+
+Three new verbs. Each is a §4 command with all five of §4's rules:
+
+| Verb | Extra fields | Does |
+|---|---|---|
+| `sign-in-gh` | none | GitHub CLI's device-code sign-in, then `gh auth setup-git` |
+| `sign-in-copilot` | none | `copilot login --device-code` |
+| `sign-in-claude` | `epk`, `ct` (below) | stores the Claude token the App encrypted to this host |
+
+Rule 5 changes only for `sign-in-claude`, whose two fields are required and nothing else is allowed. A verb never
+names a URL, path or account.
+
+### gh and Copilot: a device code shown only to the person who asked
+
+1. **The host** runs the sign-in with no window and reads its output. It takes the code and the verification URL from
+   that output, and **refuses unless the URL is exactly `https://github.com/login/device`** and the code is GitHub's
+   form (8 letters and digits, a hyphen in the middle). Anything else ends the attempt (`sign-in-failed`,
+   `reason=unexpected-prompt`).
+2. **It puts them in its status** as `sign_in` (admin-only, §1a), for this attempt only:
+   `{"nonce": "<the command's nonce>", "tool": "gh" | "copilot", "code": "ABCD-1234", "expires_at": "..."}`.
+   - The nonce ties the code to the command that asked for it.
+   - `expires_at` is GitHub's own expiry, capped at 15 minutes.
+   - It's cleared when the sign-in completes, fails or expires. It's **never** in a history sample (§1a), an event
+     (§1b) or a log line.
+3. **The App shows a code only for a command this device sent,** under 15 minutes old, with the same nonce. Any other
+   code a host reports is dropped and recorded in the App's log, never shown. Otherwise a compromised host could push
+   codes at the operator: device-code phishing.
+4. **Beside the code, the App shows:**
+   - which tool (GitHub CLI or GitHub Copilot) and which host;
+   - this fixed text: "Approve only at https://github.com/login/device, and check GitHub names GitHub CLI or GitHub
+     Copilot".
+   The URL is the App's own constant, never taken from the host.
+5. **The operator approves on their own PC.** The host's sign-in then completes on its own, as the account; for gh,
+   it then runs `gh auth setup-git`.
+
+### Claude: a token, encrypted end to end to the host
+
+Claude Code's `/login` wants its code pasted back, so a device flow doesn't fit. Instead the operator makes a
+long-lived token with `claude setup-token` on any PC, and the App delivers it **encrypted, so the bus relays only
+ciphertext**. "Admin-only and never logged" would be a promise about every code path: request logs, the event log,
+the audit feed, the App's own logs, a crash dump. Encryption makes it hold even if one of them slips.
+
+**The host's key:**
+- the bootstrap makes the X25519 key pair as the account (§2.2, with the sign-ins), and **prints its fingerprint** in
+  the install output beside the others. So the App's first pin is compared with what the operator saw on the machine
+  itself, not trusted on first use (u64-security, 29120). A host installed before this makes its key the first time
+  it's needed, and its first pin is compared by running `wh status` on the machine;
+- the private key is stored with DPAPI, as the host's account, beside its other credentials;
+- the public key goes in its status as `sign_in_key` (admin-only): `{"x25519": "<base64>", "fingerprint":
+  "SHA256:<base64 of SHA-256 over the key>"}`.
+
+**The App pins that fingerprint per host:**
+- it shows the fingerprint with the host's name the first time, and the operator confirms it **matches the one the
+  install printed**;
+- a changed key is never used until the operator confirms it again (with Windows Hello), and the App says plainly
+  that the host's key changed.
+
+**Sending a token:**
+1. The operator pastes the token into the App. The App never stores it and never logs it.
+2. The App encrypts the token to the pinned key:
+   - a fresh X25519 key pair for this message (`epk`, its public half);
+   - HKDF-SHA256 over the shared secret, with salt = `epk` followed by the host's public key (the usual ECIES binding:
+     the derived key belongs to exactly that pair) and info `strugglebus-claude-token v1`. An all-zero shared secret
+     (a low-order point) is refused on both sides (u64-security, 29120);
+   - AES-256-GCM, with the host's agent name and the command's nonce as associated data, so the ciphertext can't be
+     replayed to another host or in another command.
+   - `ct` is the 12-byte IV, the ciphertext and the tag, base64.
+3. The App sends it in a signed `sign-in-claude` command. A token of about 100 characters fits within §4's 1 KB
+   document cap.
+4. The host checks the command (all of §4's rules), decrypts, and stores the token with DPAPI. **A failed decryption**
+   (a bad tag, or the wrong key) is the event `sign-in-failed` with `reason=decrypt`, and the status says so. The App
+   then shows "the host could not open it; its key may have changed", never a silent failure.
+5. On success, the host's own records keep only the date it arrived, never the token. When the host runs Claude Code workers it gives it as
+   `CLAUDE_CODE_OAUTH_TOKEN`.
+
+**The token's life:**
+- **One token per host.** The status shows `claude_token_since` (a date, admin-only).
+- **Rotate at least yearly.** After 335 days the host raises the warning `claude-token-old`.
+- **On the offboarding checklist:** revoke it at claude.ai.
+- **Exposure, stated plainly:** workers run as the same account and can read the token. That's the same exposure as
+  the account's other DPAPI credentials today, and accepted for that reason (u64-security, 29049).
+
+### Audit
+
+Every step is recorded without the code or the token:
+
+**Host events (§1b), five new types:**
+
+| Type | Fields | Level |
+|---|---|---|
+| `sign-in-requested` | `code`: the tool (`gh`, `copilot`, `claude`) | info |
+| `sign-in-code-issued` | `code`: the tool | info |
+| `sign-in-done` | `code`: the tool | info |
+| `sign-in-failed` | `reason` | warning |
+| `claude-token-stored` | — | info |
+
+**The App:** it records showing a code, refusing an unsolicited one, confirming a key and sending a token as bus
+security events, through bus-dev's existing App audit path. None carries a code, token or key.
+
+### Who builds what
+
+- **Host (sbworkerhost-project):**
+  - the three verbs and their checks;
+  - the headless sign-ins and their output parsing, refusing anything unexpected;
+  - the X25519 key (made and fingerprinted by the bootstrap) and the decryption;
+  - the `sign_in`, `sign_in_key` and `claude_token_since` status fields;
+  - the events and the `claude-token-old` warning;
+  - the token passed to Claude Code workers;
+  - vectors for all of it.
+- **Bus (bus-dev):**
+  - the three status fields, admin-only and **may be absent** (as `pwsh`), never in a history sample;
+  - the five event types;
+  - nothing in the command post changes: it already carries any signed document of 1 KB or less.
+- **App (bus-dev):**
+  - the sign-in buttons on a host;
+  - the nonce check and the fixed text;
+  - the key pinning and the token entry and encryption;
+  - its audit events.
+
+### To prove first, on the test VM (`host-sbtest-host`)
+
+1. `gh auth login --web` and `copilot login --device-code` run headless under the batch logon. Neither may wait for
+   Enter or a TTY, and the code and URL must be readable from their output.
+2. `CLAUDE_CODE_OAUTH_TOKEN` alone is enough for Claude Code in a worker, with no `/login` state in the profile.
+3. A real `sign-in-claude` document, with a token of realistic length, stays under 1 KB.
+
+If any of these fails, this section changes before anything is built.
 
 ---
 
