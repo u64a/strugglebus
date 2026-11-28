@@ -147,6 +147,13 @@ public sealed class HostRow
     public string AgentId { get; init; } = string.Empty;
     public string AgentName { get; init; } = string.Empty;
 
+    /// <summary>Set for a host that joined with a host code: what the operator compares before adding it to the fleet.</summary>
+    internal HostJoin? Join { get; init; }
+    public bool CanJoinFleet => Join is not null;
+
+    /// <summary>The fleet serial the host says it runs, when it has said.</summary>
+    internal long? FleetSerial { get; init; }
+
     /// <summary>
     /// Whether the bus has this agent marked as a worker host, which is what lets it report to the
     /// Hosts page. Null when the bus is too old to say, and then there is nothing to offer.
@@ -225,9 +232,15 @@ internal static class HostsLogic
             Tone = tone,
             Meta = string.Join("  ·  ", MetaParts(agent, status, alive, now).Where(part => part.Length > 0)),
             Joined = JoinedText(agent.Id, principal?.HostRedeemRequestId, principal?.HostRedeemedFrom),
+            Join = JoinOf(agent, status, principal),
+            FleetSerial = status?.FleetSerial,
             Alerts = string.Join(Environment.NewLine, Alerts(status))
         };
     }
+
+    /// <summary>What the operator compares before adding the host to the fleet; null unless it joined with a host code.</summary>
+    private static HostJoin? JoinOf(BusAgent agent, HostStatus? status, ManagedServicePrincipal? principal) =>
+        principal is { HostRedeemRequestId.Length: > 0 } ? new HostJoin(agent.Id, agent.Name, principal, status) : null;
 
     /// <summary>
     /// The PC's own name. A host that has not reported one is named from its bus name, without the

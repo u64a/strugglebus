@@ -29,6 +29,9 @@ internal sealed class StaWindowAdminPlatform : IWindowPlatform
     public bool PrefersLight { get; set; }
     public Rect Screen { get; set; } = new(0, 0, 1920, 1080);
     public bool ConfirmAnswer { get; set; } = true;
+
+    /// <summary>Answers to the next questions, in order; after them every question gets <see cref="ConfirmAnswer"/>.</summary>
+    public Queue<bool> ConfirmAnswers { get; } = [];
     public bool HelloAnswer { get; set; } = true;
     public string? ExportPath { get; set; }
     public bool ClipboardBusy { get; set; }
@@ -51,7 +54,7 @@ internal sealed class StaWindowAdminPlatform : IWindowPlatform
     public bool Confirm(Window owner, string message, string caption)
     {
         Confirmations.Add((message, caption));
-        return ConfirmAnswer;
+        return ConfirmAnswers.Count > 0 ? ConfirmAnswers.Dequeue() : ConfirmAnswer;
     }
 
     public string? PickExportPath(Window owner, string suggestedName)
@@ -71,6 +74,10 @@ internal sealed class StaWindowAdminPlatform : IWindowPlatform
     public List<(string Signer, string Principal, string Purpose, int Bytes)> Verified { get; } = [];
 
     public string? PickFleetFile(Window owner) => FleetFilePath;
+
+    public string? FleetSavePath { get; set; }
+
+    public string? PickFleetSavePath(Window owner) => FleetSavePath;
 
     public Task<SshVerdict> VerifySshSignatureAsync(byte[] message, string signature, string signerLine, string principal, string purpose)
     {

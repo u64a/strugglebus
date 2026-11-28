@@ -670,6 +670,7 @@
                                                         </StackPanel>
                                                         <TextBlock Text="{Binding Meta}" Style="{StaticResource MutedText}" TextWrapping="Wrap" Margin="0,3,0,0"/>
                                                         <Button Content="{Binding MarkLabel}" Tag="{Binding}" Style="{StaticResource BtnOutline}" HorizontalAlignment="Left" Margin="0,6,0,0" Click="HostMark_Click" Visibility="{Binding CanMark, Converter={StaticResource BoolToVisibility}}"/>
+                                                        <Button Content="Check the code and add to the fleet" Tag="{Binding}" Style="{StaticResource BtnOutline}" HorizontalAlignment="Left" Margin="0,6,0,0" Click="HostJoin_Click" Visibility="{Binding CanJoinFleet, Converter={StaticResource BoolToVisibility}}"/>
                                                         <TextBlock Text="{Binding Joined}" FontFamily="{StaticResource Mono}" FontSize="12" TextWrapping="Wrap" Margin="0,4,0,0">
                                                             <TextBlock.Style>
                                                                 <Style TargetType="TextBlock">
@@ -737,7 +738,7 @@
                                     <TextBlock Text="Publishes a fleet document that was signed with one of the site's hardware keys. The app does not sign. Before anything is sent it checks the signature against the signer lines above, that the key recorded a touch and its PIN, and that Windows' own ssh-keygen verifies it for the exact bytes. Windows Hello confirms last." Style="{StaticResource MutedText}" TextWrapping="Wrap" Margin="0,8,0,0"/>
                                     <Button x:Name="FleetPublishButton" Content="Publish a signed fleet document" Style="{StaticResource BtnOutline}" Click="FleetPublish_Click" HorizontalAlignment="Left" Margin="0,12,0,0"/>
                                     <Border x:Name="FleetResultPanel" Visibility="Collapsed" Background="{DynamicResource S1}" BorderBrush="{DynamicResource Accent}" BorderThickness="1" CornerRadius="6" Padding="12" Margin="0,12,0,0">
-                                        <TextBlock x:Name="FleetResult" TextWrapping="Wrap"/>
+                                        <TextBox x:Name="FleetResult" IsReadOnly="True" BorderThickness="0" Background="Transparent" FontFamily="{StaticResource Mono}" FontSize="12" TextWrapping="Wrap" AcceptsReturn="True"/>
                                     </Border>
                                 </StackPanel>
                             </Border>
