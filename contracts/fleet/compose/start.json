@@ -1,0 +1,11 @@
+{
+ "_about": "Starting a fleet in the Windows App (bus-dev #humans 29301; u64-security 29299, 29303). Offered ONLY when the bus holds no fleet (bus_serial null) AND no host reports a fleet serial (reported empty): otherwise a fleet exists somewhere, and a fresh one would un-list every host and coordinator it names, so the App takes over the hosts' offered fleet instead. A start is always serial 1: `serial = 1`, then `owner = \"<owner>\"` when one is given (config.OWNER_RE), and nothing else. Hosts and coordinators are then added one signed change at a time with the existing composers (expected.json add-the-first-host-to-a-started-fleet, coordinators.json add-the-first-coordinator-to-a-started-fleet). A host accepts a fleet with no tables, and a host it doesn't list waits in needs-fleet. Each case: the owner, the bus's stored serial (null: none), the serials hosts report, and the result: the exact bytes, or refuse:<reason>[:<field>]. The reference is worker-host/tests/test_fleet_compose_vectors.py.",
+ "cases": [
+  {"name": "start-with-an-owner", "owner": "Alex", "bus_serial": null, "reported": [], "result": "start-owner.toml"},
+  {"name": "start-without-an-owner", "owner": "", "bus_serial": null, "reported": [], "result": "start-bare.toml"},
+  {"name": "start-with-an-owner-that-breaks-out", "owner": "Alex\"\n[evil]", "bus_serial": null, "reported": [], "result": "refuse:bad-value:owner"},
+  {"name": "start-with-an-owner-too-long", "owner": "Alexandra Constantinople-Featherstonehaugh", "bus_serial": null, "reported": [], "result": "refuse:bad-value:owner"},
+  {"name": "start-when-a-host-reports-a-fleet", "owner": "Alex", "bus_serial": null, "reported": [4], "result": "refuse:fleet-exists"},
+  {"name": "start-when-the-bus-holds-a-fleet", "owner": "Alex", "bus_serial": 4, "reported": [], "result": "refuse:fleet-exists"}
+ ]
+}

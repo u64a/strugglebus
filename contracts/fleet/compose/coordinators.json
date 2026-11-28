@@ -1,5 +1,5 @@
 {
- "_about": "The Windows App's coordinator allow list (Chris, 28 Nov; bus-dev #humans 29194, u64-security 29174): authorise or remove a coordinator, or remove a host, composing the next fleet strictly (one change, serial + 1, every other byte kept). Each case gives the current document, the operation, the bus's serial, the serials hosts report, the site's allowed remotes, and the result: the exact bytes, or the refusal (refuse:<reason>[:<field>]). `warnings` are shown on the confirm screen, never a refusal. The reference is worker-host/tests/test_fleet_compose_vectors.py. The serial rules (serial-line, serial-mismatch, serial-ahead) are as in expected.json.",
+ "_about": "The Windows App's coordinator allow list (Chris, 28 Nov; bus-dev #humans 29194, u64-security 29174): authorise or remove a coordinator, or remove a host, composing the next fleet strictly (one change, serial + 1, every other byte kept). Each case gives the current document, the operation, the bus's serial, the serials hosts report, the site's allowed remotes, and the result: the exact bytes, or the refusal (refuse:<reason>[:<field>]). `warnings` are shown on the confirm screen, never a refusal. The reference is worker-host/tests/test_fleet_compose_vectors.py. The serial rules (serial-line, serial-mismatch, serial-ahead) are as in expected.json. `default_engine` is optional, and the App leaves it out (bus-dev 29301): a task picks its engine and the host's default applies otherwise, so the coordinator's key chooses nothing; a missing key reads as ghcp.",
  "remotes": ["https://github.com/acme/"],
  "cases": [
   {"name": "add-coordinator", "current": "before.toml", "op": "add-coordinator", "bus_serial": 5, "reported": [5],
@@ -78,6 +78,16 @@
   {"name": "remove-the-last-coordinator", "current": "before.toml", "op": "remove-coordinator", "agent_name": "coord-main",
    "bus_serial": 5, "reported": [], "result": "refuse:last-coordinator"},
   {"name": "remove-a-hand-edited-block", "current": "hand-edited.toml", "op": "remove-coordinator", "agent_name": "coord-docs",
-   "bus_serial": 7, "reported": [], "result": "refuse:hand-edited"}
+   "bus_serial": 7, "reported": [], "result": "refuse:hand-edited"},
+  {"name": "add-coordinator-without-an-engine", "current": "before.toml", "op": "add-coordinator", "bus_serial": 5, "reported": [5],
+   "entry": {"agent_name": "coord-docs", "agent_id": "22222222-2222-4222-8222-222222222222", "project": "docs",
+             "notes_repo": "https://github.com/acme/docs-notes", "notes_channel": "docs-notes",
+             "repos": ["https://github.com/acme/handbook"]},
+   "result": "add-coordinator-no-engine-after.toml", "warnings": []},
+  {"name": "add-the-first-coordinator-to-a-started-fleet", "current": "start-owner.toml", "op": "add-coordinator", "bus_serial": 1, "reported": [],
+   "entry": {"agent_name": "coord-main", "agent_id": "11111111-1111-4111-8111-111111111111", "project": "app",
+             "notes_repo": "https://github.com/acme/team-notes", "notes_channel": "app-notes",
+             "repos": ["https://github.com/acme/app"]},
+   "result": "start-then-coordinator.toml", "warnings": []}
  ]
 }

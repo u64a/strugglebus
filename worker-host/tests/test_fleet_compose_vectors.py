@@ -114,12 +114,15 @@ def compose_add_coordinator(text: str, e: dict, bus_serial: int, reported: list[
         values = e[name] if isinstance(e[name], list) else [e[name]]
         if any(UNSAFE & set(v) for v in values):
             raise Refused(f"unsafe-char:{name}")
+    # default_engine is optional and the App leaves it out (bus-dev 29301): a task picks its engine, then the host's
+    # default applies; the coordinator's key chooses nothing, and a missing one reads as ghcp.
+    order = [k for k in ENTRY_ORDER if k != "default_engine" or "default_engine" in e]
     checks = {"agent_name": fleet.AGENT_RE.fullmatch(e["agent_name"]), "agent_id": fleet.UUID_RE.fullmatch(e["agent_id"]),
               "project": fleet.PROJECT_RE.fullmatch(e["project"]),
               "notes_repo": urls.repo_url(e["notes_repo"]), "notes_channel": fleet.CHANNEL_RE.fullmatch(e["notes_channel"]),
               "repos": e["repos"] and all(urls.prefix_ok(r) for r in e["repos"]),
-              "default_engine": e["default_engine"] in fleet.ENGINES}
-    for name in ENTRY_ORDER:
+              "default_engine": e.get("default_engine") in fleet.ENGINES}
+    for name in order:
         if not checks[name]:
             raise Refused(f"bad-value:{name}")
     for r in e["repos"]:
@@ -132,8 +135,8 @@ def compose_add_coordinator(text: str, e: dict, bus_serial: int, reported: list[
     if any(a.get("agent_name") == e["agent_name"] or a.get("agent_id") == e["agent_id"] for a in agents):
         raise Refused("duplicate-agent")
     serial = _serial(raw, bus_serial, reported)
-    values = {k: (("[" + ", ".join(f'"{r}"' for r in e[k]) + "]") if k == "repos" else f'"{e[k]}"') for k in ENTRY_ORDER}
-    block = "\n[[coordinator]]\n" + "".join(f"{k:<14} = {values[k]}\n" for k in ENTRY_ORDER)
+    values = {k: (("[" + ", ".join(f'"{r}"' for r in e[k]) + "]") if k == "repos" else f'"{e[k]}"') for k in order}
+    block = "\n[[coordinator]]\n" + "".join(f"{k:<14} = {values[k]}\n" for k in order)
     warnings = [f"broad-prefix:{r}" for r in e["repos"] if r.endswith("/")]
     return SERIAL_LINE.sub(f"serial = {serial}\n", text, count=1) + block, warnings
 
@@ -188,6 +191,50 @@ def test_each_allow_list_case_gives_its_expected_bytes_or_refusal(case):
         assert warnings == case.get("warnings", [])
         doc = fleet.parse(got.encode("utf-8"))  # and the host's own parser accepts it
         assert doc.serial == case["bus_serial"] + 1
+
+
+# --- starting a fleet in the App (start.json; bus-dev 29301, u64-security 29299/29303) ----------------------------------
+
+from workerhost import config  # noqa: E402  (OWNER_RE: the schema's owner pattern)
+
+
+def compose_start(owner: str, bus_serial: int | None, reported: list[int]) -> str:
+    """A first fleet: `serial = 1` and the owner, nothing else; hosts and coordinators are then added one signed
+    change at a time. Only when the bus holds no fleet AND no host reports one: otherwise a fleet exists somewhere,
+    and a fresh one would un-list everything it names (that's the takeover from the hosts' offers instead)."""
+    if bus_serial is not None or reported:
+        raise Refused("fleet-exists")
+    if not owner:
+        return "serial = 1\n"
+    if not config.OWNER_RE.fullmatch(owner):
+        raise Refused("bad-value:owner")
+    return f'serial = 1\nowner = "{owner}"\n'
+
+
+START = json.loads(read("start.json"))
+
+
+@pytest.mark.parametrize("case", START["cases"], ids=lambda c: c["name"])
+def test_each_start_case_gives_its_expected_bytes_or_refusal(case):
+    try:
+        got = compose_start(case["owner"], case["bus_serial"], case["reported"])
+    except Refused as e:
+        got = f"refuse:{e}"
+    if case["result"].startswith("refuse:"):
+        assert got == case["result"]
+    else:
+        assert got.encode("utf-8") == read(case["result"])
+        doc = fleet.parse(got.encode("utf-8"))  # a host accepts it: no hosts, no coordinators
+        assert (doc.serial, doc.owner, doc.hosts, doc.coordinators) == (1, case["owner"], (), ())
+
+
+def test_a_started_fleet_is_then_built_by_the_usual_one_at_a_time_changes():
+    """The first coordinator and the first host go onto a started fleet through the composers that exist."""
+    first = next(c for c in COORDS["cases"] if c["name"] == "add-the-first-coordinator-to-a-started-fleet")
+    host = next(c for c in EXPECTED["cases"] if c["name"] == "add-the-first-host-to-a-started-fleet")
+    assert first["current"] in [c["result"] for c in START["cases"]]
+    assert host["current"] in [c["result"] for c in START["cases"]]
+    assert fleet.parse(read(first["result"])).coordinators[0].default_engine == "ghcp"  # left out: reads as ghcp
 
 
 NOT_A_FLEET = json.loads(read("not-a-fleet.json"))

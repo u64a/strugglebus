@@ -62,6 +62,7 @@ The entry, field by field:
 | `notes_channel` | where your workers post and read your notes |
 | `repos` | the repositories you may task: `https://github.com/<owner>/` (a whole organisation) or exact repository URLs |
 | `repo_instructions` | optional, default `true`: whether your workers load the repository's `AGENTS.md` and `.github/copilot-instructions.md` when a task does not say (section 5) |
+| `default_engine` | optional, and **it chooses nothing**: each task picks its engine (`"engine"`, section 3), and the host's default applies otherwise. One coordinator can use Copilot and Claude Code task by task. The App leaves it out |
 | `worker_rules` | optional, at most 4,000 characters: your project's always-rules, put into every one of your workers' fixed preamble. Put here what must hold for every task (safety rules, where pull requests go, wording a content filter needs). Changing them needs a new signature, which is the point |
 
 The file also has a top-level `owner`: the name every worker's preamble gives as the person whose decision merging

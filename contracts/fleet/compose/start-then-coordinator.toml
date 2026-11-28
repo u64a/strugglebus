@@ -1,0 +1,10 @@
+serial = 2
+owner = "Alex"
+
+[[coordinator]]
+agent_name     = "coord-main"
+agent_id       = "11111111-1111-4111-8111-111111111111"
+project        = "app"
+notes_repo     = "https://github.com/acme/team-notes"
+notes_channel  = "app-notes"
+repos          = ["https://github.com/acme/app"]

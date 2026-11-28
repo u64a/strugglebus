@@ -10,7 +10,8 @@
   {"name": "duplicate-id", "current": "duplicate-id.toml", "add": {"agent_name": "host-office2-host", "agent_id": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"}, "bus_serial": 5, "reported": [], "result": "refuse:duplicate-agent"},
   {"name": "duplicate-name", "current": "duplicate-name.toml", "add": {"agent_name": "host-office2-host", "agent_id": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"}, "bus_serial": 5, "reported": [], "result": "refuse:duplicate-agent"},
   {"name": "serial-missing", "current": "serial-missing.toml", "add": {"agent_name": "host-office2-host", "agent_id": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"}, "bus_serial": 5, "reported": [], "result": "refuse:serial-line"},
-  {"name": "serial-twice", "current": "serial-twice.toml", "add": {"agent_name": "host-office2-host", "agent_id": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"}, "bus_serial": 5, "reported": [], "result": "refuse:serial-line"}
+  {"name": "serial-twice", "current": "serial-twice.toml", "add": {"agent_name": "host-office2-host", "agent_id": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"}, "bus_serial": 5, "reported": [], "result": "refuse:serial-line"},
+  {"name": "add-the-first-host-to-a-started-fleet", "current": "start-bare.toml", "add": {"agent_name": "host-office1-host", "agent_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"}, "bus_serial": 1, "reported": [], "result": "start-then-host.toml"}
  ],
  "flags": {
   "_about": "The flags byte of an SSHSIG by a security key; the App and the hosts require 0x05 (touch and PIN). These are structurally real SSHSIGs with made-up key and signature bytes: for the flags reader only, they verify against nothing.",
