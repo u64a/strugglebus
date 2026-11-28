@@ -25,7 +25,9 @@ internal enum FleetRefusal
     /// <summary>Removing it would leave no agent authorised to task the hosts.</summary>
     LastCoordinator,
     /// <summary>The table to remove has a blank line or a comment inside it, so its end is not certain.</summary>
-    HandEdited
+    HandEdited,
+    /// <summary>A fleet cannot be started from nothing: the bus holds one, or a host reports that it runs one.</summary>
+    FleetExists
 }
 
 internal sealed class FleetRefusedException(FleetRefusal reason, string message, string? field = null) : InvalidOperationException(message)
@@ -188,6 +190,42 @@ internal static partial class FleetCompose
             if (index >= lines.Length) throw Refused(FleetRefusal.UnknownKey, "A multi-line text in the current fleet is never closed.");
             rest = lines[index];
         }
+    }
+
+    [GeneratedRegex(@"\A[A-Za-z0-9 .'-]{1,40}\z")]
+    private static partial Regex OwnerName();
+
+    /// <summary>
+    /// The first fleet of a site that has none: serial 1, the owner's name when one is given,
+    /// and nothing else. Hosts and coordinators are then added one signed change at a time, with
+    /// the same rules as ever. It is refused when a fleet already exists anywhere the app can see:
+    /// on the bus, or in a serial a host reports. Starting again there would drop every host and
+    /// coordinator that fleet names; the existing fleet is taken over instead.
+    /// </summary>
+    public static string Start(string owner, bool busHoldsFleet, IEnumerable<long> reported)
+    {
+        RequireNoFleet(busHoldsFleet, reported.DefaultIfEmpty(0).Max());
+        return "serial = 1\n" + OwnerLine(owner.Trim());
+    }
+
+    private static void RequireNoFleet(bool busHoldsFleet, long running)
+    {
+        if (busHoldsFleet) throw Refused(FleetRefusal.FleetExists, "The bus already holds a fleet. Change that one; a new one is not started over it.");
+        if (running > 0)
+        {
+            throw Refused(
+                FleetRefusal.FleetExists,
+                $"A worker host reports that it already runs fleet serial {running}. Starting a new fleet would leave out everything that one lists, and the host would refuse it as older. Take the existing fleet over instead.");
+        }
+    }
+
+    /// <summary>The owner line, or nothing when no name is given. A name outside the schema's pattern is refused.</summary>
+    private static string OwnerLine(string name)
+    {
+        if (name.Length == 0) return string.Empty;
+        return OwnerName().IsMatch(name)
+            ? $"owner = \"{name}\"\n"
+            : throw new FleetRefusedException(FleetRefusal.BadValue, "The owner's name may hold letters, digits, spaces, full stops, apostrophes and hyphens, 40 at most.", "owner");
     }
 
     /// <summary>Why this name and id cannot be a host entry, or null.</summary>

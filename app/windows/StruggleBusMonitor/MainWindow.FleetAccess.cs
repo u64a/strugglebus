@@ -34,15 +34,40 @@ public partial class MainWindow
     private async Task LoadFleetAccessAsync()
     {
         if (_api.Session is null) return;
-        var fleet = await ListedFleetAsync();
+        var (held, fleet) = await ListedFleetAsync();
         var agents = await ManagedAgentsOrNoneAsync();
+        FleetStartPanel.Visibility = VisibleWhen(!held);
         Replace(_fleetEntries, FleetAccessLogic.Rows(fleet));
         _accessAllChoices = FleetAccessLogic.Choices(agents, fleet, DateTimeOffset.Now);
         ShowAccessMatches();
         ChooseAccessAgent(_accessAllChoices.FirstOrDefault(choice => choice.Id == _accessAgent?.Id));
-        FleetAccessSummary.Text = fleet.Count == 0
-            ? "The bus holds no fleet yet, or one this app cannot read. Publish today's signed fleet first, below."
+        FleetAccessSummary.Text = FleetSummary(held, fleet.Count);
+    }
+
+    private string FleetSummary(bool held, int listed)
+    {
+        if (!held) return "The bus holds no fleet yet. Start one below.";
+        return listed == 0 && _fleetUnreadable
+            ? "The bus holds a fleet this app cannot read strictly, so it is not listed and cannot be changed here."
             : $"The fleet on the bus lists {_fleetEntries.Count(row => row.Kind == "coordinator")} agent(s) that may task the hosts and {_fleetEntries.Count(row => row.Kind == "host")} worker host(s).";
+    }
+
+    private bool _fleetUnreadable;
+
+    internal async void FleetStart_Click(object sender, RoutedEventArgs e) => await RunBusy(StartFleetAsync, sender);
+
+    /// <summary>
+    /// A site's first fleet, composed here so a new operator needs no file. Only when the bus
+    /// holds none and no host reports one; see <see cref="FleetCompose.Start"/>.
+    /// </summary>
+    private async Task StartFleetAsync()
+    {
+        if (!_api.HasOperatorGrant()) throw new InvalidOperationException(AdminFlow.GrantNeeded);
+        var held = await _api.GetSiteDocumentAsync(FleetPublishLogic.DocumentName, CancellationToken.None) is not null;
+        var owner = FleetOwner.Text;
+        var first = Encoding.UTF8.GetBytes(FleetCompose.Start(owner, held, ReportedFleetSerials()));
+        if (!_platform.Confirm(this, FleetAccessLogic.StartText, FleetAccessLogic.StartCaption)) return;
+        await FinishChangeAsync((first, 1, FleetAccessLogic.StartText), FleetAccessLogic.Starts(owner));
     }
 
     private static void Replace<T>(ObservableCollection<T> list, IEnumerable<T> items)
@@ -51,17 +76,23 @@ public partial class MainWindow
         foreach (var item in items) list.Add(item);
     }
 
-    /// <summary>What the bus's fleet lists, for display. An older bus, no fleet, or one outside the strict reading shows as empty.</summary>
-    private async Task<IReadOnlyList<FleetAgent>> ListedFleetAsync()
+    /// <summary>
+    /// Whether the bus holds a fleet, and what it lists, for display. An older bus counts as
+    /// holding one, so that no fleet is started against a bus that cannot say; a fleet outside the
+    /// strict reading is held but lists nothing.
+    /// </summary>
+    private async Task<(bool Held, IReadOnlyList<FleetAgent> Listed)> ListedFleetAsync()
     {
+        _fleetUnreadable = false;
         try
         {
             var stored = await _api.GetSiteDocumentAsync(FleetPublishLogic.DocumentName, CancellationToken.None);
-            return stored is null ? [] : FleetCompose.Agents(Encoding.UTF8.GetString(stored.Body));
+            return stored is null ? (false, []) : (true, FleetCompose.Agents(Encoding.UTF8.GetString(stored.Body)));
         }
         catch (Exception error) when (error is FleetRefusedException || (error is BusApiException bus && AdminFlow.IsLegacyBus(bus)))
         {
-            return [];
+            _fleetUnreadable = true;
+            return (true, []);
         }
     }
 

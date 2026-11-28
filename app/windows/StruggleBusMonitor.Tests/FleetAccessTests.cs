@@ -107,6 +107,9 @@ public sealed class FleetAccessLogicTests
         Assert.Equal("takes away coord-docs's authority to task the hosts", FleetAccessLogic.Removes(coordinator));
         Assert.Equal("removes worker host host-a-host", FleetAccessLogic.Removes(host));
         Assert.Equal("authorises coord-docs to task the hosts", FleetAccessLogic.Authorises("coord-docs"));
+        Assert.Equal("starts this site's fleet, empty", FleetAccessLogic.Starts("  "));
+        Assert.Equal("starts this site's fleet, empty, owned by Alex", FleetAccessLogic.Starts(" Alex "));
+        Assert.Contains("serial 1, listing no hosts and no agents yet", FleetAccessLogic.StartText);
     }
 
     [Fact]
@@ -152,7 +155,7 @@ public sealed class FleetAccessWindowTests(StaWindowAdminFixture sta)
     });
 
     /// <summary>Admin, Worker hosts, with a fleet on the bus and, unless told otherwise, a key the app can ask to sign.</summary>
-    private static StaWindowAdminScene Open(string fleet, long serial, bool canSign = true, bool withGrant = true)
+    private static StaWindowAdminScene Open(string? fleet, long serial, bool canSign = true, bool withGrant = true)
     {
         var scene = new StaWindowAdminScene().WithSettings(settings => settings.SignerKeyFiles[Convert.ToBase64String(Key)] = KeyFile).Enroll(withGrant);
         try
@@ -161,8 +164,8 @@ public sealed class FleetAccessWindowTests(StaWindowAdminFixture sta)
             bus.On("GET /api/mobile/admin/agents", _ => StaWindowAdminBus.Ok(Managed));
             bus.On("GET /api/mobile/admin/devices", _ => StaWindowAdminBus.Ok("[]"));
             bus.On("GET /api/mobile/admin/service-principals", _ => StaWindowAdminBus.Ok("[]"));
-            bus.On(FleetRoute, _ => StaWindowAdminBus.Ok(Stored(Vector(fleet), serial)));
-            bus.On(PublishRoute, _ => StaWindowAdminBus.Ok(Stored(Vector(fleet), serial + 1)));
+            bus.On(FleetRoute, _ => fleet is null ? StaWindowAdminBus.Fail(404, "Not found.") : StaWindowAdminBus.Ok(Stored(Vector(fleet), serial)));
+            bus.On(PublishRoute, _ => StaWindowAdminBus.Ok(Stored(Vector(fleet ?? "before.toml"), serial + 1)));
             if (canSign) scene.Platform.KeyFiles.Add(KeyFile);
             scene.Platform.HardwareKey = _ => SshSignatureMaker.File(Key);
             scene.Open();
@@ -392,12 +395,71 @@ public sealed class FleetAccessWindowTests(StaWindowAdminFixture sta)
     });
 
     [Fact]
+    public void ASiteWithNoFleetStartsOneInTheAppWithNoFile() => sta.Run(() =>
+    {
+        using var scene = Open(fleet: null, serial: 0);
+        var window = scene.Window;
+
+        Assert.Equal(Visibility.Visible, window.FleetStartPanel.Visibility);
+        Assert.Equal("The bus holds no fleet yet. Start one below.", window.FleetAccessSummary.Text);
+        Assert.Empty((IEnumerable<FleetEntryRow>)window.FleetEntriesList.ItemsSource);
+
+        window.FleetOwner.Text = " Alex ";
+        StaWindowAdminScene.ClickAndWait(window.FleetStartButton);
+        Wait(scene);
+
+        Assert.Equal([FleetAccessLogic.StartCaption, "Sign the fleet"], scene.Platform.Confirmations.Select(asked => asked.Item2));
+        Assert.Contains("Change:   starts this site's fleet, empty, owned by Alex", scene.Platform.Confirmations[1].Item1);
+        var first = Encoding.UTF8.GetBytes("serial = 1\nowner = \"Alex\"\n");
+        Assert.Equal(first, Assert.Single(scene.Platform.Signed).Document);
+        Assert.Equal("strugglebus-fleet", scene.Platform.Signed[0].Purpose);
+        Assert.Equal(1, Published(scene).GetProperty("serial").GetInt64());
+        Assert.Equal(Convert.ToBase64String(first), Published(scene).GetProperty("body").GetString());
+        Assert.Contains(FleetPublishLogic.HelloPrompt(1), scene.Platform.HelloPrompts);
+        Assert.StartsWith("Published fleet serial 1 at ", window.FleetResult.Text);
+    });
+
+    [Fact]
+    public void ABadOwnerNameOrSayingNoStartsNothing() => sta.Run(() =>
+    {
+        using var scene = Open(fleet: null, serial: 0);
+        var window = scene.Window;
+
+        window.FleetOwner.Text = "Alex \"the\" owner";
+        StaWindowAdminScene.ClickAndWait(window.FleetStartButton);
+        Assert.StartsWith("The owner's name may hold letters", scene.Notice);
+        Assert.Empty(scene.Platform.Confirmations);
+
+        window.FleetOwner.Text = string.Empty;
+        scene.Platform.ConfirmAnswer = false;
+        StaWindowAdminScene.ClickAndWait(window.FleetStartButton);
+        Assert.Single(scene.Platform.Confirmations);
+        Assert.Empty(scene.Platform.Signed);
+        Assert.Empty(scene.Bus.RequestsTo(PublishRoute));
+    });
+
+    [Fact]
+    public void AFleetIsNeverStartedOverOneTheBusHolds() => sta.Run(() =>
+    {
+        using var scene = Open("before.toml", 5);
+
+        Assert.Equal(Visibility.Collapsed, scene.Window.FleetStartPanel.Visibility);
+        StaWindowAdminScene.ClickAndWait(scene.Window.FleetStartButton);
+
+        Assert.StartsWith("The bus already holds a fleet.", scene.Notice);
+        Assert.Empty(scene.Platform.Confirmations);
+        Assert.Empty(scene.Platform.Signed);
+    });
+
+    [Fact]
     public void WithoutOperatorAccessNothingIsComposed() => sta.Run(() =>
     {
         using var scene = Open("before.toml", 5, withGrant: false);
         FillDocs(scene.Window);
 
         StaWindowAdminScene.ClickAndWait(scene.Window.AccessAuthoriseButton);
+        Assert.Equal(AdminFlow.GrantNeeded, scene.Notice);
+        StaWindowAdminScene.ClickAndWait(scene.Window.FleetStartButton);
         Assert.Equal(AdminFlow.GrantNeeded, scene.Notice);
 
         var row = ((IEnumerable<FleetEntryRow>)scene.Window.FleetEntriesList.ItemsSource).First();
@@ -408,12 +470,13 @@ public sealed class FleetAccessWindowTests(StaWindowAdminFixture sta)
     });
 
     [Fact]
-    public void ABusWithNoFleetOrOneOutsideTheStrictReadingShowsNothingToRemove() => sta.Run(() =>
+    public void AFleetOutsideTheStrictReadingShowsNothingToRemoveAndIsNotStartedOver() => sta.Run(() =>
     {
         using var scene = Open("unknown-table.toml", 5);
 
         Assert.Empty((IEnumerable<FleetEntryRow>)scene.Window.FleetEntriesList.ItemsSource);
-        Assert.StartsWith("The bus holds no fleet yet, or one this app cannot read.", scene.Window.FleetAccessSummary.Text);
+        Assert.StartsWith("The bus holds a fleet this app cannot read strictly", scene.Window.FleetAccessSummary.Text);
+        Assert.Equal(Visibility.Collapsed, scene.Window.FleetStartPanel.Visibility);
 
         StaWindowAdminScene.ClickAndWait(scene.Window.FleetAccessReload);
         Assert.Empty((IEnumerable<FleetEntryRow>)scene.Window.FleetEntriesList.ItemsSource);

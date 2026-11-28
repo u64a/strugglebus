@@ -25,7 +25,8 @@ public sealed class FleetAllowListVectorTests
         [FleetRefusal.SerialLine] = "serial-line", [FleetRefusal.UnknownKey] = "unknown-key", [FleetRefusal.DuplicateAgent] = "duplicate-agent",
         [FleetRefusal.HostListed] = "host-listed", [FleetRefusal.SerialMismatch] = "serial-mismatch", [FleetRefusal.SerialAhead] = "serial-ahead",
         [FleetRefusal.UnsafeChar] = "unsafe-char", [FleetRefusal.BadValue] = "bad-value", [FleetRefusal.OutsideRemotes] = "outside-remotes",
-        [FleetRefusal.NotListed] = "not-listed", [FleetRefusal.LastCoordinator] = "last-coordinator", [FleetRefusal.HandEdited] = "hand-edited"
+        [FleetRefusal.NotListed] = "not-listed", [FleetRefusal.LastCoordinator] = "last-coordinator", [FleetRefusal.HandEdited] = "hand-edited",
+        [FleetRefusal.FleetExists] = "fleet-exists"
     };
 
     private static string Vector(FleetRefusedException refusal) =>

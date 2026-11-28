@@ -741,6 +741,13 @@
                                     </DockPanel>
                                     <TextBlock Text="An agent on this list (a coordinator) can have every worker host run agent workers in the repositories it is given. You choose the agent and where it may work; the app writes the fleet change, your hardware key signs it, and Windows Hello confirms before it is published." Style="{StaticResource MutedText}" TextWrapping="Wrap" Margin="0,8,0,0"/>
                                     <TextBlock x:Name="FleetAccessSummary" Style="{StaticResource MutedText}" TextWrapping="Wrap" Margin="0,8,0,8"/>
+                                    <StackPanel x:Name="FleetStartPanel" Visibility="Collapsed" Margin="0,0,0,8">
+                                        <TextBlock Text="Start this site's fleet" Style="{StaticResource FieldLabel}"/>
+                                        <TextBlock Text="A fleet is the signed list of this site's worker hosts and of the agents that may task them. This site has none yet. Starting one makes an empty fleet, signed by your hardware key; you then add hosts and agents to it." Style="{StaticResource MutedText}" TextWrapping="Wrap" Margin="0,0,0,8"/>
+                                        <TextBlock Text="Owner's name (optional; workers are told whose site this is)" Style="{StaticResource FieldLabel}"/>
+                                        <TextBox x:Name="FleetOwner" Tag="for example Alex"/>
+                                        <Button x:Name="FleetStartButton" Content="Start this site's fleet" Style="{StaticResource Btn}" Click="FleetStart_Click" HorizontalAlignment="Left" Margin="0,12,0,0"/>
+                                    </StackPanel>
                                     <ItemsControl x:Name="FleetEntriesList" Focusable="False">
                                         <ItemsControl.ItemTemplate>
                                             <DataTemplate>

@@ -158,6 +158,17 @@ internal static class FleetAccessLogic
         NotInstant
     ]);
 
+    public static string Starts(string owner) =>
+        owner.Trim().Length == 0 ? "starts this site's fleet, empty" : $"starts this site's fleet, empty, owned by {owner.Trim()}";
+
+    public const string StartCaption = "Start this site's fleet";
+
+    public const string StartText =
+        "Start this site's fleet?\n\n" +
+        "The bus holds no fleet and no worker host reports one, so this is a first fleet: serial 1, listing no hosts and no agents yet. " +
+        "You then add each worker host on Admin, Worker hosts, and each agent that may task them here, one signed change at a time.\n\n" +
+        "Your hardware key signs it and Windows Hello confirms before it is published.";
+
     public static string Authorises(string agentName) => $"authorises {agentName} to task the hosts";
 
     public static string Removes(FleetEntryRow row) =>
