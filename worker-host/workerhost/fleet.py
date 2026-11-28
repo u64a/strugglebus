@@ -190,6 +190,8 @@ class Outcome:
 
 
 BUS_PATH = "/api/site-documents/fleet"
+OFFER_PATH = "/api/hosts/fleet-offer"  # bus 0.2.75: a host offers its accepted fleet while the bus holds none
+OFFER_SIG_MAX = 4200                   # the bus's cap on the offer's signature text
 SOURCES = ("git", "bus", "either")
 # For "either", which answer to report: an acceptance first; then a real problem with a file (a bad signature, an
 # invalid file), which is worth saying even when the other source is fine; then unchanged; then one source merely
@@ -235,6 +237,28 @@ class FleetSync:
                  signers: Path, ref: str = "main"):
         self.mirror, self.store, self.remote = Path(mirror), Path(store), remote
         self.git_exe, self.ssh_keygen, self.signers, self.ref = git_exe, ssh_keygen, Path(signers), ref
+        self.bus_holds_none = False  # the last bus fetch said no fleet is published (404)
+
+    def offer_body(self, current: Fleet | None) -> dict | None:
+        """What this host offers when the bus holds no fleet (POST OFFER_PATH; bus-dev #humans 29304): the exact
+        accepted bytes and signature, as stored. None when there's nothing to offer: no accepted fleet, a stored copy
+        that isn't the accepted one (the folder is the host user's to write, so it's checked), or over the bus's caps.
+        The offer is only a carrier: the App verifies the signature and the serial itself."""
+        if current is None:
+            return None
+        try:
+            data, sig = (self.store / FILE).read_bytes(), (self.store / SIG).read_bytes()
+        except OSError:
+            return None
+        if hashlib.sha256(data).hexdigest() != current.sha256 or len(data) > MAX_BYTES:
+            return None
+        try:
+            text = sig.decode("ascii")
+        except UnicodeDecodeError:
+            return None
+        if not text.startswith(signing.SIG_HEADER.decode("ascii")) or len(text) > OFFER_SIG_MAX:
+            return None
+        return {"serial": current.serial, "fleet": base64.b64encode(data).decode("ascii"), "sig": text}
 
     def _git(self, *args: str, timeout: float = 120) -> subprocess.CompletedProcess:
         return subprocess.run([self.git_exe, "--git-dir", str(self.mirror), *args], capture_output=True,
@@ -300,7 +324,10 @@ class FleetSync:
             return Outcome("fetch-failed", detail="no bus connection")
         got = fetch_from_bus(bus)
         if isinstance(got, Outcome):
+            if got.status == "fleet-missing":
+                self.bus_holds_none = True  # the bus answered 404: a host with a fleet offers it (offer_body)
             return got
+        self.bus_holds_none = False
         data, sig = got
         return self.accept(data, lambda: sig, "", current)
 
