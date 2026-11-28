@@ -36,6 +36,7 @@ public partial class MainWindow
         SignersSummary.Text = SiteSignersLogic.Summary(HostSigners.Text);
         SignersList.ItemsSource = FleetPublishLogic.Signers(HostSigners.Text);
         ShowSigningKey();
+        ShowFoundKeys();
         HostRemotes.Text = _settings.HostRemotes;
         HostFleetGit.IsChecked = _settings.HostFleetSource == "git";
         HostFleetEither.IsChecked = _settings.HostFleetSource == "either";
@@ -242,6 +243,7 @@ public partial class MainWindow
         AdminFleetAccessPanel.Visibility = VisibleWhen(AdminTabFleet.IsChecked == true);
         AdminFleetPanel.Visibility = VisibleWhen(AdminTabFleet.IsChecked == true || AdminTabHosts.IsChecked == true);
         AdminSecurityPanel.Visibility = VisibleWhen(AdminTabSecurity.IsChecked == true);
+        if (AdminTabSecurity.IsChecked == true) ShowFoundKeys();
         AdminEnrollPanel.Visibility = VisibleWhen(AdminTabEnroll.IsChecked == true);
         AdminAccessPanel.Visibility = VisibleWhen(AdminTabAccess.IsChecked == true);
         AdminExportPanel.Visibility = VisibleWhen(AdminTabExport.IsChecked == true);

@@ -2,6 +2,14 @@ using System.Text.RegularExpressions;
 
 namespace StruggleBusMonitor;
 
+/// <summary>A hardware key's public file found on this PC that is not a site signer yet.</summary>
+public sealed class FoundKey
+{
+    public required string Path { get; init; }
+    public required string FileName { get; init; }
+    public required string Fingerprint { get; init; }
+}
+
 /// <summary>
 /// The site's signers, set up from the app: the operator points at a hardware key's public file
 /// and the app writes the signer line. Nothing here is secret; a signer line holds a public key.
@@ -123,6 +131,45 @@ internal static partial class SiteSignersLogic
     /// <summary>The held lines with these added.</summary>
     public static string With(string held, IEnumerable<SiteSigner> more) =>
         string.Join("\n", FleetPublishLogic.Signers(held).Concat(more).Select(signer => signer.Line));
+
+    /// <summary>
+    /// The hardware keys whose public files are on this PC and that are not site signers yet, so
+    /// the operator adds one with a button instead of hunting for a file. A file that is not a
+    /// hardware key's public file is simply not listed. Listing a key adds nothing: adding still
+    /// shows the fingerprint and needs Windows Hello.
+    /// </summary>
+    public static IReadOnlyList<FoundKey> Found(IEnumerable<(string Path, string Text)> publicFiles, string held)
+    {
+        var known = FleetPublishLogic.Signers(held).Select(signer => signer.KeyBase64).ToHashSet();
+        var found = new List<FoundKey>();
+        foreach (var (path, text) in publicFiles.OrderBy(file => file.Path, StringComparer.OrdinalIgnoreCase))
+        {
+            if (LineOrNull(text) is not { } line) continue;
+            var signer = FleetPublishLogic.Signers(line)[0];
+            if (known.Add(signer.KeyBase64)) found.Add(new FoundKey { Path = path, FileName = System.IO.Path.GetFileName(path), Fingerprint = signer.Fingerprint });
+        }
+
+        return found;
+    }
+
+    private static string? LineOrNull(string publicFile)
+    {
+        try
+        {
+            return LineFor(publicFile);
+        }
+        catch (InvalidOperationException)
+        {
+            return null;
+        }
+    }
+
+    public static string FoundText(int found, int held) => found switch
+    {
+        0 when held == 0 => "No hardware key's public file was found in your .ssh folder. If your keys are kept somewhere else, choose the file yourself below.",
+        0 => "Every hardware key found in your .ssh folder is already a site signer.",
+        _ => $"Found on this PC ({found}), not yet site signers. Check each fingerprint against the key itself before adding it:"
+    };
 
     /// <summary>The held lines with one more. Throws when that key is already among them.</summary>
     public static string Add(string held, string line)

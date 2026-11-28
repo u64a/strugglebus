@@ -16,7 +16,25 @@ public partial class MainWindow
     /// </summary>
     private async Task AddSignerAsync()
     {
-        if (_platform.PickPublicKeyFile(this) is not { } path) return;
+        if (_platform.PickPublicKeyFile(this) is { } path) await AddSignerFromAsync(path);
+    }
+
+    internal async void FoundKeyAdd_Click(object sender, RoutedEventArgs e)
+    {
+        if (TagOf<FoundKey>(sender) is { } found) await RunBusy(() => AddSignerFromAsync(found.Path), sender);
+    }
+
+    /// <summary>Lists the hardware keys found on this PC that are not site signers yet.</summary>
+    private void ShowFoundKeys()
+    {
+        var found = SiteSignersLogic.Found(_platform.PublicKeyFiles(), HostSigners.Text);
+        FoundKeysList.ItemsSource = found;
+        FoundKeysText.Text = SiteSignersLogic.FoundText(found.Count, FleetPublishLogic.Signers(HostSigners.Text).Count);
+    }
+
+    /// <summary>The one path every key takes to become a site signer, found or chosen: the fingerprint, the question, Windows Hello.</summary>
+    private async Task AddSignerFromAsync(string path)
+    {
         var chosen = new FileInfo(path).Length <= SshSignature.MaxLength ? await File.ReadAllTextAsync(path) : string.Empty;
         var next = SiteSignersLogic.Add(HostSigners.Text, SiteSignersLogic.LineFor(chosen));
         var signer = FleetPublishLogic.Signers(next)[^1];
@@ -97,6 +115,7 @@ public partial class MainWindow
         SignersSummary.Text = SiteSignersLogic.Summary(HostSigners.Text);
         SignersList.ItemsSource = FleetPublishLogic.Signers(HostSigners.Text);
         ShowSigningKey();
+        ShowFoundKeys();
     }
 
     /// <summary>

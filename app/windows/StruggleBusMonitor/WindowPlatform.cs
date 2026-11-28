@@ -34,6 +34,9 @@ internal interface IWindowPlatform
     /// <summary>Whether a file is on this PC.</summary>
     bool FileExists(string path);
 
+    /// <summary>The public key files in the operator's .ssh folder, with their text. Only small files directly in that folder.</summary>
+    IReadOnlyList<(string Path, string Text)> PublicKeyFiles();
+
     /// <summary>Asks for a hardware key's public file. Null when the operator cancels.</summary>
     string? PickPublicKeyFile(Window owner);
 
@@ -123,6 +126,26 @@ internal sealed class WindowPlatform : IWindowPlatform
         SshKeygen.SignAsync(tool, keyFile, purpose, document, TimeSpan.FromMinutes(3));
 
     public bool FileExists(string path) => System.IO.File.Exists(path);
+
+    public IReadOnlyList<(string Path, string Text)> PublicKeyFiles() =>
+        PublicKeyFilesIn(System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".ssh"));
+
+    /// <summary>At most 200 files named *.pub directly in the folder, each small enough to be a key; none when the folder is missing or unreadable.</summary>
+    internal static IReadOnlyList<(string Path, string Text)> PublicKeyFilesIn(string folder)
+    {
+        try
+        {
+            return System.IO.Directory.EnumerateFiles(folder, "*.pub", System.IO.SearchOption.TopDirectoryOnly)
+                .Take(200)
+                .Where(path => new System.IO.FileInfo(path).Length <= SshSignature.MaxLength)
+                .Select(path => (path, System.IO.File.ReadAllText(path)))
+                .ToList();
+        }
+        catch (Exception error) when (error is System.IO.IOException or UnauthorizedAccessException)
+        {
+            return [];
+        }
+    }
 
     public string? PickPublicKeyFile(Window owner)
     {
