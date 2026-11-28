@@ -75,6 +75,25 @@ internal sealed class StaWindowAdminPlatform : IWindowPlatform
 
     public string? PickFleetFile(Window owner) => FleetFilePath;
 
+    public string? HardwareSigningTool { get; set; } = @"C:\Program Files\OpenSSH\ssh-keygen.exe";
+
+    /// <summary>What the hardware key "signs": given the bytes, the signature text. Null means the key did not sign.</summary>
+    public Func<byte[], string>? HardwareKey { get; set; }
+    public Exception? SigningFailure { get; set; }
+    public List<(string Tool, string KeyFile, string Purpose, byte[] Document)> Signed { get; } = [];
+
+    public Task<string> SignWithHardwareKeyAsync(string tool, string keyFile, string purpose, byte[] document)
+    {
+        Signed.Add((tool, keyFile, purpose, document));
+        if (SigningFailure is not null) return Task.FromException<string>(SigningFailure);
+        return Task.FromResult(HardwareKey!(document));
+    }
+
+    /// <summary>Key files "on this PC" beyond the real ones.</summary>
+    public HashSet<string> KeyFiles { get; } = new(StringComparer.OrdinalIgnoreCase);
+
+    public bool FileExists(string path) => KeyFiles.Contains(path) || System.IO.File.Exists(path);
+
     public string? PublicKeyPath { get; set; }
 
     public string? PickPublicKeyFile(Window owner) => PublicKeyPath;

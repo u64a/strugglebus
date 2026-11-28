@@ -54,6 +54,16 @@ public sealed class AppSettings
     /// </summary>
     public bool FlashWhenAddressed { get; set; } = true;
 
+    /// <summary>
+    /// For each site signer added from a public file on this PC, where its key file is, by the
+    /// key's own text. A key file is a handle that only works with the hardware key plugged in;
+    /// the path is not secret. Used to ask that key to sign a fleet.
+    /// </summary>
+    public Dictionary<string, string> SignerKeyFiles { get; set; } = [];
+
+    /// <summary>The site signer the operator chose to sign with, by the key's own text. Empty means the first that can.</summary>
+    public string SigningKey { get; set; } = string.Empty;
+
     /// <summary>The "still running in the tray" notice has been shown once, so it is not shown again.</summary>
     public bool TrayNoticeShown { get; set; }
 

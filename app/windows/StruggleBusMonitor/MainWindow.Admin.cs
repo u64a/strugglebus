@@ -35,6 +35,7 @@ public partial class MainWindow
         ShowEarlierSigners();
         SignersSummary.Text = SiteSignersLogic.Summary(HostSigners.Text);
         SignersList.ItemsSource = FleetPublishLogic.Signers(HostSigners.Text);
+        ShowSigningKey();
         HostRemotes.Text = _settings.HostRemotes;
         HostFleetGit.IsChecked = _settings.HostFleetSource == "git";
         HostFleetEither.IsChecked = _settings.HostFleetSource == "either";
