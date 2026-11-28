@@ -70,6 +70,24 @@ public sealed class FleetAllowListVectorTests
         if (entry.TryGetProperty("warnings", out var expected)) Assert.Equal(Texts(expected), warnings);
     }
 
+    public static TheoryData<string> StartCases() =>
+        new(JsonDocument.Parse(Read("start.json")).RootElement.GetProperty("cases").EnumerateArray().Select(entry => entry.GetProperty("name").GetString()!));
+
+    /// <summary>Starting a fleet (contracts/fleet/compose/start.json): the exact first document, or the refusal.</summary>
+    [Theory]
+    [MemberData(nameof(StartCases))]
+    public void EachSharedStartCaseGivesItsExactBytesOrItsRefusal(string name)
+    {
+        var entry = JsonDocument.Parse(Read("start.json")).RootElement.GetProperty("cases").EnumerateArray().Single(candidate => candidate.GetProperty("name").GetString() == name);
+        var result = entry.GetProperty("result").GetString()!;
+        var held = entry.GetProperty("bus_serial").ValueKind != JsonValueKind.Null;
+        var reported = entry.GetProperty("reported").EnumerateArray().Select(value => value.GetInt64()).ToList();
+        string Start() => FleetCompose.Start(entry.GetProperty("owner").GetString()!, held, reported);
+
+        if (result.StartsWith("refuse:", StringComparison.Ordinal)) Assert.Equal(result, Vector(Assert.Throws<FleetRefusedException>(Start)));
+        else Assert.Equal(Read(result), Start());
+    }
+
     [Fact]
     public void TheSharedListOfNamespacesNeverToSignIsRefusedAtTheLowestLayer()
     {

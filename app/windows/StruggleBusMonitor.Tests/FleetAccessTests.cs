@@ -134,15 +134,6 @@ public sealed class FleetAccessWindowTests(StaWindowAdminFixture sta)
 
     private static byte[] Vector(string name) => File.ReadAllBytes(Path.Combine(Vectors, name));
 
-    /// <summary>The shared vector as the app writes it: the same bytes without the one default_engine line the app no longer writes.</summary>
-    private static byte[] WithoutEngine(byte[] vector)
-    {
-        var text = Encoding.UTF8.GetString(vector);
-        var line = "default_engine = \"claude\"\n";
-        Assert.Single(System.Text.RegularExpressions.Regex.Matches(text, System.Text.RegularExpressions.Regex.Escape(line)));
-        return Encoding.UTF8.GetBytes(text.Replace(line, string.Empty));
-    }
-
     private static readonly string Managed =
         $$"""
         [{"id":"{{DocsId}}","name":"coord-docs","description":"writes the docs","host":"devbox","state":"enabled","credential_epoch":1,"last_seen_at":null,"actions":[]},
@@ -273,8 +264,8 @@ public sealed class FleetAccessWindowTests(StaWindowAdminFixture sta)
         Assert.Contains("ALL 1 worker host in the fleet", scene.Platform.Confirmations[0].Item1);
         Assert.Contains("Change:   authorises coord-docs to task the hosts", scene.Platform.Confirmations[1].Item1);
         // The app asks for no engine and writes none: hosts never use a coordinator's default to choose one.
-        var expected = WithoutEngine(Vector("add-coordinator-after.toml"));
-        Assert.DoesNotContain("default_engine = \"claude\"", Encoding.UTF8.GetString(expected));
+        var expected = Vector("add-coordinator-no-engine-after.toml");
+        Assert.DoesNotContain("default_engine", Encoding.UTF8.GetString(expected));
         Assert.Equal(expected, Assert.Single(scene.Platform.Signed).Document);
         Assert.Equal("strugglebus-fleet", scene.Platform.Signed[0].Purpose);
         Assert.Equal(Convert.ToBase64String(expected), Published(scene).GetProperty("body").GetString());
@@ -377,7 +368,7 @@ public sealed class FleetAccessWindowTests(StaWindowAdminFixture sta)
             StaWindowAdminScene.ClickAndWait(scene.Window.AccessAuthoriseButton);
             Wait(scene);
 
-            Assert.Equal(WithoutEngine(Vector("add-coordinator-after.toml")), File.ReadAllBytes(scene.Platform.FleetSavePath));
+            Assert.Equal(Vector("add-coordinator-no-engine-after.toml"), File.ReadAllBytes(scene.Platform.FleetSavePath));
             Assert.True(File.Exists(scene.Platform.FleetSavePath + ".signers"));
             Assert.StartsWith("Saved fleet serial 6 (authorises coord-docs to task the hosts) as ", scene.Window.FleetResult.Text);
             Assert.Empty(scene.Bus.RequestsTo(PublishRoute));
@@ -410,7 +401,7 @@ public sealed class FleetAccessWindowTests(StaWindowAdminFixture sta)
 
         Assert.Equal([FleetAccessLogic.StartCaption, "Sign the fleet"], scene.Platform.Confirmations.Select(asked => asked.Item2));
         Assert.Contains("Change:   starts this site's fleet, empty, owned by Alex", scene.Platform.Confirmations[1].Item1);
-        var first = Encoding.UTF8.GetBytes("serial = 1\nowner = \"Alex\"\n");
+        var first = Vector("start-owner.toml");
         Assert.Equal(first, Assert.Single(scene.Platform.Signed).Document);
         Assert.Equal("strugglebus-fleet", scene.Platform.Signed[0].Purpose);
         Assert.Equal(1, Published(scene).GetProperty("serial").GetInt64());
