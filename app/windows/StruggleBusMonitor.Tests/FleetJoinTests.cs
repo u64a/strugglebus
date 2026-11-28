@@ -208,7 +208,7 @@ public sealed class FleetJoinWindowTests(StaWindowAdminFixture sta)
         File.WriteAllText(joining.Saved + ".sig", SshSignatureMaker.File(Key));
         scene.Platform.FleetFilePath = joining.Saved;
         StaWindowAdminScene.ClickAndWait(scene.Window.FleetPublishButton);
-        Assert.Contains(FleetJoinLogic.ComposedNote("host-office2-host"), scene.Platform.Confirmations[^1].Item1);
+        Assert.Contains(FleetJoinLogic.ComposedNote(FleetSignLogic.AddsHost("host-office2-host")), scene.Platform.Confirmations[^1].Item1);
         Assert.Single(scene.Bus.RequestsTo(PublishRoute));
     });
 
@@ -240,7 +240,7 @@ public sealed class FleetJoinWindowTests(StaWindowAdminFixture sta)
         Assert.Equal(FleetJoinLogic.NothingChanged, joining.Scene.Window.FleetResult.Text);
         Assert.Empty(joining.Scene.Bus.RequestsTo(RevokeRoute));
         Assert.Empty(joining.Scene.Bus.RequestsTo(RetireRoute));
-        Assert.Empty(joining.Scene.Bus.RequestsTo(FleetRoute));
+        Assert.Empty(joining.Scene.Platform.Verified);
     });
 
     [Fact]
@@ -261,7 +261,7 @@ public sealed class FleetJoinWindowTests(StaWindowAdminFixture sta)
         Assert.Contains("Revoke host-office2 and retire host-office2-host", scene.Platform.HelloPrompts);
         Assert.Contains("host-office2: revoked. Agent host-office2-host: retired.", scene.Window.FleetResult.Text);
         Assert.Contains("Only the host agent was retired.", scene.Window.FleetResult.Text);
-        Assert.Empty(scene.Bus.RequestsTo(FleetRoute));
+        Assert.Empty(scene.Platform.Verified);
         Assert.Empty(scene.Bus.RequestsTo(PublishRoute));
         Assert.False(File.Exists(joining.Saved));
     });

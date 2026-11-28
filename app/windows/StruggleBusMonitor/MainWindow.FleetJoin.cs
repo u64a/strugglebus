@@ -116,7 +116,7 @@ public partial class MainWindow
         await File.WriteAllBytesAsync(path, bytes);
         await File.WriteAllTextAsync(FleetJoinLogic.SignersPath(path), FleetJoinLogic.SignersFile(FleetPublishLogic.Signers(HostSigners.Text)));
         _composedFleet = bytes;
-        _composedFor = join.AgentName;
+        _composedFor = FleetSignLogic.AddsHost(join.AgentName);
         return FleetJoinLogic.SavedText(path, current.BusSerial + 1, join);
     }
 

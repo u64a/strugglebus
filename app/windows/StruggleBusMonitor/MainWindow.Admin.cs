@@ -222,6 +222,7 @@ public partial class MainWindow
         _adminHosts.Clear();
         foreach (var row in rows) _adminHosts.Add(row);
         AdminHostsSummary.Text = HostsLogic.Summary(rows);
+        await LoadFleetAccessAsync();
     }
 
     private void ShowAdminTab()
@@ -232,6 +233,7 @@ public partial class MainWindow
         AdminHostsPanel.Visibility = VisibleWhen(AdminTabHosts.IsChecked == true);
         AdminAddHostPanel.Visibility = VisibleWhen(AdminTabHosts.IsChecked == true);
         AdminFleetPanel.Visibility = VisibleWhen(AdminTabHosts.IsChecked == true);
+        AdminFleetAccessPanel.Visibility = VisibleWhen(AdminTabHosts.IsChecked == true);
         AdminEnrollPanel.Visibility = VisibleWhen(AdminTabEnroll.IsChecked == true);
         AdminAccessPanel.Visibility = VisibleWhen(AdminTabAccess.IsChecked == true);
         AdminExportPanel.Visibility = VisibleWhen(AdminTabExport.IsChecked == true);
