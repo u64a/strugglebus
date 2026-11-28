@@ -14,12 +14,26 @@ internal enum FleetRefusal
     /// <summary>The bus says a different serial from the one the document states.</summary>
     SerialMismatch,
     /// <summary>A host reports a serial above the bus's.</summary>
-    SerialAhead
+    SerialAhead,
+    /// <summary>A value has a character that could end a text or start a line, a comment or a table.</summary>
+    UnsafeChar,
+    /// <summary>A value the hosts would refuse.</summary>
+    BadValue,
+    /// <summary>A repository outside the locations the site allows its hosts to work in.</summary>
+    OutsideRemotes,
+    NotListed,
+    /// <summary>Removing it would leave no agent authorised to task the hosts.</summary>
+    LastCoordinator,
+    /// <summary>The table to remove has a blank line or a comment inside it, so its end is not certain.</summary>
+    HandEdited
 }
 
-internal sealed class FleetRefusedException(FleetRefusal reason, string message) : InvalidOperationException(message)
+internal sealed class FleetRefusedException(FleetRefusal reason, string message, string? field = null) : InvalidOperationException(message)
 {
     public FleetRefusal Reason { get; } = reason;
+
+    /// <summary>Which value was refused, by its key in the fleet document, when the refusal is about one value.</summary>
+    public string? Field { get; } = field;
 }
 
 /// <summary>One coordinator or host as the fleet document lists it.</summary>
@@ -194,8 +208,11 @@ internal static partial class FleetCompose
         var serial = SerialOf(current);
         CheckAgents(Agents(current), agentName, agentId);
         CheckSerials(serial, busSerial, reported);
-        return SerialLine().Replace(current, $"serial = {busSerial + 1}\n", 1) + HostBlock(agentName, agentId);
+        return WithSerial(current, busSerial + 1) + HostBlock(agentName, agentId);
     }
+
+    /// <summary>The same text with its one serial line saying <paramref name="serial"/>.</summary>
+    internal static string WithSerial(string text, long serial) => SerialLine().Replace(text, $"serial = {serial}\n", 1);
 
     /// <summary>The text added for one host: a blank line, then the table, in the form today's fleet uses.</summary>
     public static string HostBlock(string agentName, string agentId) =>
@@ -214,7 +231,7 @@ internal static partial class FleetCompose
         }
     }
 
-    private static void CheckSerials(long serial, long busSerial, IEnumerable<long> reported)
+    internal static void CheckSerials(long serial, long busSerial, IEnumerable<long> reported)
     {
         if (serial != busSerial)
         {
