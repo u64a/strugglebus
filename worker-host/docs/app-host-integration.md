@@ -837,9 +837,21 @@ in `needs-fleet`. That's how the App **starts a fleet** (bus-dev #humans 29301; 
 - **Always serial 1.** Then hosts and coordinators are added one signed change at a time, with the usual composers.
 
 **Taking over a fleet the hosts already accept, with no file** (planned, bus 0.2.75 and the host release after it):
-- **The host's part:** a marked host whose `fleet_source` is `bus` or `either`, and whose bus says it holds no fleet,
-  offers its accepted fleet on its normal refresh: the exact bytes, the signature and the serial. It posts as itself
-  to an admin-only bus route, and stops once the bus holds a fleet. The bus keeps one offer per host.
+- **The host's part** (PR 100: `Host.offer_fleet_if_due`, `FleetSync.offer_body`):
+  - **When:** a host whose `fleet_source` is `bus` or `either`, whose last bus fetch answered 404 (the bus holds no
+    fleet), offers the fleet it accepted, at most once per fleet refresh.
+  - **What it sends:** `POST /api/hosts/fleet-offer` as itself, with exactly
+    `{"serial": <n>, "fleet": "<base64 of the stored accepted bytes>", "sig": "<the signature text>"}`. It sends
+    nothing if the stored copy isn't the accepted one, or if it's over the bus's caps (64 KB, and 4,200 characters
+    for the signature).
+  - **What it does with the answer:**
+    - **204:** logs `fleet-offered` once per serial.
+    - **409 `fleet-held`:** the bus holds one now, so it stops.
+    - **429:** waits a minute.
+    - **Any other refusal** (404 from a bus older than 0.2.75; 403 from a host not yet marked): logs
+      `fleet-offer-refused` once and retries hourly.
+  - **On the bus:** one offer per host is kept, the newest replacing the last. Offers are dropped once a fleet is
+    published.
 - **The App's part:** it checks each offer with every PR 75 check against its registered site signers. It publishes
   one unchanged, after Windows Hello, **only if its signed serial equals the highest serial any host reports.** An
   older fleet verifies too. If offers disagree on serial or bytes, it shows them all and publishes none until they
