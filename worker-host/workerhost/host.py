@@ -23,6 +23,7 @@ from types import SimpleNamespace
 
 from . import cleanup, creds, fleet as fleet_mod, ghcp, launcher, prompt, resources, signing, urls, usage, winapi
 from . import hoststatus
+from . import engineupdate
 from . import commands as commands_mod
 from . import signin as signin_mod
 from . import claudesignin as claudesignin_mod
@@ -460,7 +461,7 @@ class Host:
             return "stopped"
         if self.st.data["draining"] or (self.st.data.get("drain_to_pause") and self.active()):
             return "draining"
-        if self.maintenance:
+        if self.maintenance or self.machine_updating_engines():
             return "maintenance"
         base = "running" if self.runs else "claimed" if self.pending else "idle"
         if self.st.data["paused"] or self.game_paused:
@@ -622,6 +623,8 @@ class Host:
             return "draining", {}
         if self.maintenance or self.update_when_idle or self.ustate.get("phase") == "announced":
             return "maintenance", {}  # (an announced self-update: no new tasks until it is applied)
+        if self.machine_updating_engines():
+            return "maintenance", {}  # the machine's task is replacing an agent program: admission closed
         if self.openbao is not None and not self.openbao_ok:
             return "openbao", {}  # fail closed: no new tasks while OpenBao is unreachable; running workers carry on
         if self.restart_blocks_claims():
@@ -1755,7 +1758,61 @@ class Host:
         now = datetime.now().strftime("%H:%M")
         return self.cfg.ghcp.window_start <= now < self.cfg.ghcp.window_end
 
+    def dedicated(self) -> bool:
+        return getattr(self.cfg, "dedicated_account", False) is True
+
+    def machine_updating_engines(self) -> bool:
+        """On a dedicated host: is the machine's SYSTEM task replacing an agent program now (engineupdate)?"""
+        return self.dedicated() and engineupdate.marker_active()
+
+    def engine_update_tick(self) -> None:
+        """On a dedicated host: log each new outcome of the machine's engine updater once (they become the host events
+        tool-updated / tool-update-failed), and take Copilot's state from it. Read at most once a minute."""
+        now = time.time()
+        if not self.dedicated() or now - getattr(self, "engine_checked", 0.0) < 60:
+            return
+        self.engine_checked = now
+        result = engineupdate.read_result()
+        if result is None or result["written_at"] <= self.st.data.get("engine_result_at", 0):
+            return
+        self.st.data["engine_result_at"] = result["written_at"]
+        self.st.save()
+        for r in result["results"]:
+            if r["outcome"] == "updated":
+                self.log("tool-updated", tool=r["tool"], version=r["after"], previous=r["before"])
+            elif r["outcome"] == "failed":
+                self.log("tool-update-failed", tool=r["tool"], reason=r["reason"])
+            if r["tool"] == "ghcp" and r["outcome"] in ("updated", "current", "failed"):
+                self.ghcp_ok = r["outcome"] != "failed"
+                if r["outcome"] == "updated":
+                    self.ghcp_version = ghcp.version(self.cfg.copilot_exe) or self.ghcp_version
+
+    def ghcp_tick(self, now: float) -> None:
+        """The agent programs' updates, once a loop. A dedicated host only reads the machine's updater
+        (engine_update_tick); any other host updates its own per-user Copilot CLI in the window, when idle."""
+        idle = not self.runs and not self.pending
+        if self.update_when_idle and idle:
+            self.update_when_idle = False
+            self.update_ghcp()
+        if self.dedicated():
+            self.engine_update_tick()
+            return
+        today = datetime.now().strftime("%Y-%m-%d")
+        if not self.in_window() or self.st.data.get("last_ghcp_day") == today:
+            return
+        if now - self.st.data.get("ghcp_attempt", 0) < 60 * self.cfg.ghcp.retry_minutes:
+            return
+        self.st.data["ghcp_attempt"] = now
+        if idle:
+            self.update_ghcp()
+        else:
+            self.log("ghcp-deferred", reason="workers-running")
+
     def update_ghcp(self) -> None:
+        if self.dedicated():
+            # The machine's task updates machine-wide tools; this account can't, and mustn't (#humans 29443/29444).
+            self.log("ghcp-update-skipped", reason="machine-task")
+            return
         self.maintenance = True
         self.write_status()
         try:
@@ -1998,18 +2055,7 @@ class Host:
         except Exception as e:  # noqa: BLE001 - a failed update step never stops the host
             self.log.error("update-error", e)
         now = time.time()
-        idle = not self.runs and not self.pending
-        if self.update_when_idle and idle:
-            self.update_when_idle = False
-            self.update_ghcp()
-        today = datetime.now().strftime("%Y-%m-%d")
-        if (self.in_window() and self.st.data.get("last_ghcp_day") != today
-                and now - self.st.data.get("ghcp_attempt", 0) >= 60 * self.cfg.ghcp.retry_minutes):
-            self.st.data["ghcp_attempt"] = now
-            if idle:
-                self.update_ghcp()
-            else:
-                self.log("ghcp-deferred", reason="workers-running")
+        self.ghcp_tick(now)
         if now - self.st.data.get("last_cleanup", 0) >= 3600 * self.cfg.cleanup.sweep_hours:
             self.st.data["last_cleanup"] = now
             self.run_cleanup()

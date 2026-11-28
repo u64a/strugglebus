@@ -49,6 +49,7 @@ _KINDS = {
     "bus-version": re.compile(r"(?:0|[1-9][0-9]{0,8})\.(?:0|[1-9][0-9]{0,8})\.(?:0|[1-9][0-9]{0,8})"),
     "code": re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*"),
     "type-name": re.compile(r"[A-Za-z_][A-Za-z0-9_.]*"),
+    "tool-version": re.compile(r"[0-9]+(?:\.[0-9]+){1,3}(?:-[0-9A-Za-z.]+)?"),
 }
 _SHORT = 64
 _UUID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
@@ -58,7 +59,7 @@ _EVENT_KEYS = frozenset({"id", "type", "at"})
 #: What each field of a host's event may hold.
 HOST_FIELDS = {
     "version": "version", "previous": "version", "reason": "code", "code": "code", "step": "code",
-    "error": "type-name", "exit_code": "int", "attempt": "int",
+    "error": "type-name", "exit_code": "int", "attempt": "int", "tool_version": "tool-version",
 }
 #: A host's event types: the fields each may carry, and the level the bus gives it. A host sends
 #: no level; how much an event matters is the bus's judgement.
@@ -91,6 +92,9 @@ HOST_TYPES: dict[str, tuple[tuple[str, ...], str]] = {
     "sign-in-done": (("code",), "info"),
     "sign-in-failed": (("reason",), "warning"),
     "claude-token-stored": ((), "info"),
+    # The machine's engine updater on a dedicated host (worker-host setup\Update-Engines.ps1): the tool in `code`.
+    "tool-updated": (("code", "tool_version"), "info"),
+    "tool-update-failed": (("code", "reason"), "warning"),
 }
 
 #: The bus's own event types, by source: the fields each may carry and its level. ``reason`` is

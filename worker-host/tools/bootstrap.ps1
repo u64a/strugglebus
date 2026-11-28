@@ -427,6 +427,38 @@ function Get-AclProblem([string]$ownerSid, $aces) {
     return $null
 }
 
+$EngineUpdateTask = 'StrugglebusEngineUpdate'
+
+function Get-EngineUpdateAction([string]$script) {
+    # Pure: the task's one fixed action. Windows' own PowerShell by full path, the admin-only copy of the script, and
+    # nothing else: no argument from anywhere (u64-security, #humans 29444 condition 6).
+    $ps = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+    return @{ execute = $ps; arguments = "-NoProfile -NonInteractive -ExecutionPolicy Bypass -File `"$script`"" }
+}
+
+function Install-EngineUpdateTask([string]$stage) {
+    # The machine updates the machine-wide agent programs, as SYSTEM, in the hosts' window (#humans 29443/29444): the
+    # host's standard account can't, and mustn't be able to change its own tools. The script comes from the VERIFIED
+    # stage (covered by installer_sha256) into ProgramData\strugglebus\engine-update, which inherits Protect-SbRoot's
+    # ACL (administrators and SYSTEM write, users read), so the account can read the result but change nothing. One
+    # task per PC, whichever host installed it last.
+    $dir = Join-Path $SbRoot 'engine-update'
+    New-Item -ItemType Directory -Force -Path $dir | Out-Null
+    if (Test-UserWritable $dir) { throw "$dir can be written by users: refused" }
+    $script = Join-Path $dir 'Update-Engines.ps1'
+    Copy-Item -LiteralPath (Join-Path $stage 'setup\Update-Engines.ps1') -Destination $script -Force
+    $a = Get-EngineUpdateAction $script
+    $action = New-ScheduledTaskAction -Execute $a.execute -Argument $a.arguments
+    $trigger = New-ScheduledTaskTrigger -Daily -At '04:00'
+    $trigger.Repetition = (New-ScheduledTaskTrigger -Once -At '04:00' -RepetitionInterval (New-TimeSpan -Minutes 15) -RepetitionDuration (New-TimeSpan -Hours 2)).Repetition
+    $principal = New-ScheduledTaskPrincipal -UserId 'S-1-5-18' -LogonType ServiceAccount -RunLevel Highest
+    $settings = New-ScheduledTaskSettingsSet -ExecutionTimeLimit (New-TimeSpan -Hours 1) -MultipleInstances IgnoreNew -StartWhenAvailable
+    Register-ScheduledTask -TaskName $EngineUpdateTask -Action $action -Trigger $trigger -Principal $principal `
+        -Settings $settings -Description 'StruggleBus: updates the machine-wide agent programs (Copilot CLI, Claude Code) for dedicated worker hosts' `
+        -Force | Out-Null
+    Say "the agent programs are updated by the machine: task $EngineUpdateTask (SYSTEM, 04:00-06:00, when no host is busy)"
+}
+
 function Remove-WorkFolder([string]$work) {
     # Only ever this run's own folder: a bootstrap-<32 hex> folder directly under ProgramData\strugglebus. A git
     # mirror's files are read-only, hence -Force. A failure is said, never thrown: the folder is admin-only.
@@ -1081,6 +1113,7 @@ try {
     Invoke-Install $tools.pwsh $verified.stage $work $SB $account.Name $password $tools   # step 6
     $hostHome = Join-Path $SbRoot "host\$($account.Name)"
     Write-ReleaseRecord $hostHome $verified.release
+    Install-EngineUpdateTask $verified.stage                                         # before the isolation check sees it
     Invoke-IsolationCheck $verified.stage $account.Name $hostHome 'C:\sb-workers'   # step 11, straight after the install
     # Steps 8 and 7 run AS the account, which is an interactive logon (CreateProcessWithLogonW), so they come before
     # the denials; the finally applies the denials even when the enrolment or a sign-in fails. Enrolment first: the

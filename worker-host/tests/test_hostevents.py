@@ -71,8 +71,9 @@ def test_the_reference_check_gives_each_vector_its_expected_answer(name):
 
 
 def test_every_type_and_field_is_in_the_fixed_lists():
-    # 22 agreed in 1b, plus section 4a's 4 device-code sign-in types and claude-token-stored.
-    assert len(hostevents.TYPES) == 27
+    # 22 agreed in 1b, plus section 4a's 4 device-code sign-in types and claude-token-stored, plus the machine's
+    # engine updater's tool-updated and tool-update-failed (#humans 29444).
+    assert len(hostevents.TYPES) == 29
     assert all(f in hostevents.FIELDS for fields in hostevents.TYPES.values() for f in fields)
 
 

@@ -32,10 +32,11 @@ KINDS = {
     "version": re.compile(r"[0-9]{4}\.[0-9]{2}\.[0-9]{2}(?:\.[0-9]{1,3})?|manual"),
     "code": re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*"),
     "type-name": re.compile(r"[A-Za-z_][A-Za-z0-9_.]*"),
+    "tool-version": re.compile(r"[0-9]+(?:\.[0-9]+){1,3}(?:-[0-9A-Za-z.]+)?"),  # an agent program's own version
 }
 SHORT = 64
 FIELDS = {"version": "version", "previous": "version", "reason": "code", "code": "code", "step": "code",
-          "error": "type-name", "exit_code": "int", "attempt": "int"}
+          "error": "type-name", "exit_code": "int", "attempt": "int", "tool_version": "tool-version"}
 
 # type -> the fields it may carry (all optional). The order here is the contract's.
 TYPES = {
@@ -68,6 +69,11 @@ TYPES = {
     "sign-in-done": ("code",),
     "sign-in-failed": ("reason",),
     "claude-token-stored": (),  # a sealed Claude token was opened and kept (never the token)
+    # The machine's engine updater, on a dedicated host (engineupdate, setup\Update-Engines.ps1): the tool in `code`.
+    # A tool-update-failed reason of publisher-mismatch means the new program wasn't the pinned publisher's and the
+    # old one was put back (u64-security alerts on it, #humans 29444).
+    "tool-updated": ("code", "tool_version"),
+    "tool-update-failed": ("code", "reason"),
 }
 # Dropped last when the queue is full: what an operator most needs to see afterwards.
 KEEP_LONGEST = frozenset({"update-failed", "update-rolled-back", "fatal", "restarted-after-crash",
@@ -279,6 +285,8 @@ SIMPLE = {
     "pressure": ("pressure", {}),
     "problem-raised": ("problem-raised", {"code": "code"}),
     "problem-cleared": ("problem-cleared", {"code": "code"}),
+    "tool-updated": ("tool-updated", {"code": "tool", "tool_version": "version"}),
+    "tool-update-failed": ("tool-update-failed", {"code": "tool", "reason": "reason"}),
     "sign-in-requested": ("sign-in-requested", {"code": "tool"}),
     "sign-in-code-issued": ("sign-in-code-issued", {"code": "tool"}),
     "sign-in-done": ("sign-in-done", {"code": "tool"}),
