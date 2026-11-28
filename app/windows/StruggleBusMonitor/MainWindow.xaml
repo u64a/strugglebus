@@ -714,6 +714,7 @@
                                     <TextBlock Text="Without it, the host's workers run as the person who installs it and can reach everything that person can." Style="{StaticResource MutedText}" TextWrapping="Wrap" Margin="0,4,0,0"/>
                                     <TextBlock Text="Site signers (the hardware keys that may sign the fleet; at least two)" Style="{StaticResource FieldLabel}"/>
                                     <Button x:Name="SignerAddButton" Content="Add a hardware key" Style="{StaticResource BtnOutline}" Click="SignerAdd_Click" HorizontalAlignment="Left" Margin="0,0,0,8"/>
+                                    <Button x:Name="SignersEarlierButton" Style="{StaticResource BtnOutline}" Click="SignersEarlier_Click" HorizontalAlignment="Left" Margin="0,0,0,8" Visibility="Collapsed"/>
                                     <TextBlock x:Name="SignersSummary" Style="{StaticResource MutedText}" TextWrapping="Wrap" Margin="0,0,0,8"/>
                                     <ItemsControl x:Name="SignersList" Focusable="False" Margin="0,0,0,8">
                                         <ItemsControl.ItemTemplate>

@@ -63,7 +63,8 @@ public sealed class AppSettings
     /// </summary>
     /// <summary>
     /// Where the signer lines used to be kept. They are now in <see cref="SiteSignersStore"/>,
-    /// protected for this Windows account; a value found here is moved there once.
+    /// protected for this Windows account. A value found here is offered to the operator to
+    /// confirm, key by key, and is never used as it stands.
     /// </summary>
     public string HostSigners { get; set; } = string.Empty;
     public string HostRemotes { get; set; } = string.Empty;

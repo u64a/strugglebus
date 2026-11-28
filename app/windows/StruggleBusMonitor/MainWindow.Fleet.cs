@@ -25,6 +25,28 @@ public partial class MainWindow
         KeepSigners(next);
     }
 
+    /// <summary>Offers the keys an earlier version kept unprotected, when there are any not yet confirmed.</summary>
+    private void ShowEarlierSigners()
+    {
+        var earlier = SiteSignersLogic.Earlier(_settings.HostSigners, HostSigners.Text);
+        SignersEarlierButton.Content = SiteSignersLogic.EarlierButton(earlier.Count);
+        SignersEarlierButton.Visibility = VisibleWhen(earlier.Count > 0);
+    }
+
+    internal async void SignersEarlier_Click(object sender, RoutedEventArgs e) => await RunBusy(KeepEarlierSignersAsync, sender);
+
+    /// <summary>The same path as adding a key: the fingerprints, the question, Windows Hello, and only then are they kept.</summary>
+    private async Task KeepEarlierSignersAsync()
+    {
+        var earlier = SiteSignersLogic.Earlier(_settings.HostSigners, HostSigners.Text);
+        if (earlier.Count == 0 || !_platform.Confirm(this, SiteSignersLogic.EarlierReview(earlier), "Keep earlier site signers")) return;
+        await RequireHelloAsync(SiteSignersLogic.EarlierHelloPrompt(earlier.Count));
+        KeepSigners(SiteSignersLogic.With(HostSigners.Text, earlier));
+        _settings.HostSigners = string.Empty;
+        _settings.Save();
+        ShowEarlierSigners();
+    }
+
     internal async void SignerRemove_Click(object sender, RoutedEventArgs e)
     {
         if (TagOf<SiteSigner>(sender) is { } signer) await RunBusy(() => RemoveSignerAsync(signer), sender);

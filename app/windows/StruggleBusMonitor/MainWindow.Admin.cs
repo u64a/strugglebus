@@ -31,7 +31,8 @@ public partial class MainWindow
         AdminDeviceList.ItemsSource = _adminDevices;
         AdminSpnList.ItemsSource = _adminServicePrincipals;
         AdminHostList.ItemsSource = _adminHosts;
-        HostSigners.Text = SiteSignersStore.Load(_settings);
+        HostSigners.Text = SiteSignersStore.Load();
+        ShowEarlierSigners();
         SignersSummary.Text = SiteSignersLogic.Summary(HostSigners.Text);
         SignersList.ItemsSource = FleetPublishLogic.Signers(HostSigners.Text);
         HostRemotes.Text = _settings.HostRemotes;

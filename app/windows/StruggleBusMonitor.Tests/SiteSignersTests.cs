@@ -60,6 +60,25 @@ public sealed class SiteSignersLogicTests
     }
 
     [Fact]
+    public void EarlierLinesYieldOnlyHardwareKeysRebuiltAndNotAlreadyHeld()
+    {
+        var lineA = SiteSignersLogic.LineFor(PublicFile(KeyA));
+        var lineB = SiteSignersLogic.LineFor(PublicFile(KeyB));
+        var earlier = string.Join("\r\n", lineA.Replace("strugglebus-host-command", "strugglebus-release"), lineB + " key-name", "junk", "x namespaces=\"a\" ssh-rsa AAAA");
+
+        Assert.Equal([lineA, lineB], SiteSignersLogic.Earlier(earlier, "").Select(signer => signer.Line));
+        Assert.Equal([lineB], SiteSignersLogic.Earlier(earlier, lineA).Select(signer => signer.Line));
+        Assert.Empty(SiteSignersLogic.Earlier("", ""));
+
+        var both = SiteSignersLogic.Earlier(earlier, "");
+        Assert.Equal(lineA + "\n" + lineB, SiteSignersLogic.With("", both));
+        Assert.Contains("kept 2 site signer keys", SiteSignersLogic.EarlierReview(both));
+        Assert.Contains("kept 1 site signer key in", SiteSignersLogic.EarlierReview([both[0]]));
+        Assert.Equal("Keep 1 earlier site signer key", SiteSignersLogic.EarlierHelloPrompt(1));
+        Assert.Equal("Confirm 1 signer key from an earlier version", SiteSignersLogic.EarlierButton(1));
+    }
+
+    [Fact]
     public void TheQuestionsShowTheFingerprintAndSayWhatASignerCanDo()
     {
         var signer = FleetPublishLogic.Signers(SiteSignersLogic.LineFor(PublicFile(KeyA)))[0];
@@ -107,7 +126,7 @@ public sealed class SiteSignersWindowTests(StaWindowAdminFixture sta)
 
             var signer = Assert.Single(Listed(window));
             Assert.Equal(LineA, window.HostSigners.Text);
-            Assert.Equal(LineA, SiteSignersStore.Load(new AppSettings()));
+            Assert.Equal(LineA, SiteSignersStore.Load());
             Assert.DoesNotContain(KeyA, File.ReadAllText(AppPaths.File("site-signers.bin")));
             Assert.Equal(string.Empty, AppSettings.Load().HostSigners);
             var asked = Assert.Single(scene.Platform.Confirmations);
@@ -172,7 +191,7 @@ public sealed class SiteSignersWindowTests(StaWindowAdminFixture sta)
         StaWindowAdminScene.Until(() => Listed(window).Count == 2, "the key to be removed");
 
         Assert.Equal(string.Join("\n", LineB, LineC), window.HostSigners.Text);
-        Assert.Equal(window.HostSigners.Text, SiteSignersStore.Load(new AppSettings()));
+        Assert.Equal(window.HostSigners.Text, SiteSignersStore.Load());
         Assert.Contains($"Fingerprint:  {first.Fingerprint}", Assert.Single(scene.Platform.Confirmations).Item1);
         Assert.Contains(SiteSignersLogic.RemoveHelloPrompt(first), scene.Platform.HelloPrompts);
 
@@ -182,19 +201,55 @@ public sealed class SiteSignersWindowTests(StaWindowAdminFixture sta)
         Assert.Equal(2, Listed(window).Count);
     });
 
-    [Fact]
-    public void LinesKeptInThePlainSettingsFileAreMovedToTheProtectedStoreOnce() => sta.Run(() =>
-    {
-        using var scene = new StaWindowAdminScene().WithSettings(settings => settings.HostSigners = LineA + "\n" + LineB);
+    private static readonly string EarlierLines = string.Join("\n",
+    [
+        LineA.Replace("owner namespaces=\"strugglebus-fleet,strugglebus-host-command\"", "chris namespaces=\"strugglebus-fleet,strugglebus-release\"") + " a-comment",
+        LineB,
+        LineB,
+        "someone namespaces=\"strugglebus-fleet\" ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIA",
+        "not a line at all"
+    ]);
 
+    [Fact]
+    public void LinesAnEarlierVersionKeptUnprotectedAreNeverUsedUntilTheOperatorConfirmsThem() => sta.Run(() =>
+    {
+        using var scene = new StaWindowAdminScene().WithSettings(settings => settings.HostSigners = EarlierLines).Enroll();
         var window = scene.Open().Window;
 
-        Assert.Equal(2, Listed(window).Count);
-        Assert.Equal(string.Empty, AppSettings.Load().HostSigners);
-        Assert.Equal(LineA + "\n" + LineB, SiteSignersStore.Load(new AppSettings()));
+        Assert.Empty(Listed(window));
+        Assert.Equal(string.Empty, window.HostSigners.Text);
+        Assert.Equal(System.Windows.Visibility.Visible, window.SignersEarlierButton.Visibility);
+        Assert.Equal("Confirm 2 signer keys from an earlier version", window.SignersEarlierButton.Content);
 
+        // No keeps nothing and leaves the offer standing.
+        scene.Platform.ConfirmAnswer = false;
+        StaWindowAdminScene.ClickAndWait(window.SignersEarlierButton);
+        Assert.Empty(Listed(window));
+        Assert.Empty(scene.Platform.HelloPrompts);
+        Assert.False(File.Exists(AppPaths.File("site-signers.bin")));
+
+        // Yes and Windows Hello keep only the hardware keys, each rebuilt with the app's own name and namespaces.
+        scene.Platform.ConfirmAnswer = true;
+        StaWindowAdminScene.ClickAndWait(window.SignersEarlierButton);
+        Assert.Equal(LineA + "\n" + LineB, window.HostSigners.Text);
+        Assert.DoesNotContain("strugglebus-release", window.HostSigners.Text);
+        Assert.Equal(window.HostSigners.Text, SiteSignersStore.Load());
+        Assert.Equal(string.Empty, AppSettings.Load().HostSigners);
+        Assert.Contains("Keep 2 earlier site signer keys", scene.Platform.HelloPrompts);
+        Assert.Contains(scene.Platform.Confirmations, asked => Listed(window).All(signer => asked.Item1.Contains(signer.Fingerprint)));
+        Assert.Equal(System.Windows.Visibility.Collapsed, window.SignersEarlierButton.Visibility);
+    });
+
+    [Fact]
+    public void AStoreThatCannotBeReadIsAnEmptySet() => sta.Run(() =>
+    {
+        using var scene = new StaWindowAdminScene().Enroll();
+        Directory.CreateDirectory(Path.GetDirectoryName(AppPaths.File("site-signers.bin"))!);
         File.WriteAllText(AppPaths.File("site-signers.bin"), "not protected data");
-        Assert.Equal(string.Empty, SiteSignersStore.Load(new AppSettings()));
+
+        Assert.Equal(string.Empty, SiteSignersStore.Load());
+        Assert.Empty(Listed(scene.Open().Window));
+        Assert.Equal(System.Windows.Visibility.Collapsed, scene.Window.SignersEarlierButton.Visibility);
     });
 
     [Fact]

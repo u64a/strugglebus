@@ -15,20 +15,11 @@ internal static class SiteSignersStore
     private static string StorePath => AppPaths.File("site-signers.bin");
 
     /// <summary>
-    /// The stored lines. On first use after an update, lines found in the plain settings file are
-    /// moved here. An unreadable store is treated as empty: the operator adds the keys again.
+    /// The stored lines. An unreadable or missing store is an empty set: the app then accepts no
+    /// fleet until the operator adds the keys again. Lines an earlier version kept in the plain
+    /// settings file are never taken from there unseen; see <see cref="SiteSignersLogic.Earlier"/>.
     /// </summary>
-    public static string Load(AppSettings settings)
-    {
-        if (File.Exists(StorePath)) return Read();
-        if (settings.HostSigners.Length == 0) return string.Empty;
-
-        var moved = settings.HostSigners;
-        Save(moved);
-        settings.HostSigners = string.Empty;
-        settings.Save();
-        return moved;
-    }
+    public static string Load() => File.Exists(StorePath) ? Read() : string.Empty;
 
     private static string Read()
     {
