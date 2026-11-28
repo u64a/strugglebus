@@ -31,7 +31,9 @@ public partial class MainWindow
         AdminDeviceList.ItemsSource = _adminDevices;
         AdminSpnList.ItemsSource = _adminServicePrincipals;
         AdminHostList.ItemsSource = _adminHosts;
-        HostSigners.Text = _settings.HostSigners;
+        HostSigners.Text = SiteSignersStore.Load(_settings);
+        SignersSummary.Text = SiteSignersLogic.Summary(HostSigners.Text);
+        SignersList.ItemsSource = FleetPublishLogic.Signers(HostSigners.Text);
         HostRemotes.Text = _settings.HostRemotes;
         HostFleetGit.IsChecked = _settings.HostFleetSource == "git";
         HostFleetEither.IsChecked = _settings.HostFleetSource == "either";
@@ -130,7 +132,7 @@ public partial class MainWindow
 
     private void RememberSiteSettings(AddHostForm form)
     {
-        _settings.HostSigners = form.Signers;
+        SiteSignersStore.Save(form.Signers);
         _settings.HostRemotes = form.Remotes;
         _settings.HostFleetSource = form.FleetSource;
         _settings.Save();

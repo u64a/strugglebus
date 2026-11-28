@@ -8,6 +8,49 @@ public partial class MainWindow
 {
     internal async void FleetPublish_Click(object sender, RoutedEventArgs e) => await RunBusy(PublishSignedFleetAsync, sender);
 
+    internal async void SignerAdd_Click(object sender, RoutedEventArgs e) => await RunBusy(AddSignerAsync, sender);
+
+    /// <summary>
+    /// Adds a hardware key to the site's signers from its public file, and keeps the set at once:
+    /// the operator does not write or maintain signer lines by hand.
+    /// </summary>
+    private async Task AddSignerAsync()
+    {
+        if (_platform.PickPublicKeyFile(this) is not { } path) return;
+        var chosen = new FileInfo(path).Length <= SshSignature.MaxLength ? await File.ReadAllTextAsync(path) : string.Empty;
+        var next = SiteSignersLogic.Add(HostSigners.Text, SiteSignersLogic.LineFor(chosen));
+        var signer = FleetPublishLogic.Signers(next)[^1];
+        if (!_platform.Confirm(this, SiteSignersLogic.AddReview(signer, Path.GetFileName(path)), "Add a site signer")) return;
+        await RequireHelloAsync(SiteSignersLogic.AddHelloPrompt(signer));
+        KeepSigners(next);
+    }
+
+    internal async void SignerRemove_Click(object sender, RoutedEventArgs e)
+    {
+        if (TagOf<SiteSigner>(sender) is { } signer) await RunBusy(() => RemoveSignerAsync(signer), sender);
+    }
+
+    private async Task RemoveSignerAsync(SiteSigner signer)
+    {
+        var next = SiteSignersLogic.Remove(HostSigners.Text, signer.KeyBase64);
+        if (!_platform.Confirm(this, SiteSignersLogic.RemoveReview(signer), "Remove a site signer")) return;
+        await RequireHelloAsync(SiteSignersLogic.RemoveHelloPrompt(signer));
+        KeepSigners(next);
+    }
+
+    /// <summary>Shows the set and stores it, protected for this Windows account.</summary>
+    private void KeepSigners(string lines)
+    {
+        HostSigners.Text = lines;
+        SiteSignersStore.Save(lines);
+    }
+
+    internal void HostSigners_TextChanged(object sender, System.Windows.Controls.TextChangedEventArgs e)
+    {
+        SignersSummary.Text = SiteSignersLogic.Summary(HostSigners.Text);
+        SignersList.ItemsSource = FleetPublishLogic.Signers(HostSigners.Text);
+    }
+
     /// <summary>
     /// Every check comes before the question, the question before Windows Hello, and Hello before
     /// the bus is asked to store anything: a document the hosts would refuse must not spend a

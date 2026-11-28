@@ -22,6 +22,9 @@ internal interface IWindowPlatform
     /// <summary>Asks where to save a worker host's enrolment data file. Null when the operator cancels.</summary>
     string? PickHostFilePath(Window owner, string suggestedName);
 
+    /// <summary>Asks for a hardware key's public file. Null when the operator cancels.</summary>
+    string? PickPublicKeyFile(Window owner);
+
     /// <summary>Asks where to save a composed fleet document for signing. Null when the operator cancels.</summary>
     string? PickFleetSavePath(Window owner);
 
@@ -102,6 +105,20 @@ internal sealed class WindowPlatform : IWindowPlatform
         set => SignInStart.Set(value);
     }
 
+    public string? PickPublicKeyFile(Window owner)
+    {
+        var dialog = PublicKeyDialog();
+        return dialog.ShowDialog(owner) == true ? dialog.FileName : null;
+    }
+
+    internal static OpenFileDialog PublicKeyDialog() => new()
+    {
+        Filter = "Public key (*.pub)|*.pub|All files (*.*)|*.*",
+        InitialDirectory = System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".ssh"),
+        CheckFileExists = true,
+        Title = "Choose the hardware key's public file (.pub)"
+    };
+
     public string? PickFleetSavePath(Window owner)
     {
         var dialog = FleetSaveDialog();
@@ -148,7 +165,7 @@ internal sealed class WindowPlatform : IWindowPlatform
         DefaultExt = ".json",
         AddExtension = true,
         OverwritePrompt = true,
-        Title = "Save the worker host's enrolment data"
+        Title = "Save the worker host's data file (the installer script is saved beside it)"
     };
 
     internal static SaveFileDialog ExportDialog(string suggestedName) => new()
