@@ -22,6 +22,18 @@ internal interface IWindowPlatform
     /// <summary>Asks where to save a worker host's enrolment data file. Null when the operator cancels.</summary>
     string? PickHostFilePath(Window owner, string suggestedName);
 
+    /// <summary>A Microsoft-signed ssh-keygen that can ask a hardware key to sign, by full path. Null when this PC has none.</summary>
+    string? HardwareSigningTool { get; }
+
+    /// <summary>
+    /// Asks the hardware key behind <paramref name="keyFile"/> to sign exactly these bytes for
+    /// <paramref name="purpose"/>. Windows prompts for the PIN and a touch. See <see cref="SshKeygen.SignAsync"/>.
+    /// </summary>
+    Task<string> SignWithHardwareKeyAsync(string tool, string keyFile, string purpose, byte[] document);
+
+    /// <summary>Whether a file is on this PC.</summary>
+    bool FileExists(string path);
+
     /// <summary>Asks for a hardware key's public file. Null when the operator cancels.</summary>
     string? PickPublicKeyFile(Window owner);
 
@@ -104,6 +116,13 @@ internal sealed class WindowPlatform : IWindowPlatform
         get => SignInStart.IsOn;
         set => SignInStart.Set(value);
     }
+
+    public string? HardwareSigningTool => SshKeygen.SigningTool();
+
+    public Task<string> SignWithHardwareKeyAsync(string tool, string keyFile, string purpose, byte[] document) =>
+        SshKeygen.SignAsync(tool, keyFile, purpose, document, TimeSpan.FromMinutes(3));
+
+    public bool FileExists(string path) => System.IO.File.Exists(path);
 
     public string? PickPublicKeyFile(Window owner)
     {

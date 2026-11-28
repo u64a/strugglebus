@@ -720,13 +720,15 @@
                                         <ItemsControl.ItemTemplate>
                                             <DataTemplate>
                                                 <DockPanel Margin="0,0,0,6">
-                                                    <Button DockPanel.Dock="Right" Content="Remove" Tag="{Binding}" Style="{StaticResource BtnOutline}" Click="SignerRemove_Click" Margin="12,0,0,0"/>
+                                                    <Button DockPanel.Dock="Right" Content="Remove" Tag="{Binding}" Style="{StaticResource BtnOutline}" Click="SignerRemove_Click" Margin="8,0,0,0"/>
+                                                    <Button DockPanel.Dock="Right" Content="Sign with this key" Tag="{Binding}" Style="{StaticResource BtnOutline}" Click="SignerUse_Click" Margin="12,0,0,0"/>
                                                     <TextBlock Text="{Binding Fingerprint}" FontFamily="{StaticResource Mono}" FontSize="12" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"/>
                                                 </DockPanel>
                                             </DataTemplate>
                                         </ItemsControl.ItemTemplate>
                                     </ItemsControl>
                                     <TextBox x:Name="HostSigners" MinHeight="64" MaxHeight="160" AcceptsReturn="True" TextWrapping="NoWrap" HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Auto" FontFamily="{StaticResource Mono}" FontSize="12" VerticalContentAlignment="Top" IsReadOnly="True" TextChanged="HostSigners_TextChanged" Tag="owner namespaces=&quot;strugglebus-fleet,strugglebus-host-command&quot; sk-ssh-ed25519@openssh.com AAAA... key-name"/>
+                                    <TextBlock x:Name="SigningKeyText" Style="{StaticResource MutedText}" TextWrapping="Wrap" Margin="0,0,0,8"/>
                                     <TextBlock Text="Choose a hardware key's public file (for example id_ed25519_sk_....pub in your .ssh folder) and the app writes its line here. These are the public keys a host will trust to sign the fleet and commands, and the keys this app checks a fleet's signature against. They are kept on this PC, protected for your Windows account, and change only through the buttons, with Windows Hello." Style="{StaticResource MutedText}" TextWrapping="Wrap" Margin="0,4,0,0"/>
                                     <TextBlock Text="Repository locations the host may work in (one per line)" Style="{StaticResource FieldLabel}"/>
                                     <TextBox x:Name="HostRemotes" MinHeight="40" MaxHeight="120" AcceptsReturn="True" TextWrapping="NoWrap" HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Auto" FontFamily="{StaticResource Mono}" FontSize="12" VerticalContentAlignment="Top" Tag="https://github.com/your-org/"/>

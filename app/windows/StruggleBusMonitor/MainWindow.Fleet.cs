@@ -22,7 +22,31 @@ public partial class MainWindow
         var signer = FleetPublishLogic.Signers(next)[^1];
         if (!_platform.Confirm(this, SiteSignersLogic.AddReview(signer, Path.GetFileName(path)), "Add a site signer")) return;
         await RequireHelloAsync(SiteSignersLogic.AddHelloPrompt(signer));
+        RememberKeyFile(signer, path);
         KeepSigners(next);
+    }
+
+    /// <summary>Notes where the key's own file is, when it sits beside the public file, so the app can ask that key to sign.</summary>
+    private void RememberKeyFile(SiteSigner signer, string publicKeyPath)
+    {
+        if (FleetSignLogic.KeyFileBeside(publicKeyPath, _platform.FileExists) is not { } keyFile) return;
+        _settings.SignerKeyFiles[signer.KeyBase64] = keyFile;
+        _settings.Save();
+    }
+
+    internal void SignerUse_Click(object sender, RoutedEventArgs e)
+    {
+        if (TagOf<SiteSigner>(sender) is not { } signer) return;
+        _settings.SigningKey = signer.KeyBase64;
+        _settings.Save();
+        ShowSigningKey();
+    }
+
+    /// <summary>Says which key the app will ask to sign, or why it cannot ask any.</summary>
+    private void ShowSigningKey()
+    {
+        var key = FleetSignLogic.KeyToUse(FleetPublishLogic.Signers(HostSigners.Text), _settings.SignerKeyFiles, _settings.SigningKey, _platform.FileExists);
+        SigningKeyText.Text = FleetSignLogic.SigningKeyText(key, _platform.HardwareSigningTool is not null);
     }
 
     /// <summary>Offers the keys an earlier version kept unprotected, when there are any not yet confirmed.</summary>
@@ -57,6 +81,7 @@ public partial class MainWindow
         var next = SiteSignersLogic.Remove(HostSigners.Text, signer.KeyBase64);
         if (!_platform.Confirm(this, SiteSignersLogic.RemoveReview(signer), "Remove a site signer")) return;
         await RequireHelloAsync(SiteSignersLogic.RemoveHelloPrompt(signer));
+        if (_settings.SignerKeyFiles.Remove(signer.KeyBase64)) _settings.Save();
         KeepSigners(next);
     }
 
@@ -71,6 +96,7 @@ public partial class MainWindow
     {
         SignersSummary.Text = SiteSignersLogic.Summary(HostSigners.Text);
         SignersList.ItemsSource = FleetPublishLogic.Signers(HostSigners.Text);
+        ShowSigningKey();
     }
 
     /// <summary>

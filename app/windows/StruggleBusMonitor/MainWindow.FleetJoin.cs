@@ -34,7 +34,61 @@ public partial class MainWindow
 
         var current = await ReadCurrentFleetAsync();
         var next = FleetCompose.Next(Encoding.UTF8.GetString(current.Fleet.Body), join.AgentName, join.AgentId, current.BusSerial, ReportedFleetSerials());
-        ShowFleetResult(await SaveForSigningAsync(join, current, next) ?? FleetJoinLogic.NothingChanged);
+        var result = SigningKeyHere() is { } key
+            ? await SignAndPublishAsync(new UTF8Encoding(encoderShouldEmitUTF8Identifier: false).GetBytes(next), FleetSignLogic.AddsHost(join.AgentName), key)
+            : await SaveForSigningAsync(join, current, next);
+        ShowFleetResult(result ?? FleetJoinLogic.NothingChanged);
+    }
+
+    /// <summary>The key the app can ask to sign on this PC, or null when it has to hand the document over for signing elsewhere.</summary>
+    private SigningKey? SigningKeyHere() => _platform.HardwareSigningTool is null
+        ? null
+        : FleetSignLogic.KeyToUse(FleetPublishLogic.Signers(HostSigners.Text), _settings.SignerKeyFiles, _settings.SigningKey, _platform.FileExists);
+
+    /// <summary>
+    /// One journey: read what will be signed, touch the key, Windows Hello, published. The bytes
+    /// must read strictly as a fleet before the key is asked for anything, and the signature that
+    /// comes back gets every check a signature made elsewhere gets. Null when the operator says no.
+    /// </summary>
+    private async Task<string?> SignAndPublishAsync(byte[] document, string change, SigningKey key)
+    {
+        var serial = FleetSignLogic.RequireFleet(document);
+        var tool = _platform.HardwareSigningTool ?? throw new InvalidOperationException(FleetSignLogic.NoTool);
+        if (!_platform.Confirm(this, FleetSignLogic.TouchText(serial, change, document, key), "Sign the fleet")) return null;
+
+        var fleet = await VerifiedAsync(document, await TouchAsync(tool, key, document));
+        var stored = (await _api.GetSiteDocumentAsync(FleetPublishLogic.DocumentName, CancellationToken.None))?.Serial;
+        if (FleetPublishLogic.SerialProblem(fleet.Serial, stored) is { } stale) throw new InvalidOperationException(stale);
+        await RequireHelloAsync(FleetPublishLogic.HelloPrompt(fleet.Serial));
+        var published = await _api.PublishSiteDocumentAsync(
+            FleetPublishLogic.DocumentName, fleet.Serial, fleet.Body, fleet.Signature, fleet.Signer.Fingerprint,
+            FleetSignLogic.SignedReason(fleet.Serial, change), CancellationToken.None);
+        return FleetSignLogic.PublishedText(fleet, change, published.StoredAt);
+    }
+
+    /// <summary>Asks the hardware key to sign, for the fleet namespace and nothing else, and puts its failures into words.</summary>
+    private async Task<string> TouchAsync(string tool, SigningKey key, byte[] document)
+    {
+        try
+        {
+            return await _platform.SignWithHardwareKeyAsync(tool, key.KeyFile, FleetSignLogic.Namespace, document);
+        }
+        catch (SshSigningException error)
+        {
+            throw new InvalidOperationException(FleetSignLogic.NotSignedText(key, error.Message));
+        }
+        catch (InvalidDataException)
+        {
+            throw new InvalidOperationException(FleetSignLogic.Changed);
+        }
+    }
+
+    /// <summary>The checks every signature gets, whoever made it: a held hardware key, touch and PIN, and Windows' own ssh-keygen on the exact bytes.</summary>
+    private async Task<SignedFleet> VerifiedAsync(byte[] document, string signature)
+    {
+        var fleet = FleetPublishLogic.Check(document, signature, FleetPublishLogic.Signers(HostSigners.Text));
+        var verdict = await _platform.VerifySshSignatureAsync(fleet.Body, fleet.Signature, fleet.Signer.Line, fleet.Signer.Principal, FleetPublishLogic.Namespace);
+        return FleetPublishLogic.VerdictProblem(verdict) is { } problem ? throw new InvalidOperationException(problem) : fleet;
     }
 
     /// <summary>The bus's current fleet, once its signature has verified against the signer lines this PC holds.</summary>
