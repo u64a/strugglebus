@@ -91,7 +91,7 @@ def test_cli_shows_version(capsys):
         main(["--version"])
 
     assert error.value.code == 0
-    assert "strugglebus 0.2.74" in capsys.readouterr().out
+    assert "strugglebus 0.2.75" in capsys.readouterr().out
 
 
 def test_agent_lifecycle_prints_key_once_without_persisting_plaintext(
