@@ -136,18 +136,41 @@ public sealed class SshKeygenSigningTests
     }
 
     /// <summary>
-    /// Whatever this PC offers is a full path under one of the two folders and carries Microsoft's
-    /// own signature. A PC whose only copy is Windows' built-in one, signed through a catalog and
-    /// not in the file, offers none: that is refused, not waved through.
+    /// A PC with Windows' own OpenSSH has a tool: that copy is signed through a Windows catalog,
+    /// and the check reads catalogs as well as signatures inside the file.
     /// </summary>
     [Fact]
-    public void WhatThisPcOffersIsAFullPathSignedByMicrosoftOrNothing()
+    public void ThisPcsToolIsAFullPathUnderOneOfTheTwoFoldersAndSignedByMicrosoft()
     {
-        if (SshKeygen.SigningTool() is not { } tool) return;
+        var tool = SshKeygen.SigningTool();
 
+        Assert.NotNull(tool);
         Assert.True(Path.IsPathFullyQualified(tool));
         Assert.EndsWith(@"OpenSSH\ssh-keygen.exe", tool);
-        Assert.True(UpdateTrust.IsMicrosoft(Authenticode.Read(tool)));
+        Assert.True(UpdateTrust.IsMicrosoft(CatalogSignature.OfProgram(tool)));
+        Assert.True(UpdateTrust.IsMicrosoft(CatalogSignature.OfProgram(SshKeygen.DefaultPath)));
+    }
+
+    [Fact]
+    public async Task AVerifyToolThatIsNotMicrosoftsIsNotBelieved()
+    {
+        var folder = Directory.CreateTempSubdirectory("untrusted-tool-test-").FullName;
+        try
+        {
+            var impostor = Path.Combine(folder, "ssh-keygen.exe");
+            var bytes = File.ReadAllBytes(SshKeygen.DefaultPath);
+            bytes[^1] ^= 0x01;
+            File.WriteAllBytes(impostor, bytes);
+
+            var verdict = await SshKeygen.VerifyAsync(impostor, "serial = 1\n"u8.ToArray(), "sig", "line", "owner", FleetPublishLogic.Namespace);
+
+            Assert.Equal(SshVerdict.UntrustedTool, verdict);
+            Assert.Equal(FleetPublishLogic.UntrustedTool, FleetPublishLogic.VerdictProblem(verdict));
+        }
+        finally
+        {
+            Directory.Delete(folder, recursive: true);
+        }
     }
 
     [Theory]

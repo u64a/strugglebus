@@ -26,7 +26,7 @@ internal static class FleetSignLogic
         "This PC has no key file for any of its site signers, so the app cannot ask a hardware key to sign. Add the key again with Add a hardware key, choosing the .pub file that sits beside the key's own file.";
 
     public const string NoTool =
-        @"The app cannot ask the hardware key to sign on this PC: it found no ssh-keygen carrying Microsoft's own signature in C:\Program Files\OpenSSH. (The copy built into Windows is signed through a Windows catalog, which this app does not check yet, so it is not used for signing.) Install Microsoft's OpenSSH, for example with: winget install Microsoft.OpenSSH.Preview. Until then a fleet change is saved for signing with sign-config.ps1 and published with Publish a signed fleet document.";
+        @"The app cannot ask the hardware key to sign on this PC: it found no ssh-keygen validly signed by Microsoft in C:\Program Files\OpenSSH or in Windows' own System32\OpenSSH. Add it in Windows Settings > System > Optional features > OpenSSH Client. Until then a fleet change is saved for signing with sign-config.ps1 and published with Publish a signed fleet document.";
 
     public const string NotSigned =
         "The hardware key did not sign. Nothing was published. If no prompt appeared, check that the right key is plugged in: the app asked for";
