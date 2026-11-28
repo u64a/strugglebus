@@ -315,6 +315,24 @@ public sealed class BusApi
     }
 
     /// <summary>
+    /// The fleets worker hosts say they already accept, for an administrator. Unverified: the
+    /// caller checks each signature. <c>Held</c> is whether the bus already holds a fleet.
+    /// </summary>
+    internal async Task<(bool Held, IReadOnlyList<FleetOffer> Offers)> GetFleetOffersAsync(CancellationToken cancellationToken)
+    {
+        var value = await PostAsync<FleetOffersResponse>("api/mobile/admin/hosts/fleet-offers", new { grant_secret = RequireGrant() }, cancellationToken);
+        return (value.Held, (value.Offers ?? []).Select(MapFleetOffer).ToList());
+    }
+
+    /// <summary>An offer whose fleet is not base64 is kept with no bytes, so it is refused by the checks and still shown.</summary>
+    private static FleetOffer MapFleetOffer(FleetOfferResponse x)
+    {
+        var bytes = new byte[x.Fleet.Length];
+        var fleet = Convert.TryFromBase64String(x.Fleet, bytes, out var written) ? bytes[..written] : [];
+        return new FleetOffer(x.AgentId, x.Agent, x.Serial, fleet, x.Sig);
+    }
+
+    /// <summary>
     /// Publishes signed bytes exactly as given. The bus stores them and checks nothing but that the
     /// serial rises; each host verifies the signature itself.
     /// </summary>
@@ -815,6 +833,10 @@ public sealed class BusApi
     private sealed record ServicePrincipalResponse(string Name, [property: JsonPropertyName("agent_name_prefix")] string AgentNamePrefix, [property: JsonPropertyName("credential_secret")] string? CredentialSecret);
     private sealed record DeviceEnrollmentResponse([property: JsonPropertyName("device_label")] string DeviceLabel, [property: JsonPropertyName("expires_at")] DateTimeOffset ExpiresAt, string Payload);
     private sealed record HostEnrollmentResponse([property: JsonPropertyName("host_prefix")] string HostPrefix, [property: JsonPropertyName("expires_at")] DateTimeOffset ExpiresAt, string? Code);
+    private sealed record FleetOffersResponse(bool Held, List<FleetOfferResponse>? Offers);
+
+    private sealed record FleetOfferResponse([property: JsonPropertyName("agent_id")] string AgentId, string Agent, long Serial, string Fleet, string Sig);
+
     private sealed record SiteDocumentResponse(string Name, long Serial, string Body, string Signature, [property: JsonPropertyName("signer_fingerprint")] string? SignerFingerprint, [property: JsonPropertyName("stored_at")] DateTimeOffset StoredAt);
     private sealed record GrantResponse([property: JsonPropertyName("grant_secret")] string GrantSecret);
     private sealed record ConfirmationResponse([property: JsonPropertyName("confirmation_id")] string ConfirmationId, string Action, [property: JsonPropertyName("target_id")] string TargetId, [property: JsonPropertyName("target_label")] string TargetLabel, string Effect);
