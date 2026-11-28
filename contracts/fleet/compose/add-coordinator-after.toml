@@ -1,0 +1,23 @@
+serial = 6
+owner = "Alex"
+
+[[coordinator]]
+agent_name     = "coord-main"
+agent_id       = "11111111-1111-4111-8111-111111111111"
+project        = "app"
+notes_repo     = "https://github.com/acme/team-notes"
+notes_channel  = "app-notes"
+repos          = ["https://github.com/acme/"]
+
+[[host]]
+agent_name = "host-office1-host"
+agent_id   = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+
+[[coordinator]]
+agent_name     = "coord-docs"
+agent_id       = "22222222-2222-4222-8222-222222222222"
+project        = "docs"
+notes_repo     = "https://github.com/acme/docs-notes"
+notes_channel  = "docs-notes"
+repos          = ["https://github.com/acme/handbook"]
+default_engine = "claude"

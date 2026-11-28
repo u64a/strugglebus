@@ -1,0 +1,7 @@
+serial = 14
+
+version = "2026.12.01"
+commit = "0000000000000000000000000000000000000000"
+tree_sha256 = "0000000000000000000000000000000000000000000000000000000000000000"
+needs_install = false
+notes = "a made-up release.toml: the App must never sign this shape as a fleet"

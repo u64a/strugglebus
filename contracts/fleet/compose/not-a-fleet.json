@@ -1,0 +1,9 @@
+{
+ "_about": "u64-security, #humans 29197, condition 1: the same YubiKeys sign worker-host releases (strugglebus-release) and bus releases (strugglebus-bus-release), so the App may only ever sign in the namespace strugglebus-fleet (a constant), and only bytes that pass the strict fleet reader. These inputs are a release.toml and a bus release statement (both made up): the strict reader must refuse them, so nothing in this shape is ever put in front of the YubiKey as a fleet. The App's own test also tries each release namespace and must be refused before ssh-keygen runs.",
+ "never_sign_namespaces": ["strugglebus-release", "strugglebus-bus-release", "strugglebus-baseline"],
+ "sign_namespace": "strugglebus-fleet",
+ "cases": [
+  {"name": "a-release-toml", "input": "not-fleet-release.toml", "result": "refuse:unknown-key"},
+  {"name": "a-bus-release-statement", "input": "not-fleet-statement.txt", "result": "refuse:serial-line"}
+ ]
+}

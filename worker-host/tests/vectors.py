@@ -16,6 +16,16 @@ NAMES = ("host-command", "fleet", "host-enrol", "host-status", "host-events", "s
 
 PINNED = {
     "fleet/allowed_signers": "ce7633fea544aca440d9e3bf8f8e59bacbfc67f3883109af2f9883e4e18a6e84",
+    "fleet/compose/add-coordinator-after.toml": "fa5d47f91a4607fe580d2eb9a51f55b4ad5fb660e9ddfba8063735fa2788866d",
+    "fleet/compose/add-coordinator-broad-after.toml": "2a92205d16792f8d1fba65e081ed21b4c6d12f2c4a99d150091454089fd71558",
+    "fleet/compose/coordinators.json": "e91f049648e08b5758f7bc2d79f7be7570878f41ee00c372a0c48826405d6ebe",
+    "fleet/compose/hand-edited.toml": "ba9da1b1bfeed4b05274d5eaeaf6a7e5b1726263484f1475f91b3aa6c350d4ce",
+    "fleet/compose/not-a-fleet.json": "6120834a486958d06f8165caddf424478052036cfed75e0729717d3bf5949a8b",
+    "fleet/compose/not-fleet-release.toml": "3d2e5ca076750716bdad8165a65a0edbb7535987a93becd621f3b291b69ae411",
+    "fleet/compose/not-fleet-statement.txt": "0e5cc480877428ad3bf99402d37e5d2b2671842df8103d4d82de2bd22518002a",
+    "fleet/compose/remove-coordinator-after.toml": "b4c290ac70f06766ec59f1c09e7315d50a7b31c65665e22f4dda0418a84c6f35",
+    "fleet/compose/remove-host-after.toml": "457e8cec1a00a4936bb5dee7616aae84bc5534c48bce651b7b5c5b52387c9a5d",
+    "fleet/compose/two-each.toml": "72e8618edefcc36a8de298479ade713ba801f98a3784fedf9d8310ac9fdf48f5",
     "fleet/compose/after.toml": "4d3204e326ae634fa138b626259316d6c40b428e279d8b413be4cb683d03037e",
     "fleet/compose/before.toml": "bc1ace56aca1c25b0431de9d0a0cc7425b2eb8f76a46acbae24825ee5184fc16",
     "fleet/compose/duplicate-id.toml": "9628751f094bc74a2a97efe48002fffbb1f6344bf3063996e5ee11f510d8d968",
