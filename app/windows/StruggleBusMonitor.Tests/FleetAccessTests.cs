@@ -27,7 +27,8 @@ public sealed class FleetAccessLogicTests
             fleet, Now);
 
         Assert.Equal(["alpha", "coord-docs"], choices.Select(choice => choice.Name));
-        Assert.Equal("coord-docs  ·  id id-docs  ·  enabled  ·  active 2m ago  ·  says it runs on devbox  ·  writes the docs", choices[1].Identity);
+        Assert.Equal("bare  ·  id id-b  ·  enabled  ·  never seen", FleetAccessLogic.Identity(new ManagedAgent("id-b", "bare", "", "", "enabled", 1, null, []), Now));
+        Assert.Equal("coord-docs  ·  id id-docs  ·  enabled  ·  active 2m ago  ·  in its own words, not checked: runs on devbox; writes the docs", choices[1].Identity);
     }
 
     [Fact]

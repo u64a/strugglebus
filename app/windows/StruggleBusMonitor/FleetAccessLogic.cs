@@ -67,10 +67,20 @@ internal static class FleetAccessLogic
             $"id {agent.Id}",
             agent.State,
             FeedLogic.PresenceLabel(agent.LastSeenAt, now),
-            agent.Host.Length > 0 ? $"says it runs on {agent.Host}" : string.Empty,
-            agent.Description
+            OwnWord(agent)
         ];
         return string.Join("  ·  ", parts.Where(part => part.Length > 0));
+    }
+
+    /// <summary>
+    /// The host and description an agent gave for itself. The bus does not check either, so they
+    /// are marked as the agent's own word: the name, id and state are what the bus vouches for.
+    /// </summary>
+    private static string OwnWord(ManagedAgent agent)
+    {
+        string[] said = [agent.Host.Length > 0 ? $"runs on {agent.Host}" : string.Empty, agent.Description];
+        var claims = string.Join("; ", said.Where(claim => claim.Length > 0));
+        return claims.Length == 0 ? string.Empty : $"in its own words, not checked: {claims}";
     }
 
     public static IReadOnlyList<FleetEntryRow> Rows(IEnumerable<FleetAgent> fleet) =>
