@@ -22,6 +22,7 @@ internal static class SshKeygen
     public static async Task<SshVerdict> VerifyAsync(string tool, byte[] message, string signature, string signerLine, string principal, string purpose)
     {
         if (!File.Exists(tool)) return SshVerdict.NoTool;
+        if (!UpdateTrust.IsMicrosoft(CatalogSignature.OfProgram(tool))) return SshVerdict.UntrustedTool;
         var folder = Directory.CreateTempSubdirectory("strugglebus-verify-").FullName;
         try
         {
@@ -43,12 +44,13 @@ internal static class SshKeygen
 
     /// <summary>
     /// The ssh-keygen used to ask a hardware key to sign: the first found, in OpenSSH's own
-    /// folder under Program Files and then Windows' own, that carries a valid signature from
-    /// Microsoft. Never one found through PATH. Null when there is none.
+    /// folder under Program Files and then Windows' own, that is validly signed by Microsoft,
+    /// in the file or through a Windows catalog. Never one found through PATH, and never one
+    /// trusted for where it is. Null when there is none.
     /// </summary>
     public static string? SigningTool() => SigningTool(
         [Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "OpenSSH", "ssh-keygen.exe"), DefaultPath],
-        File.Exists, Authenticode.Read);
+        File.Exists, CatalogSignature.OfProgram);
 
     internal static string? SigningTool(IEnumerable<string> candidates, Func<string, bool> exists, Func<string, FileSignature> signatureOf) =>
         candidates.FirstOrDefault(path => exists(path) && UpdateTrust.IsMicrosoft(signatureOf(path)));

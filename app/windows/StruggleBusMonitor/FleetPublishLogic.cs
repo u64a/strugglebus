@@ -21,7 +21,9 @@ internal enum SshVerdict
     Good,
     Bad,
     /// <summary>Windows' own ssh-keygen is not on this PC.</summary>
-    NoTool
+    NoTool,
+    /// <summary>The ssh-keygen on this PC is not validly signed by Microsoft, so its answer is not used.</summary>
+    UntrustedTool
 }
 
 /// <summary>
@@ -55,6 +57,7 @@ internal static partial class FleetPublishLogic
     public const string NoTouchAndPin = "The hardware key did not record both a touch and the PIN for this signature, which every host requires. Sign again with a key that asks for both. It is not published.";
     public const string BadSignature = "The signature does not verify for these exact bytes. The file was changed after it was signed, or the signature belongs to another file. It is not published.";
     public const string NoTool = @"Windows' own ssh-keygen was not found (System32\OpenSSH\ssh-keygen.exe), so the signature could not be checked and nothing is published. Add it in Windows Settings > System > Optional features > OpenSSH Client.";
+    public const string UntrustedTool = @"The ssh-keygen in System32\OpenSSH on this PC is not validly signed by Microsoft, so the app will not take its word that a signature verifies. Nothing is published. Repair it in Windows Settings > System > Optional features > OpenSSH Client.";
     public const string NoSerial = "The document does not have exactly one serial line before its first table, so the app cannot tell its serial. It is not published.";
 
     [GeneratedRegex(@"\A(?<principal>[A-Za-z0-9][A-Za-z0-9._@-]{0,63}) namespaces=""(?<namespaces>[a-z,-]+)"" (?<type>[a-z0-9@.-]+) (?<key>[A-Za-z0-9+/]+={0,2})( [A-Za-z0-9._@-]{1,64})?\z")]
@@ -156,6 +159,7 @@ internal static partial class FleetPublishLogic
     {
         SshVerdict.Good => null,
         SshVerdict.NoTool => NoTool,
+        SshVerdict.UntrustedTool => UntrustedTool,
         _ => BadSignature
     };
 
