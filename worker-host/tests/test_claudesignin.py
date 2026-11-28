@@ -170,5 +170,6 @@ def test_the_bootstrap_prints_the_key_fingerprint_before_the_lock_down():
 
     text = (Path(__file__).resolve().parent.parent / "tools" / "bootstrap.ps1").read_text(encoding="ascii")
     main = text.split("InvocationName -eq '.') { return }")[1]
-    block = main.split("try {")[1].split("} finally {")[0]
+    # the sign-ins' own try (inside the work folder's), before its finally applies the lock-down
+    block = next(p.split("} finally {")[0] for p in main.split("try {")[1:] if "Invoke-Enrol" in p.split("} finally {")[0])
     assert block.index("Invoke-Enrol") < block.index("Show-SignInKey") < block.index("Invoke-SignIn")
