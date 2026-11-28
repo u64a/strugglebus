@@ -1,16 +1,16 @@
-serial = 13
+serial = 14
 
 # release.toml: the worker-host code hosts install, signed by a pinned key (release.toml.sig, namespace
 # strugglebus-release). Made by tools/make-release.py; signed and merged with tools/sign-config.ps1 -Pr <n>.
 # Hosts announce it at check_at (01:00) and apply it in their maintenance window (03:00): docs/design.md 10a.
 
-version = "2026.11.28.3"
-commit = "e7f9567e82f9f209f24ebe79b99419cafe3e05b5"
-tree_sha256 = "a475f57823d5fe2cf33710fb9eaebf9b930f154cecaf843cd865ab7376388320"
+version = "2026.11.28.4"
+commit = "15bffdca246d6bde21bba402e7a77fa91d7330d2"
+tree_sha256 = "6f3390e02aef935a128b240c1a9c9b2670aee804e549e478e6adfa0d938b7d77"
 needs_install = false
-notes = "A second host on one PC (for the DevBox's own account): its own task name, the previous trust root kept and announced, one offboarding record per account; sign-config -File for the App's fleet step."
+notes = "Signing in again after the lock-down (device codes for GitHub and Copilot; a sealed Claude token); the pinned signer keys reported by fingerprint; the status push works before the bus knows the newer fields; the bootstrap prints the host's sign-in key."
 installer_sha256 = "b5eff21e8a8f0dc2b4bef566efbcdecb30a3eec173f30ef16a6bdc4af9622322"
-bootstrap_sha256 = "aec825a94080cae9a2e15356649302a3f47cfc09cbf6965c8240d709c5e963fd"
+bootstrap_sha256 = "887e1e32183e9879b46e0969ad742aa933ab67e77cc54fa2d046b932b0fd217d"
 authenticode_thumbprints = ["3FF059FA28ED74ACB229CBA2E670CEA565015238"]
 
 [moved_to]
