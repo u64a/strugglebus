@@ -449,8 +449,13 @@ function Install-EngineUpdateTask([string]$stage) {
     Copy-Item -LiteralPath (Join-Path $stage 'setup\Update-Engines.ps1') -Destination $script -Force
     $a = Get-EngineUpdateAction $script
     $action = New-ScheduledTaskAction -Execute $a.execute -Argument $a.arguments
+    # The window (every 15 min, 04:00-06:00) and recovery (hourly, all day: it acts only on an interrupted marker).
+    # No one else may start it: the default task ACL, administrators only (u64-security, #humans 29459).
     $trigger = New-ScheduledTaskTrigger -Daily -At '04:00'
     $trigger.Repetition = (New-ScheduledTaskTrigger -Once -At '04:00' -RepetitionInterval (New-TimeSpan -Minutes 15) -RepetitionDuration (New-TimeSpan -Hours 2)).Repetition
+    $hourly = New-ScheduledTaskTrigger -Daily -At '00:05'
+    $hourly.Repetition = (New-ScheduledTaskTrigger -Once -At '00:05' -RepetitionInterval (New-TimeSpan -Hours 1) -RepetitionDuration (New-TimeSpan -Hours 24)).Repetition
+    $trigger = @($trigger, $hourly)
     $principal = New-ScheduledTaskPrincipal -UserId 'S-1-5-18' -LogonType ServiceAccount -RunLevel Highest
     $settings = New-ScheduledTaskSettingsSet -ExecutionTimeLimit (New-TimeSpan -Hours 1) -MultipleInstances IgnoreNew -StartWhenAvailable
     Register-ScheduledTask -TaskName $EngineUpdateTask -Action $action -Trigger $trigger -Principal $principal `

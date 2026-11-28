@@ -12,9 +12,12 @@
 #      before, and the failure is reported as publisher-mismatch (or signature-invalid).
 #   3. The result goes to engine-update\result.json, which only administrators and SYSTEM can write; hosts read it.
 #   4. Only inside the window, and only when no host on this PC is running or holding a task. Admission stays CLOSED
-#      from before the idle check until after the publisher check or rollback (prox-manager, #humans 29445): the
-#      marker engine-update\updating.json is written first, hosts take no new task while it is fresh, and it is
-#      removed in a finally. A marker older than the hosts' limit (45 min) is ignored, so a crash never blocks work.
+#      from before the idle check until every tool is checked or restored (prox-manager, #humans 29445-29453;
+#      u64-security 29455): the marker engine-update\updating.json is written first and kept fresh as a heartbeat,
+#      and hosts take no new task while it EXISTS. Only a run that finishes safely removes it. A run that dies
+#      leaves it, the hosts report engine-update-interrupted, and the next run (the window, or the hourly trigger)
+#      recovers first: no installer left running, every tool checked, any failure restored from its backup.
+#      One run at a time (a global mutex), and the host account can't start the task (#humans 29458/29459).
 #   5. Each outcome becomes a host event (the host logs it from the result): tool-updated or tool-update-failed.
 #   6. The task: SYSTEM, one fixed action, no arguments.
 $ErrorActionPreference = 'Stop'
@@ -29,6 +32,10 @@ $Marker = Join-Path $Here 'updating.json'
 $BusyFreshSeconds = 900                       # a host's status.json older than this has no live workers
 $SettleSeconds = 30                           # longer than a host's loop (poll_seconds 10) plus a claim in flight
 $WaitIdleSeconds = 600                        # how long the marker is held waiting for hosts to empty
+$BeatSeconds = 30                             # the marker's heartbeat while a run is alive
+$WingetTimeoutSeconds = 900                   # one winget call; then it is killed with its children
+$WaitInstallersSeconds = 900                  # recovery waits this long for a dead run's installers to stop
+$InstallerProcesses = @('winget', 'WindowsPackageManagerServer')
 $Engines = @(
     @{ tool = 'ghcp'; id = 'GitHub.Copilot'; exe = 'copilot.exe'; org = 'GitHub, Inc.' },
     @{ tool = 'claude'; id = 'Anthropic.ClaudeCode'; exe = 'claude.exe'; org = 'Anthropic, PBC' }
@@ -189,45 +196,124 @@ function Invoke-Robocopy([string]$from, [string]$to) {
     return ($LASTEXITCODE -lt 8)
 }
 
+function Set-Marker([string]$phase) {
+    # The marker is also the heartbeat: rewritten at least every $BeatSeconds while a run is alive. Hosts stay closed
+    # while it exists, and call it interrupted when it is older than their limit (engineupdate.STALE_SECONDS).
+    $m = @{ v = 1; phase = $phase; beat_at = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds() }
+    [IO.File]::WriteAllText($Marker, ($m | ConvertTo-Json), [Text.UTF8Encoding]::new($false))
+}
+
+function Wait-Beating([int]$seconds, [string]$phase) {
+    # Sleep, keeping the heartbeat fresh.
+    $end = (Get-Date).AddSeconds($seconds)
+    while ((Get-Date) -lt $end) { Set-Marker $phase; Start-Sleep -Seconds ([Math]::Min($BeatSeconds, [Math]::Max(1, ($end - (Get-Date)).TotalSeconds))) }
+}
+
+function Invoke-Winget([string]$winget, [string[]]$wingetArgs, [int]$timeoutSeconds = $WingetTimeoutSeconds) {
+    # winget as a child process, the heartbeat kept fresh while it runs; killed with its children after the timeout.
+    # The arguments are the script's own fixed words (no spaces, no quotes), so joining them is safe in 5.1.
+    $psi = New-Object Diagnostics.ProcessStartInfo $winget, ($wingetArgs -join ' ')
+    $psi.UseShellExecute = $false; $psi.RedirectStandardOutput = $true; $psi.RedirectStandardError = $true
+    $psi.CreateNoWindow = $true
+    $p = [Diagnostics.Process]::Start($psi)
+    $out, $err = $p.StandardOutput.ReadToEndAsync(), $p.StandardError.ReadToEndAsync()
+    $end = (Get-Date).AddSeconds($timeoutSeconds)
+    while (-not $p.WaitForExit($BeatSeconds * 1000)) {
+        Set-Marker 'updating'
+        if ((Get-Date) -gt $end) {
+            & (Join-Path $env:SystemRoot 'System32\taskkill.exe') /PID $p.Id /T /F 2>&1 | Out-Null
+            [void]$p.WaitForExit(30000)
+            return @{ code = $null; timedOut = $true; out = '' }
+        }
+    }
+    return @{ code = $p.ExitCode; timedOut = $false; out = $out.Result + "`n" + $err.Result }
+}
+
+function Get-EngineProblem($engine) {
+    # Is this tool, as installed now, the pinned publisher's? $null when it is (or isn't installed at all).
+    $target = Get-LinkTarget (Join-Path $WingetLinks $engine.exe)
+    if (-not $target) { return $null }
+    if (-not (Test-Path -LiteralPath $target)) { return 'signature-invalid' }
+    $sig = Get-AuthenticodeSignature -LiteralPath $target
+    return Get-PublisherProblem $sig.Status $sig.SignerCertificate.Subject $engine.org
+}
+
+function Restore-Engine($engine, [string]$dir) {
+    # The package folder back from the copy taken before this run touched it, then checked again. $null when the
+    # restored tool passes; otherwise why not.
+    $backup = Join-Path $Here ('backup\' + $engine.id)
+    if (-not (Test-Path -LiteralPath $backup)) { return 'no-backup' }
+    if (-not (Invoke-Robocopy $backup $dir)) { return 'restore-failed' }
+    return Get-EngineProblem $engine
+}
+
 function Update-OneEngine($engine, [string]$winget) {
-    # One tool: its outcome as @{tool; outcome = updated | current | failed | not-installed; before; after; reason}.
-    $r = @{ tool = $engine.tool; outcome = 'failed'; before = $null; after = $null; reason = $null }
+    # One tool: @{tool; outcome = updated | current | failed | not-installed; before; after; reason; safe}. `safe` is
+    # false only when the tool may be left half-replaced or unverified: then the marker stays (fail closed).
+    $r = @{ tool = $engine.tool; outcome = 'failed'; before = $null; after = $null; reason = $null; safe = $true }
     $link = Join-Path $WingetLinks $engine.exe
-    $target = Get-LinkTarget $link
-    $dir = Get-PackageDir $target
+    $dir = Get-PackageDir (Get-LinkTarget $link)
     if (-not $dir -or -not (Test-Path -LiteralPath $dir)) { $r.outcome = 'not-installed'; return $r }
     $r.before = Get-InstalledVersion $engine.id
     if (-not $r.before) { $r.reason = 'version-unreadable'; return $r }
     $showArgs = @('show', '--id', $engine.id, '--exact', '--source', 'winget', '--disable-interactivity', '--accept-source-agreements')
-    $latest = Get-ShowVersion ((& $winget @showArgs 2>&1) -join "`n")
+    $show = Invoke-Winget $winget $showArgs 120
+    $latest = Get-ShowVersion $show.out
     if (-not $latest) { $r.reason = 'source-unreadable'; return $r }
     if (-not (Test-Newer $latest $r.before)) { $r.outcome = 'current'; $r.after = $r.before; return $r }
     $backup = Join-Path $Here ('backup\' + $engine.id)
     if (-not (Invoke-Robocopy $dir $backup)) { $r.reason = 'backup-failed'; return $r }
+    # From here the tool may change: it is safe again only once checked, or restored and checked.
+    $r.safe = $false
+    $script:Touching = $engine.tool
     # `install --force`, not `upgrade`: as SYSTEM, winget can't see the portable install to upgrade it (29 Nov); the
     # same command the bootstrap uses (--scope machine --force), from the winget source only.
     # --skip-dependencies: Copilot's manifest declares Microsoft.PowerShell, which winget otherwise installs (as an
     # MSIX, for SYSTEM: seen on the test VM, 29 Nov). The hosts use the pinned PowerShell 7, as the bootstrap does.
     $upArgs = @('install', '--id', $engine.id, '--exact', '--scope', 'machine', '--force', '--source', 'winget', '--silent',
                 '--skip-dependencies', '--disable-interactivity', '--accept-source-agreements', '--accept-package-agreements')
-    & $winget @upArgs 2>&1 | Out-Null
-    $code = $LASTEXITCODE
-    $target = Get-LinkTarget $link   # the upgrade may have replaced the link
-    $sig = if ($target -and (Test-Path -LiteralPath $target)) { Get-AuthenticodeSignature -LiteralPath $target } else { $null }
-    $problem = if ($sig) { Get-PublisherProblem $sig.Status $sig.SignerCertificate.Subject $engine.org } else { 'signature-invalid' }
+    $run = Invoke-Winget $winget $upArgs
+    $problem = Get-EngineProblem $engine
     if ($problem) {
-        # Condition 2: never leave an unverified program in place. Put the old package back, exactly.
-        $r.reason = if (Invoke-Robocopy $backup $dir) { $problem } else { 'restore-failed' }
+        # Condition 2: never leave an unverified program in place. Put the old package back, exactly, and check it.
+        $after = Restore-Engine $engine $dir
+        $r.reason, $r.safe = $(if ($after) { 'restore-failed' } else { $problem }), (-not $after)
+        if ($r.safe) { $script:Touching = $null }
         return $r
     }
     Assert-WingetRootSafe
     $icacls = Join-Path $env:SystemRoot 'System32\icacls.exe'
     & $icacls $dir /reset /T /C /Q | Out-Null
+    $r.safe = $true   # checked: the pinned publisher's program, whatever its version
+    $script:Touching = $null
     if ($LASTEXITCODE -ne 0) { $r.reason = 'acl-reset-failed'; return $r }
     $r.after = Get-InstalledVersion $engine.id
-    if ($code -ne 0 -or -not $r.after -or $r.after -eq $r.before) { $r.reason = 'winget-failed'; return $r }
+    if ($run.timedOut) { $r.reason = 'winget-timeout'; return $r }
+    if ($run.code -ne 0 -or -not $r.after -or $r.after -eq $r.before) { $r.reason = 'winget-failed'; return $r }
     $r.outcome = 'updated'
     return $r
+}
+
+function Repair-AfterInterruption {
+    # A marker left by a run that died: wait for anything it started to stop, then check every tool, restoring any
+    # that fails from its backup. Returns @{ safe; results }.
+    $deadline = (Get-Date).AddSeconds($WaitInstallersSeconds)
+    while (@(Get-Process -Name $InstallerProcesses -ErrorAction SilentlyContinue).Count) {
+        if ((Get-Date) -gt $deadline) { return @{ safe = $false; results = @() } }   # still running: later
+        Wait-Beating 15 'recovering'
+    }
+    $results = @(foreach ($e in $Engines) {
+            $r = @{ tool = $e.tool; outcome = 'current'; before = $null; after = $null; reason = $null; safe = $true }
+            $dir = Get-PackageDir (Get-LinkTarget (Join-Path $WingetLinks $e.exe))
+            if (-not $dir) { $r.outcome = 'not-installed' }
+            elseif ($problem = Get-EngineProblem $e) {
+                $after = Restore-Engine $e $dir
+                $r.outcome, $r.reason, $r.safe = 'failed', $(if ($after) { 'restore-failed' } else { "restored-after-$problem" }), (-not $after)
+            }
+            $r.before = $r.after = Get-InstalledVersion $e.id
+            $r
+        })
+    return @{ safe = -not ($results | Where-Object { -not $_.safe }); results = $results }
 }
 
 function Write-Result([hashtable]$result) {
@@ -241,39 +327,68 @@ function Read-LastResult {
     try { return Get-Content -LiteralPath $ResultFile -Raw -Encoding UTF8 | ConvertFrom-Json } catch { return $null }
 }
 
+function New-Result([string]$state, $results, $busy = @(), [string]$mode = 'update') {
+    return @{ v = 1; day = (Get-Date).ToString('yyyy-MM-dd'); state = $state; mode = $mode; busy = @($busy)
+              written_at = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
+              results = @($results | ForEach-Object { @{ tool = $_.tool; outcome = $_.outcome; before = $_.before; after = $_.after; reason = $_.reason } }) }
+}
+
 if ($MyInvocation.InvocationName -eq '.') { return }
 
-$now = Get-Date
-if (-not (Test-InWindow $now)) { exit 0 }
-$today = $now.ToString('yyyy-MM-dd')
-$last = Read-LastResult
-if ($last -and $last.day -eq $today -and $last.state -eq 'done') { exit 0 }   # once a night
-$hostRoot = Join-Path $SbRoot 'host'
-# Admission closed FIRST (condition 4): from here until the finally, no host takes a new task.
-[IO.File]::WriteAllText($Marker, (@{ v = 1; started_at = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds() } | ConvertTo-Json),
-    [Text.UTF8Encoding]::new($false))
-try {
-    Start-Sleep -Seconds $SettleSeconds   # every host's loop sees the marker; a claim already in flight lands
-    $deadline = (Get-Date).AddSeconds($WaitIdleSeconds)
-    $busy = Get-BusyHosts $hostRoot ([DateTimeOffset]::UtcNow.ToUnixTimeSeconds())
-    while ($busy.Count -and (Get-Date) -lt $deadline) {
-        Start-Sleep -Seconds 20
-        $busy = Get-BusyHosts $hostRoot ([DateTimeOffset]::UtcNow.ToUnixTimeSeconds())
-    }
-    if ($busy.Count) {
-        # Still busy after the wait: try again on the task's next run inside the window.
-        Write-Result @{ v = 1; day = $today; state = 'waiting'; written_at = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds(); busy = $busy; results = @() }
-    } else {
-        try {
-            $winget = Get-SystemWinget
-            $results = @(foreach ($e in $Engines) { Update-OneEngine $e $winget })
-        } catch {
-            $reason = if ("$($_.Exception.Message)" -match '^[a-z]+(-[a-z]+)*$') { $_.Exception.Message } else { 'error' }
-            $results = @(foreach ($e in $Engines) { @{ tool = $e.tool; outcome = 'failed'; before = $null; after = $null; reason = $reason } })
-        }
-        Write-Result @{ v = 1; day = $today; state = 'done'; written_at = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds(); busy = @(); results = $results }
-    }
-} finally {
-    Remove-Item -LiteralPath $Marker -Force -ErrorAction SilentlyContinue   # admission open again
+# --- 0. One run at a time on this PC (u64-security, #humans 29459): a second start exits at once. A holder that died
+#        leaves the mutex abandoned, which is ours to take. Released when this process ends.
+$mutex = New-Object Threading.Mutex($false, 'Global\StrugglebusEngineUpdate')
+try { if (-not $mutex.WaitOne(0)) { exit 0 } } catch [Threading.AbandonedMutexException] { }
+# Nothing the host account can write decides what happens from here: the window is the script's own, and the marker
+# and result are admin-only. The account has no right to start this task at all (29459): it runs from its own triggers.
+
+# --- 1. A marker left by a run that died: recover first, at any hour (the hourly trigger). Only a run that FINISHES
+#        removes the marker; until then every host stays closed (fail closed; #humans 29453-29455).
+if (Test-Path -LiteralPath $Marker) {
+    $beat = (Get-Item -LiteralPath $Marker).LastWriteTimeUtc
+    if (([DateTime]::UtcNow - $beat).TotalSeconds -lt 3 * $BeatSeconds) { exit 0 }   # a live run holds it
+    Set-Marker 'recovering'
+    $rec = Repair-AfterInterruption
+    if ($rec.results.Count) { Write-Result (New-Result $(if ($rec.safe) { 'done' } else { 'interrupted' }) $rec.results @() 'recovery') }
+    if ($rec.safe) { Remove-Item -LiteralPath $Marker -Force }
+    exit 0
 }
+
+# --- 2. The nightly update: inside the window, once a night, only when no host on this PC is busy.
+if (-not (Test-InWindow (Get-Date))) { exit 0 }
+$last = Read-LastResult
+if ($last -and $last.day -eq (Get-Date).ToString('yyyy-MM-dd') -and $last.state -eq 'done' -and $last.mode -eq 'update') { exit 0 }
+$hostRoot = Join-Path $SbRoot 'host'
+Set-Marker 'waiting'   # admission closed FIRST (condition 4): from here, no host takes a new task
+Wait-Beating $SettleSeconds 'waiting'   # every host's loop sees the marker; a claim already in flight lands
+$deadline = (Get-Date).AddSeconds($WaitIdleSeconds)
+$busy = Get-BusyHosts $hostRoot ([DateTimeOffset]::UtcNow.ToUnixTimeSeconds())
+while ($busy.Count -and (Get-Date) -lt $deadline) {
+    Wait-Beating 20 'waiting'
+    $busy = Get-BusyHosts $hostRoot ([DateTimeOffset]::UtcNow.ToUnixTimeSeconds())
+}
+if ($busy.Count) {
+    # Nothing was touched: open again, and try on the next run inside the window.
+    Write-Result (New-Result 'waiting' @() $busy)
+    Remove-Item -LiteralPath $Marker -Force
+    exit 0
+}
+$results = @()
+$script:Touching = $null
+try {
+    $winget = Get-SystemWinget
+    foreach ($e in $Engines) {
+        Set-Marker 'updating'
+        $results += Update-OneEngine $e $winget
+    }
+} catch {
+    # An unexpected error: what wasn't reached is reported as failed and untouched; anything mid-replacement is
+    # unsafe, so the marker stays and the next run recovers.
+    $reason = if ("$($_.Exception.Message)" -match '^[a-z]+(-[a-z]+)*$') { $_.Exception.Message } else { 'error' }
+    $done = @($results | ForEach-Object { $_.tool })
+    $results += @(foreach ($e in $Engines) { if ($done -notcontains $e.tool) { @{ tool = $e.tool; outcome = 'failed'; reason = $reason; safe = ($e.tool -ne $script:Touching) } } })
+}
+$safe = -not ($results | Where-Object { -not $_.safe })
+Write-Result (New-Result $(if ($safe) { 'done' } else { 'interrupted' }) $results)
+if ($safe) { Remove-Item -LiteralPath $Marker -Force }   # admission open again only when every tool is checked
 exit 0

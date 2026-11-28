@@ -1545,6 +1545,7 @@ class Host:
             resource_problem={"disk": "disk-low", "commit": "memory-high", "ram": "memory-high"}.get(
                 verdict[0] if verdict else ""),
             isolation_weak=bool((read_json_file(self.cfg.state_dir / "isolation.json") or {}).get("exec_hits")),
+            engine_update_interrupted=self.dedicated() and engineupdate.marker_interrupted(),
             last_command=self.st.data.get("last_command"),
             release_source=self.release_where.label(), release_unreachable=self.release_unreachable,
             release_redirect_refused=bool(self.release_where.refused), **self.dashboard_facts())
@@ -1762,8 +1763,9 @@ class Host:
         return getattr(self.cfg, "dedicated_account", False) is True
 
     def machine_updating_engines(self) -> bool:
-        """On a dedicated host: is the machine's SYSTEM task replacing an agent program now (engineupdate)?"""
-        return self.dedicated() and engineupdate.marker_active()
+        """On a dedicated host: is the machine's SYSTEM task replacing an agent program, or did one stop part-way
+        (engineupdate)? Admission stays closed until the updater itself removes its marker."""
+        return self.dedicated() and engineupdate.marker_present()
 
     def engine_update_tick(self) -> None:
         """On a dedicated host: log each new outcome of the machine's engine updater once (they become the host events

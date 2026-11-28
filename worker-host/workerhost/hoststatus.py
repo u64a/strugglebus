@@ -27,6 +27,8 @@ PROBLEMS = {  # code -> the one plain sentence the App shows
     "fleet-unavailable": "The kept signed fleet list failed its check: no coordinator is trusted until it refreshes.",
     "bus-unreachable": "The host cannot reach StruggleBus; running workers carry on.",
     "engine-missing": "No agent engine (Copilot CLI or Claude Code) is installed and usable on this host.",
+    "engine-update-interrupted": "The machine's update of the agent programs stopped part-way; the host takes no new "
+                                 "tasks until the updater runs again and checks them.",
     "sign-in-needed": "An agent engine needs signing in as the host's account.",
     "rolled-back": "The last update failed its checks and was rolled back; the previous version is running.",
     "update-failed": "The last update could not be applied.",
@@ -77,6 +79,7 @@ class Facts:
     rolled_back: bool = False
     resource_problem: str | None = None  # "disk-low", "memory-high", or None
     isolation_weak: bool = False
+    engine_update_interrupted: bool = False  # the machine's engine updater died part-way (engineupdate)
     extra_warnings: list[str] = field(default_factory=list)
     release_source: str = "fleet"      # update.Where.label(): "fleet", or the release repository#folder
     release_unreachable: bool = False
@@ -122,6 +125,8 @@ def problem_of(f: Facts) -> str | None:
         return "channel-missing"
     if f.fleet.get("state") == "unavailable":
         return "fleet-unavailable"
+    if f.engine_update_interrupted:
+        return "engine-update-interrupted"
     if not f.bus_ok:
         return "bus-unreachable"
     if not f.engines:

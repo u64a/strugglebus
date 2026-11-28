@@ -4,8 +4,11 @@ On a host with its own standard account, the agent programs (Copilot CLI, Claude
 account can't update them, by design. A SYSTEM scheduled task does it in the window, from an admin-only folder:
 C:\ProgramData\strugglebus\engine-update. The host only READS two files there:
 
-- updating.json: present while the task works. Admission is closed: the host takes no new task while it is fresh
-  (MARKER_MAX_AGE, so a crashed task never blocks work for long).
+- updating.json: present while the task works, and kept fresh as a heartbeat. Admission is CLOSED while it EXISTS,
+  however old: only a run that finishes safely removes it (fail closed; prox-manager #humans 29453, u64-security
+  29455). A stale heartbeat means the run that wrote it died mid-update: the host reports the problem
+  engine-update-interrupted and stays closed until the updater runs again and recovers (no installer left running,
+  every tool checked or restored from its backup).
 - result.json: what the last run did, per tool. The host logs each new outcome once (tool-updated, or
   tool-update-failed with a reason), which become host events, and reports Copilot's state as ghcp_ok.
 
@@ -19,7 +22,7 @@ import re
 import time
 from pathlib import Path
 
-MARKER_MAX_AGE = 45 * 60
+STALE_SECONDS = 300  # the script beats every 30 s (setup\Update-Engines.ps1 $BeatSeconds); 10 missed beats = died
 TOOLS = ("ghcp", "claude")
 OUTCOMES = ("updated", "current", "failed", "not-installed")
 TOOL_VERSION_RE = re.compile(r"[0-9]+(?:\.[0-9]+){1,3}(?:-[0-9A-Za-z.]+)?")
@@ -30,14 +33,19 @@ def folder() -> Path:
     return Path(os.environ.get("ProgramData", r"C:\ProgramData")) / "strugglebus" / "engine-update"
 
 
-def marker_active(path: Path | None = None, now: float | None = None) -> bool:
-    """Is the machine updating the engines right now? A marker older than MARKER_MAX_AGE is ignored."""
+def marker_present(path: Path | None = None) -> bool:
+    """Is the machine updating the engines, or did a run stop part-way? Either way admission is closed."""
+    return (path or folder() / "updating.json").exists()
+
+
+def marker_interrupted(path: Path | None = None, now: float | None = None) -> bool:
+    """A marker whose heartbeat has stopped: the run that wrote it died before every tool was checked."""
     p = path or folder() / "updating.json"
     try:
         age = (time.time() if now is None else now) - p.stat().st_mtime
     except OSError:
         return False
-    return age < MARKER_MAX_AGE
+    return age > STALE_SECONDS
 
 
 def _version(value) -> str | None:

@@ -23,14 +23,18 @@ def result(tmp_path, written_at=100, state="done", results=None):
     return p
 
 
-def test_a_fresh_marker_closes_admission_and_a_stale_or_missing_one_does_not(tmp_path):
+def test_a_marker_closes_admission_however_old_and_a_stopped_heartbeat_is_an_interruption(tmp_path):
+    """Fail closed (prox-manager #humans 29453, u64-security 29455): only the updater removes its marker."""
     m = tmp_path / "updating.json"
-    assert not engineupdate.marker_active(m)
+    assert not engineupdate.marker_present(m) and not engineupdate.marker_interrupted(m)
     m.write_text("{}", encoding="utf-8")
-    assert engineupdate.marker_active(m)
-    old = time.time() - engineupdate.MARKER_MAX_AGE - 5
+    assert engineupdate.marker_present(m) and not engineupdate.marker_interrupted(m)  # a live run, beating
+    old = time.time() - engineupdate.STALE_SECONDS - 5
     os.utime(m, (old, old))
-    assert not engineupdate.marker_active(m)  # a crashed task never blocks work for long
+    assert engineupdate.marker_present(m) and engineupdate.marker_interrupted(m)  # died part-way: STILL closed
+    old = time.time() - 30 * 24 * 3600
+    os.utime(m, (old, old))
+    assert engineupdate.marker_present(m)  # no age reopens it
 
 
 def test_only_a_finished_run_is_read_and_only_what_fits(tmp_path):
@@ -83,6 +87,15 @@ def test_a_dedicated_host_takes_no_task_while_the_machine_updates_its_tools(dedi
     assert not h.machine_updating_engines() and h.reported_state() != "maintenance"
     (folder / "updating.json").write_text("{}", encoding="utf-8")
     assert h.resource_verdict() == ("maintenance", {}) and h.reported_state() == "maintenance"
+    from workerhost import hoststatus
+
+    facts = h.status_facts()
+    assert not facts.engine_update_interrupted  # a live run: closed, but no problem
+    old = time.time() - engineupdate.STALE_SECONDS - 5
+    os.utime(folder / "updating.json", (old, old))
+    facts = h.status_facts()
+    assert facts.engine_update_interrupted and hoststatus.problem_of(facts) == "engine-update-interrupted"
+    assert h.resource_verdict() == ("maintenance", {})  # and still takes nothing
     h.cfg.dedicated_account = False  # a host on a shared account updates its own per-user tools as before
     assert not h.machine_updating_engines() and h.reported_state() != "maintenance"
 
