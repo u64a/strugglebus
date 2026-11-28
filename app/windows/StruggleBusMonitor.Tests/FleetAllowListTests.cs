@@ -25,7 +25,8 @@ public sealed class FleetAllowListVectorTests
         [FleetRefusal.SerialLine] = "serial-line", [FleetRefusal.UnknownKey] = "unknown-key", [FleetRefusal.DuplicateAgent] = "duplicate-agent",
         [FleetRefusal.HostListed] = "host-listed", [FleetRefusal.SerialMismatch] = "serial-mismatch", [FleetRefusal.SerialAhead] = "serial-ahead",
         [FleetRefusal.UnsafeChar] = "unsafe-char", [FleetRefusal.BadValue] = "bad-value", [FleetRefusal.OutsideRemotes] = "outside-remotes",
-        [FleetRefusal.NotListed] = "not-listed", [FleetRefusal.LastCoordinator] = "last-coordinator", [FleetRefusal.HandEdited] = "hand-edited"
+        [FleetRefusal.NotListed] = "not-listed", [FleetRefusal.LastCoordinator] = "last-coordinator", [FleetRefusal.HandEdited] = "hand-edited",
+        [FleetRefusal.FleetExists] = "fleet-exists"
     };
 
     private static string Vector(FleetRefusedException refusal) =>
@@ -183,6 +184,16 @@ public sealed class FleetAllowListTests
     {
         Assert.Equal((FleetRefusal.UnsafeChar, "notes_repo"), (Refusal(Good with { NotesRepo = hostile }).Reason, Refusal(Good with { NotesRepo = hostile }).Field));
         Assert.Equal((FleetRefusal.UnsafeChar, "repos"), (Refusal(Good with { Repos = [hostile] }).Reason, Refusal(Good with { Repos = [hostile] }).Field));
+    }
+
+    [Fact]
+    public void AnEntryWithNoEngineIsValidAndWritesNoEngineLine()
+    {
+        var entry = Good with { DefaultEngine = null };
+
+        FleetAllowList.CheckEntry(entry, Remotes);
+        Assert.DoesNotContain("default_engine", FleetAllowList.Block(entry));
+        Assert.EndsWith("repos          = [\"https://github.com/acme/handbook\"]\n", FleetAllowList.Block(entry));
     }
 
     [Fact]

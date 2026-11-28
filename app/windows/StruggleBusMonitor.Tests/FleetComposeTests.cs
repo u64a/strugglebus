@@ -162,6 +162,47 @@ public sealed class FleetComposeTests
         Assert.Contains("reports fleet serial 9, which is above the bus's serial 4", error.Message);
     }
 
+    [Fact]
+    public void AFirstFleetIsSerialOneWithTheOwnerWhenGivenAndNothingElse()
+    {
+        Assert.Equal("serial = 1\n", FleetCompose.Start("", busHoldsFleet: false, []));
+        Assert.Equal("serial = 1\n", FleetCompose.Start("   ", busHoldsFleet: false, [0]));
+        Assert.Equal("serial = 1\nowner = \"Alex O'Neil-Smith Jr.\"\n", FleetCompose.Start(" Alex O'Neil-Smith Jr. ", busHoldsFleet: false, []));
+
+        // What it writes reads back strictly, lists nobody, and takes a first host.
+        var first = FleetCompose.Start("Alex", busHoldsFleet: false, []);
+        Assert.Equal(1, FleetCompose.SerialOf(first));
+        Assert.Empty(FleetCompose.Agents(first));
+        Assert.Equal(2, FleetCompose.SerialOf(FleetCompose.Next(first, NewName, NewId, 1, [])));
+        Assert.Equal(1, FleetSignLogic.RequireFleet(System.Text.Encoding.UTF8.GetBytes(first)));
+    }
+
+    [Theory]
+    [InlineData("Alex \"the\" owner")]
+    [InlineData("Alex\nserial = 9")]
+    [InlineData("Alex # comment")]
+    [InlineData("Alex [[host]]")]
+    [InlineData("this name is far too long to be the name of an owner")]
+    public void AnOwnerNameThatCouldBreakOutOrIsTooLongIsRefused(string owner)
+    {
+        var refusal = Assert.Throws<FleetRefusedException>(() => FleetCompose.Start(owner, busHoldsFleet: false, []));
+
+        Assert.Equal((FleetRefusal.BadValue, "owner"), (refusal.Reason, refusal.Field));
+    }
+
+    [Fact]
+    public void AFleetIsNotStartedWhereOneExistsOnTheBusOrOnAHost()
+    {
+        var held = Assert.Throws<FleetRefusedException>(() => FleetCompose.Start("Alex", busHoldsFleet: true, []));
+        Assert.Equal(FleetRefusal.FleetExists, held.Reason);
+        Assert.StartsWith("The bus already holds a fleet.", held.Message);
+
+        var running = Assert.Throws<FleetRefusedException>(() => FleetCompose.Start("Alex", busHoldsFleet: false, [0, 4, 3]));
+        Assert.Equal(FleetRefusal.FleetExists, running.Reason);
+        Assert.Contains("already runs fleet serial 4", running.Message);
+        Assert.Contains("Take the existing fleet over instead.", running.Message);
+    }
+
     [Theory]
     [InlineData("host-office2", NewId, "is not a worker host's agent name")]
     [InlineData("Host-Office2-host", NewId, "is not a worker host's agent name")]
