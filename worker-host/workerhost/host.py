@@ -1563,6 +1563,8 @@ class Host:
             "model": self.default_model(), "ghcp_ok": self.ghcp_ok, "tasks": tasks, "pwsh": self.pwsh_version(),
             "sign_in": self.signins.status(),
             **self.claude_signin_facts(),
+            "signers": [{"fingerprint": s.fingerprint, "key_type": s.key_type, "namespaces": s.namespaces}
+                        for s in signing.read_signers(self.signers)],
         }
 
     def claude_signin_facts(self) -> dict:

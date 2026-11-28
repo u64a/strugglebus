@@ -121,7 +121,11 @@ they are: coordinators read them to decide whether to send work. This API is an 
 **Who sees what.** The bus filters when it reads; the host always sends everything:
 - **Admin only** (`POST /api/mobile/admin/hosts/status` with the device's grant in the body, the same answer
   whole): `account`, `dedicated`, `warnings`, `bus.channel` and
-  `bus.channel_state`. Together the first three map the weakest machine. A host's channel may be private, and a
+  `bus.channel_state`; and, added later and **may be absent**: section 4a's `sign_in`, `sign_in_key` and
+  `claude_token_since`, and **`signers`** (u64-security, #humans 29197 item 4): the keys this host pins, as
+  `[{fingerprint, key_type, namespaces}]` (at most 16; never the key or its name), so the App can warn when its own
+  signer set and a host's differ. A backup key registered after a host was installed reaches it only by a re-pin on
+  that host. Together the first three map the weakest machine. A host's channel may be private, and a
   device has no per-channel visibility yet.
 - **Every enrolled device:** everything else, coordinator names included.
 - **Never in it at all:** task ids (they can reveal tasks on channels the reader can't see), file paths, repository

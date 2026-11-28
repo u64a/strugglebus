@@ -44,7 +44,8 @@ TASK_OUTCOMES = ("finished", "failed", "timed-out", "interrupted", "refused", "y
 # v2 fields the bus returns to an admin (operator grant) only (u64-security, #humans 28828; bus-dev 28832): the
 # Windows account and its weaknesses map the weakest machine, and a host's channel may be private.
 ADMIN_ONLY = (("account",), ("dedicated",), ("warnings",), ("bus", "channel"), ("bus", "channel_state"),
-              ("sign_in",), ("sign_in_key",), ("claude_token_since",))  # section 4a
+              ("sign_in",), ("sign_in_key",), ("claude_token_since",),  # section 4a
+              ("signers",))  # the keys this host pins, so the App can warn when its set and the host's differ
 
 
 @dataclass
@@ -94,6 +95,7 @@ class Facts:
     sign_in_key: dict | None = None                    # section 4a: this host's X25519 public key and its fingerprint
     claude_token_since: str | None = None              # section 4a: the date the sealed Claude token arrived
     claude_token_old: bool = False                     # ... 335 days or more ago: rotate it
+    signers: list[dict] | None = None                  # the pinned allowed_signers: fingerprint, key type, namespaces
 
 
 def state_of(f: Facts) -> str:
@@ -210,7 +212,21 @@ def build_v2(f: Facts) -> dict:
         s["sign_in_key"] = {"x25519": key["x25519"], "fingerprint": key["fingerprint"]}
     if f.claude_token_since and DATE_RE.fullmatch(f.claude_token_since):
         s["claude_token_since"] = f.claude_token_since
+    # signers (u64-security, #humans 29197 item 4): what THIS host trusts, so the App can warn when its own signer set
+    # and a host's differ (a backup key registered after the host was installed reaches it only by a re-pin). Only
+    # the fingerprint, key type and namespaces of each pinned line; never the key or its name. Admin-only.
+    if f.signers is not None:
+        s["signers"] = [{"fingerprint": x["fingerprint"], "key_type": x["key_type"], "namespaces": x["namespaces"]}
+                        for x in f.signers[:MAX_SIGNERS]
+                        if FINGERPRINT_RE.fullmatch(str(x.get("fingerprint", "")))
+                        and KEY_TYPE_RE.fullmatch(str(x.get("key_type", "")))
+                        and NAMESPACES_RE.fullmatch(str(x.get("namespaces", "")))]
     return s
+
+
+MAX_SIGNERS = 16
+KEY_TYPE_RE = re.compile(r"[a-z0-9@.-]{1,48}")
+NAMESPACES_RE = re.compile(r"[a-z0-9-]{0,64}(?:,[a-z0-9-]{1,64}){0,7}")
 
 
 B64_KEY_RE = re.compile(r"[A-Za-z0-9+/]{43}=")             # base64 of 32 bytes
