@@ -56,3 +56,40 @@ jobs:
       - run: python -m coverage run --branch --source=workerhost,tools -m pytest tests -q
       - run: python -m coverage json -q -o coverage.json
       - run: python tools/crap.py check coverage.json
+  # The end-to-end proof of the bootstrap's fetch-and-verify (Get-VerifiedRelease against this repository's own
+  # signed release: the clean git environment, the blobs, both hashes, the signature). The pytest job skips it, since
+  # a pull request has no local main and a push's depth-1 checkout can't be partially cloned (PR 94). This job gives
+  # it the full history it needs, on every push to main and by hand, and fails if it's skipped (u64-security, #humans
+  # 29292).
+  whole-fetch:
+    if: github.event_name != 'pull_request'
+    runs-on: windows-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: worker-host
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: python -m pip install "pytest==9.0.3"
+      # The test clones the local main. A push to main has it; a run started by hand on another branch makes it from
+      # origin/main, so the job can be tried before it merges.
+      - name: a local main branch
+        shell: pwsh
+        run: |
+          git rev-parse --verify --quiet main
+          if ($LASTEXITCODE -ne 0) { git branch main origin/main }
+          exit 0
+      - name: the whole fetch against this repository's signed release (must run, not skip)
+        shell: pwsh
+        run: |
+          $out = python -m pytest "tests/test_bootstrap_verify.py::test_the_whole_fetch_against_this_repositorys_signed_release" -q -rs 2>&1
+          $code = $LASTEXITCODE
+          $out
+          if ($code -ne 0) { exit $code }
+          if (-not ($out -match '1 passed')) { throw 'the whole-fetch test did not run (skipped?)' }
