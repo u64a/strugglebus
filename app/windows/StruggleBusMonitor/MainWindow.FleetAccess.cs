@@ -56,6 +56,71 @@ public partial class MainWindow
 
     internal async void FleetStart_Click(object sender, RoutedEventArgs e) => await RunBusy(StartFleetAsync, sender);
 
+    internal async void FleetTakeOver_Click(object sender, RoutedEventArgs e) => await RunBusy(TakeOverFleetAsync, sender);
+
+    /// <summary>
+    /// Publishes the fleet the hosts already run, unchanged, with no file. Each offer the bus
+    /// carried is checked like any signed fleet; see <see cref="FleetTakeOverLogic"/> for which
+    /// one may be published.
+    /// </summary>
+    private async Task TakeOverFleetAsync()
+    {
+        if (!_api.HasOperatorGrant()) throw new InvalidOperationException(AdminFlow.GrantNeeded);
+        var offers = await HostsOffersAsync();
+        var checkedOffers = new List<CheckedOffer>();
+        foreach (var offer in offers) checkedOffers.Add(await CheckOfferAsync(offer));
+
+        var chosen = FleetTakeOverLogic.Choose(checkedOffers, ReportedFleetSerials());
+        if (!_platform.Confirm(this, FleetTakeOverLogic.ReviewText(chosen, ListedOrNull(chosen.Fleet.Body)), FleetTakeOverLogic.Caption)) return;
+        await RequireHelloAsync(FleetTakeOverLogic.HelloPrompt(chosen.Fleet.Serial));
+
+        var published = await _api.PublishSiteDocumentAsync(
+            FleetPublishLogic.DocumentName, chosen.Fleet.Serial, chosen.Fleet.Body, chosen.Fleet.Signature, chosen.Fleet.Signer.Fingerprint,
+            FleetTakeOverLogic.Reason(chosen), CancellationToken.None);
+        ShowFleetResult(FleetTakeOverLogic.ResultText(chosen, published.StoredAt));
+        await LoadFleetAccessAsync();
+    }
+
+    /// <summary>The offers the bus holds, when it can carry them and holds no fleet of its own.</summary>
+    private async Task<IReadOnlyList<FleetOffer>> HostsOffersAsync()
+    {
+        try
+        {
+            var (held, offers) = await _api.GetFleetOffersAsync(CancellationToken.None);
+            return held ? throw new InvalidOperationException(FleetTakeOverLogic.BusHoldsFleet) : offers;
+        }
+        catch (BusApiException error) when (AdminFlow.IsLegacyBus(error))
+        {
+            throw new InvalidOperationException(FleetTakeOverLogic.BusTooOld);
+        }
+    }
+
+    /// <summary>One offer through every check a signed fleet gets. A refusal is kept with its reason, to be shown.</summary>
+    private async Task<CheckedOffer> CheckOfferAsync(FleetOffer offer)
+    {
+        try
+        {
+            return new CheckedOffer(offer, await VerifiedAsync(offer.Fleet, offer.Signature), null);
+        }
+        catch (InvalidOperationException refused)
+        {
+            return new CheckedOffer(offer, null, refused.Message);
+        }
+    }
+
+    /// <summary>What a fleet lists, or null when it is outside the strict reading.</summary>
+    private static IReadOnlyList<FleetAgent>? ListedOrNull(byte[] body)
+    {
+        try
+        {
+            return FleetCompose.Agents(Encoding.UTF8.GetString(body));
+        }
+        catch (FleetRefusedException)
+        {
+            return null;
+        }
+    }
+
     /// <summary>
     /// A site's first fleet, composed here so a new operator needs no file. Only when the bus
     /// holds none and no host reports one; see <see cref="FleetCompose.Start"/>.

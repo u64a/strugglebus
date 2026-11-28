@@ -747,6 +747,9 @@
                                         <TextBlock Text="Owner's name (optional; workers are told whose site this is)" Style="{StaticResource FieldLabel}"/>
                                         <TextBox x:Name="FleetOwner" Tag="for example Alex"/>
                                         <Button x:Name="FleetStartButton" Content="Start this site's fleet" Style="{StaticResource Btn}" Click="FleetStart_Click" HorizontalAlignment="Left" Margin="0,12,0,0"/>
+                                        <TextBlock Text="Already have worker hosts running a fleet?" Style="{StaticResource FieldLabel}"/>
+                                        <TextBlock Text="If your hosts already run a signed fleet that was kept somewhere else, take it over instead: each host offers the fleet it accepts, the app checks its signature against your hardware keys, and publishes it exactly as it is. No file is needed and nothing is re-signed." Style="{StaticResource MutedText}" TextWrapping="Wrap" Margin="0,0,0,8"/>
+                                        <Button x:Name="FleetTakeOverButton" Content="Take over the fleet my hosts run" Style="{StaticResource BtnOutline}" Click="FleetTakeOver_Click" HorizontalAlignment="Left"/>
                                     </StackPanel>
                                     <ItemsControl x:Name="FleetEntriesList" Focusable="False">
                                         <ItemsControl.ItemTemplate>
