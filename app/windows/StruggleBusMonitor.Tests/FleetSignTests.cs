@@ -71,6 +71,34 @@ public sealed class FleetSignLogicTests
         Assert.Null(FleetSignLogic.KeyFileBeside(@"C:\k\id_sk_a.txt", _ => true));
     }
 
+    /// <summary>A signer kept from an earlier version, or registered elsewhere, has no noted key file: the one in .ssh is found.</summary>
+    [Fact]
+    public void ASignersKeyFileIsFoundBesideItsPublicFileWhenNoneWasNoted()
+    {
+        static string Pub(SiteSigner signer) => $"sk-ssh-ed25519@openssh.com {signer.KeyBase64} me\n";
+        var files = new[]
+        {
+            (@"C:\u\.ssh\z_b.pub", Pub(Held[1])),
+            (@"C:\u\.ssh\a.pub", Pub(Held[0])),
+            (@"C:\u\.ssh\b_no_key_file.pub", Pub(Held[1])),
+            (@"C:\u\.ssh\other.pub", "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIA me\n"),
+            (@"C:\u\.ssh\stranger.pub", $"sk-ssh-ed25519@openssh.com {Convert.ToBase64String(SshSignatureMaker.Key(seed: 9))}\n")
+        };
+        bool Exists(string path) => path is @"C:\u\.ssh\a" or @"C:\u\.ssh\z_b" or @"C:\u\.ssh\stranger" or "noted-a";
+
+        var found = FleetSignLogic.KeyFilesHere(Held, new Dictionary<string, string>(), files, Exists);
+        Assert.Equal(2, found.Count);
+        Assert.Equal(@"C:\u\.ssh\a", found[Held[0].KeyBase64]);
+        Assert.Equal(@"C:\u\.ssh\z_b", found[Held[1].KeyBase64]);
+
+        // A noted file that is still here wins; one that has gone is replaced by the one found.
+        var noted = FleetSignLogic.KeyFilesHere(Held, new Dictionary<string, string> { [Held[0].KeyBase64] = "noted-a", [Held[1].KeyBase64] = "gone" }, files, Exists);
+        Assert.Equal("noted-a", noted[Held[0].KeyBase64]);
+        Assert.Equal(@"C:\u\.ssh\z_b", noted[Held[1].KeyBase64]);
+
+        Assert.Empty(FleetSignLogic.KeyFilesHere(Held, new Dictionary<string, string>(), files, _ => false));
+    }
+
     [Fact]
     public void TheKeyToSignWithIsTheChosenOneOrTheFirstWhoseFileIsHere()
     {
@@ -277,6 +305,21 @@ public sealed class FleetSignWindowTests(StaWindowAdminFixture sta)
         window.HostJoin_Click(new Button { Tag = row }, new RoutedEventArgs());
         StaWindowAdminScene.Until(() => window.FleetResultPanel.Visibility == Visibility.Visible || scene.Notice.Length > 0, "the outcome");
     }
+
+    /// <summary>What the owner met: signers registered, no key file noted, so adding a host fell back to signing by hand.</summary>
+    [Fact]
+    public void ASignerWithNoNotedKeyFileSignsWithTheOneFoundInTheSshFolder() => sta.Run(() =>
+    {
+        const string found = @"C:\u\.ssh\id_ed25519_sk_strugglebus_A";
+        using var scene = Open(keyFileHere: false);
+        scene.Platform.PublicKeys.Add((found + ".pub", $"sk-ssh-ed25519@openssh.com {KeyText} me\n"));
+        scene.Platform.KeyFiles.Add(found);
+
+        Press(scene);
+
+        Assert.Equal(found, Assert.Single(scene.Platform.Signed).KeyFile);
+        Assert.Single(scene.Bus.RequestsTo(PublishRoute));
+    });
 
     [Fact]
     public void CompareThenTouchThenWindowsHelloPublishesTheNewFleet() => sta.Run(() =>

@@ -89,6 +89,16 @@ internal sealed class StaWindowAdminPlatform : IWindowPlatform
         return Task.FromResult(HardwareKey!(document));
     }
 
+    /// <summary>What "making a key" does: given the name, the new public file's path. Null means the tool made none.</summary>
+    public Func<string, string>? NewKey { get; set; }
+    public List<(string Tool, string Name)> KeysAsked { get; } = [];
+
+    public Task<string> CreateHardwareKeyAsync(string tool, string name)
+    {
+        KeysAsked.Add((tool, name));
+        return NewKey is null ? Task.FromException<string>(new SshSigningException("Key enrollment failed: invalid format")) : Task.FromResult(NewKey(name));
+    }
+
     /// <summary>Key files "on this PC" beyond the real ones.</summary>
     public HashSet<string> KeyFiles { get; } = new(StringComparer.OrdinalIgnoreCase);
 

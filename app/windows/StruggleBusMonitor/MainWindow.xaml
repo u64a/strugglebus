@@ -568,6 +568,27 @@
                             <TextBlock Text="Admin" FontSize="22" FontWeight="SemiBold"/>
                             <TextBlock Text="The operator console. Every change is reviewed here and approved with Windows Hello before it runs, and is recorded on the bus with your reason." Style="{StaticResource MutedText}" TextWrapping="Wrap" Margin="0,6,0,14"/>
 
+                            <Border x:Name="SetupPanel" Style="{StaticResource Card}" Visibility="Collapsed">
+                                <StackPanel>
+                                    <TextBlock Text="SET UP THIS SITE" Style="{StaticResource Label}"/>
+                                    <TextBlock x:Name="SetupText" Style="{StaticResource MutedText}" TextWrapping="Wrap" Margin="0,8,0,12"/>
+                                    <ItemsControl x:Name="SetupList" Focusable="False">
+                                        <ItemsControl.ItemTemplate>
+                                            <DataTemplate>
+                                                <DockPanel Margin="0,0,0,8">
+                                                    <TextBlock DockPanel.Dock="Left" Text="{Binding Mark}" FontSize="15" Width="24" VerticalAlignment="Top"/>
+                                                    <Button DockPanel.Dock="Right" Content="{Binding Action}" Tag="{Binding}" Style="{StaticResource BtnOutline}" Click="SetupGo_Click" Visibility="{Binding ActionVisibility}" VerticalAlignment="Top" Margin="12,0,0,0"/>
+                                                    <StackPanel>
+                                                        <TextBlock Text="{Binding Title}" FontWeight="SemiBold" TextWrapping="Wrap"/>
+                                                        <TextBlock Text="{Binding Detail}" Style="{StaticResource MutedText}" TextWrapping="Wrap" Margin="0,2,0,0"/>
+                                                    </StackPanel>
+                                                </DockPanel>
+                                            </DataTemplate>
+                                        </ItemsControl.ItemTemplate>
+                                    </ItemsControl>
+                                </StackPanel>
+                            </Border>
+
                             <WrapPanel Margin="0,0,0,14">
                                 <RadioButton x:Name="AdminTabAgents" GroupName="AdminTab" Content="Agents" IsChecked="True" Style="{StaticResource SegItem}" Checked="AdminTab_Checked"/>
                                 <RadioButton x:Name="AdminTabDevices" GroupName="AdminTab" Content="Devices" Style="{StaticResource SegItem}" Margin="-1,0,0,0" Checked="AdminTab_Checked"/>
@@ -809,7 +830,15 @@
                             <Border x:Name="AdminSecurityPanel" Style="{StaticResource Card}">
                                 <StackPanel>
                                     <TextBlock Text="SITE SIGNERS" Style="{StaticResource Label}"/>
-                                    <TextBlock Text="The hardware keys (YubiKeys) that may sign this site's fleet: which agents may task the worker hosts, and which PCs are hosts. Register each key you own, spares included; a site keeps at least two so that losing one does not lock it out. The app looks in your .ssh folder for hardware keys you already have and lists them below; add each with its button. Adding or removing a key shows its fingerprint to check against the key itself, and needs Windows Hello." Style="{StaticResource MutedText}" TextWrapping="Wrap" Margin="0,8,0,12"/>
+                                    <TextBlock Text="The hardware keys (YubiKeys) that may sign this site's fleet: which agents may task the worker hosts, and which PCs are hosts. Register each key you own, spares included; a site keeps at least two so that losing one does not lock it out. Set up a new key here, or add ones you already have: the app looks in your .ssh folder and lists them below. Adding or removing a key shows its fingerprint, and needs Windows Hello." Style="{StaticResource MutedText}" TextWrapping="Wrap" Margin="0,8,0,12"/>
+                                    <TextBlock Text="A new key" Style="{StaticResource FieldLabel}"/>
+                                    <TextBlock Text="Plug the YubiKey in, give the key a short name, and press the button. Windows asks for the YubiKey's PIN and a touch. The secret half is made on the YubiKey and never leaves it; the app never sees the PIN." Style="{StaticResource MutedText}" TextWrapping="Wrap" Margin="0,4,0,8"/>
+                                    <DockPanel Margin="0,0,0,8">
+                                        <Button x:Name="NewKeyButton" DockPanel.Dock="Right" Content="Set up a new hardware key" Style="{StaticResource Btn}" Click="NewKey_Click" Margin="12,0,0,0"/>
+                                        <TextBox x:Name="NewKeyName" MaxLength="24" FontFamily="{StaticResource Mono}" Tag="a short name, for example A or spare"/>
+                                    </DockPanel>
+                                    <TextBlock x:Name="NewKeyText" TextWrapping="Wrap" Margin="0,0,0,12"/>
+                                    <TextBlock Text="Keys you already have" Style="{StaticResource FieldLabel}"/>
                                     <TextBlock x:Name="FoundKeysText" TextWrapping="Wrap" Margin="0,0,0,8"/>
                                     <ItemsControl x:Name="FoundKeysList" Focusable="False" Margin="0,0,0,8">
                                         <ItemsControl.ItemTemplate>

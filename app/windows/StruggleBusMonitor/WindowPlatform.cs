@@ -31,6 +31,12 @@ internal interface IWindowPlatform
     /// </summary>
     Task<string> SignWithHardwareKeyAsync(string tool, string keyFile, string purpose, byte[] document);
 
+    /// <summary>
+    /// Makes a new signing key on the plugged-in security key, in the operator's .ssh folder, and
+    /// returns its public file's path. Windows prompts for the PIN and a touch. See <see cref="SshKeygen.CreateKeyAsync(string, string, string, TimeSpan)"/>.
+    /// </summary>
+    Task<string> CreateHardwareKeyAsync(string tool, string name);
+
     /// <summary>Whether a file is on this PC.</summary>
     bool FileExists(string path);
 
@@ -127,8 +133,12 @@ internal sealed class WindowPlatform : IWindowPlatform
 
     public bool FileExists(string path) => System.IO.File.Exists(path);
 
-    public IReadOnlyList<(string Path, string Text)> PublicKeyFiles() =>
-        PublicKeyFilesIn(System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".ssh"));
+    private static string SshFolder => System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".ssh");
+
+    public Task<string> CreateHardwareKeyAsync(string tool, string name) =>
+        SshKeygen.CreateKeyAsync(tool, SshFolder, name, TimeSpan.FromMinutes(3));
+
+    public IReadOnlyList<(string Path, string Text)> PublicKeyFiles() => PublicKeyFilesIn(SshFolder);
 
     /// <summary>At most 200 files named *.pub directly in the folder, each small enough to be a key; none when the folder is missing or unreadable.</summary>
     internal static IReadOnlyList<(string Path, string Text)> PublicKeyFilesIn(string folder)

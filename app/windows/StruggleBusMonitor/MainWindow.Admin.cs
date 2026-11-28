@@ -52,6 +52,7 @@ public partial class MainWindow
     private void OnAdminPageShown()
     {
         UpdateGrantStatus();
+        _ = RunBusy(LoadSetupAsync);
         if (AdminFlow.ListsAreStale(_adminLoadedAt, DateTimeOffset.Now)) _ = RunBusy(LoadAdminListsAsync);
     }
 
