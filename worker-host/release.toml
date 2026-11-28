@@ -1,14 +1,14 @@
-serial = 14
+serial = 15
 
 # release.toml: the worker-host code hosts install, signed by a pinned key (release.toml.sig, namespace
 # strugglebus-release). Made by tools/make-release.py; signed and merged with tools/sign-config.ps1 -Pr <n>.
 # Hosts announce it at check_at (01:00) and apply it in their maintenance window (03:00): docs/design.md 10a.
 
-version = "2026.11.28.4"
-commit = "15bffdca246d6bde21bba402e7a77fa91d7330d2"
-tree_sha256 = "6f3390e02aef935a128b240c1a9c9b2670aee804e549e478e6adfa0d938b7d77"
+version = "2026.11.28.5"
+commit = "b5e6a03f2f01a6c9a06c02bef1cee1ec11a5aabe"
+tree_sha256 = "73e625b86e10ca224c1adb6ab2033a28808dde0cec6be667c1f533de03f06892"
 needs_install = false
-notes = "Signing in again after the lock-down (device codes for GitHub and Copilot; a sealed Claude token); the pinned signer keys reported by fingerprint; the status push works before the bus knows the newer fields; the bootstrap prints the host's sign-in key."
+notes = "Hosts offer the fleet they accept while the bus holds none, so the App can take it over with no file (bus 0.2.75's fleet-offer route; before that, a 404 retried hourly)."
 installer_sha256 = "b5eff21e8a8f0dc2b4bef566efbcdecb30a3eec173f30ef16a6bdc4af9622322"
 bootstrap_sha256 = "887e1e32183e9879b46e0969ad742aa933ab67e77cc54fa2d046b932b0fd217d"
 authenticode_thumbprints = ["3FF059FA28ED74ACB229CBA2E670CEA565015238"]
