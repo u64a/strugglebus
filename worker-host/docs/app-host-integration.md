@@ -759,8 +759,15 @@ security events, through bus-dev's existing App audit path. None carries a code,
 - **Next, the Claude token:** the host's code is standard-library Python only, and it already calls Windows itself
   for DPAPI through `ctypes`. X25519 and AES-GCM aren't in Python's standard library, so the host will use Windows'
   own CNG (`bcrypt.dll`: `BCRYPT_ECDH` on curve25519, and AES in GCM mode) the same way. That adds no package and
-  hand-written crypto is never used. HKDF-SHA256 is `hmac`, which is standard. The App can use .NET's
-  `ECDiffieHellman` (curve25519 on Windows CNG) and `AesGcm`.
+  hand-written crypto is never used. HKDF-SHA256 is `hmac`, which is standard.
+  - **Built: `workerhost/cng.py` and `workerhost/sealed.py`,** tested against RFC 7748 6.1, RFC 5869 test case 1 and
+    the GCM specification's test case 16, plus an independent X25519 in the tests.
+  - **CNG's curve25519, as measured:** a private key is the RFC's little-endian scalar stored clamped; a public key is
+    the RFC's bytes unreversed; the raw shared secret comes out reversed and is put back before use
+    (u64-security, #humans 29172).
+  - **The App:** .NET has no X25519 of its own (`ECDiffieHellman` doesn't offer curve25519 on Windows), so the App
+    calls CNG too, or one reviewed library, and `AesGcm`. **Both sides must reproduce
+    `contracts/sealed-signin/vector.json`:** every input fixed, and the exact `epk` and `ct`.
 
 If any of these fails, this section changes before anything is built.
 

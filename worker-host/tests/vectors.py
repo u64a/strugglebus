@@ -12,7 +12,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 LOCAL = ROOT / "tests" / "data" / "vectors"
 CONTRACTS = ROOT.parent / "contracts"
-NAMES = ("host-command", "fleet", "host-enrol", "host-status", "host-events")
+NAMES = ("host-command", "fleet", "host-enrol", "host-status", "host-events", "sealed-signin")
 
 PINNED = {
     "fleet/allowed_signers": "ce7633fea544aca440d9e3bf8f8e59bacbfc67f3883109af2f9883e4e18a6e84",
@@ -66,6 +66,7 @@ PINNED = {
     "host-events/batch-unknown-type.json": "0635459985075b2b1347a8bde778a99f2be11f493ce5b1a47a4436e276b46bc5",
     "host-events/batch-wrong-agent.json": "7d28fc908d328aabd9b7d19c1940436dd279071a4d9ed79efc3575a8b72b3c9a",
     "host-events/expected.json": "fdded42ff4c8d4eee4654a8917cc5c143edf23c577ec7400cff0d3389be5fa55",
+    "sealed-signin/vector.json": "9933734beb37fbd9d90dab20e30e86684cd5310f274f1e878a5b502130aad8df",
     "host-status/sample-v2.json": "f0377cc9142d2c9a2382d18ae9d9c5eaeb2d89a5815077964f45b238fa1e3ca3",
     "host-status/snapshot-v2-device.json": "4ede2b330023e0179b2a62ebbf577d8dcacd8ef025f19ea354a7755faaee0e3a",
     "host-status/snapshot-v2.json": "dfdd19e0aa5ae9e4a02ce41eb192067c1df17030894f7beca9388eb352d55555",
