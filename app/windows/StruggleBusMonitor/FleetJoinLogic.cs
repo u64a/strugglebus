@@ -156,7 +156,7 @@ internal static class FleetJoinLogic
     public static string SignersFile(IEnumerable<SiteSigner> held) => string.Concat(held.Select(signer => signer.Line + "\n"));
 
     /// <summary>Added to the publish question when the document is the one this app composed in this run.</summary>
-    public static string ComposedNote(string agentName) => $"These are exactly the bytes this app composed to add {agentName}.";
+    public static string ComposedNote(string change) => $"These are exactly the bytes this app composed: {change}.";
 
     public static AdminActionOption? Offered(IEnumerable<AdminActionOption> actions, string action) =>
         actions.FirstOrDefault(option => option.Action == action);

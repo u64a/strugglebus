@@ -73,7 +73,7 @@ public sealed class FleetAllowListVectorTests
     public void TheSharedListOfNamespacesNeverToSignIsRefusedAtTheLowestLayer()
     {
         var root = NotAFleet();
-        Assert.Equal(root.GetProperty("sign_namespace").GetString(), FleetSignLogic.Namespace);
+        Assert.Equal(FleetSignLogic.Namespace, root.GetProperty("sign_namespace").GetString());
         var never = Texts(root.GetProperty("never_sign_namespaces"));
         Assert.NotEmpty(never);
         Assert.All(never, purpose => Assert.Throws<InvalidOperationException>(() => SshKeygen.RequireSignablePurpose(purpose)));

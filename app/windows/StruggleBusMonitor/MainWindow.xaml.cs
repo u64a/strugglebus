@@ -49,6 +49,7 @@ public partial class MainWindow : Window
         InitializeHosts();
         InitializeChannels();
         InitializeAbout();
+        InitializeFleetAccess();
         InitializeSettings();
         InitializeTray();
         _ready = true;

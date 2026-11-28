@@ -747,6 +747,61 @@
                                 </StackPanel>
                             </Border>
 
+                            <Border x:Name="AdminFleetAccessPanel" Style="{StaticResource Card}">
+                                <StackPanel>
+                                    <DockPanel>
+                                        <Button x:Name="FleetAccessReload" DockPanel.Dock="Right" Content="Reload" Style="{StaticResource BtnOutline}" Click="FleetAccessReload_Click"/>
+                                        <TextBlock Text="WHO MAY TASK THE HOSTS" Style="{StaticResource Label}" VerticalAlignment="Center"/>
+                                    </DockPanel>
+                                    <TextBlock Text="An agent on this list (a coordinator) can have every worker host run agent workers in the repositories it is given. You choose the agent and where it may work; the app writes the fleet change, your hardware key signs it, and Windows Hello confirms before it is published." Style="{StaticResource MutedText}" TextWrapping="Wrap" Margin="0,8,0,0"/>
+                                    <TextBlock x:Name="FleetAccessSummary" Style="{StaticResource MutedText}" TextWrapping="Wrap" Margin="0,8,0,8"/>
+                                    <ItemsControl x:Name="FleetEntriesList" Focusable="False">
+                                        <ItemsControl.ItemTemplate>
+                                            <DataTemplate>
+                                                <DockPanel Margin="0,0,0,6">
+                                                    <Button DockPanel.Dock="Right" Content="{Binding RemoveLabel}" Tag="{Binding}" Style="{StaticResource BtnOutline}" Click="FleetEntryRemove_Click" Margin="12,0,0,0"/>
+                                                    <TextBlock VerticalAlignment="Center" TextTrimming="CharacterEllipsis">
+                                                        <Run Text="{Binding Name, Mode=OneWay}" FontFamily="{StaticResource Mono}"/>
+                                                        <Run Text="  "/>
+                                                        <Run Text="{Binding KindLabel, Mode=OneWay}" Foreground="{DynamicResource Muted}" FontSize="11"/>
+                                                    </TextBlock>
+                                                </DockPanel>
+                                            </DataTemplate>
+                                        </ItemsControl.ItemTemplate>
+                                    </ItemsControl>
+
+                                    <TextBlock Text="Authorise an agent: choose it from the agents enabled on the bus" Style="{StaticResource FieldLabel}"/>
+                                    <ItemsControl x:Name="AccessAgentsList" Focusable="False">
+                                        <ItemsControl.ItemsPanel>
+                                            <ItemsPanelTemplate>
+                                                <WrapPanel/>
+                                            </ItemsPanelTemplate>
+                                        </ItemsControl.ItemsPanel>
+                                        <ItemsControl.ItemTemplate>
+                                            <DataTemplate>
+                                                <Button Content="{Binding Name}" Tag="{Binding}" ToolTip="{Binding Identity}" Style="{StaticResource BtnOutline}" Click="AccessAgent_Click" Margin="0,0,8,8"/>
+                                            </DataTemplate>
+                                        </ItemsControl.ItemTemplate>
+                                    </ItemsControl>
+                                    <TextBlock x:Name="AccessAgentText" Text="No agent chosen. Choose one from the list above." FontFamily="{StaticResource Mono}" FontSize="12" TextWrapping="Wrap" Margin="0,0,0,4"/>
+                                    <TextBlock Text="Project (a short name for this agent's work)" Style="{StaticResource FieldLabel}"/>
+                                    <TextBox x:Name="AccessProject" FontFamily="{StaticResource Mono}" Tag="for example docs"/>
+                                    <TextBlock Text="Repositories it may have the hosts work in (one per line, inside the site's locations)" Style="{StaticResource FieldLabel}"/>
+                                    <TextBox x:Name="AccessRepos" MinHeight="40" MaxHeight="120" AcceptsReturn="True" TextWrapping="NoWrap" HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Auto" FontFamily="{StaticResource Mono}" FontSize="12" VerticalContentAlignment="Top" Tag="https://github.com/your-org/one-repository"/>
+                                    <TextBlock Text="A location ending in / covers every repository under it, now and later. Prefer naming single repositories." Style="{StaticResource MutedText}" TextWrapping="Wrap" Margin="0,4,0,0"/>
+                                    <TextBlock Text="Notes repository (where its briefs for the workers live)" Style="{StaticResource FieldLabel}"/>
+                                    <TextBox x:Name="AccessNotesRepo" FontFamily="{StaticResource Mono}" Tag="https://github.com/your-org/notes"/>
+                                    <TextBlock Text="Notes channel on the bus" Style="{StaticResource FieldLabel}"/>
+                                    <TextBox x:Name="AccessNotesChannel" FontFamily="{StaticResource Mono}" Tag="for example docs-notes"/>
+                                    <TextBlock Text="Agent program its workers use" Style="{StaticResource FieldLabel}"/>
+                                    <StackPanel Orientation="Horizontal">
+                                        <RadioButton x:Name="AccessEngineClaude" GroupName="AccessEngine" Content="Claude Code" IsChecked="True" Style="{StaticResource SegItem}"/>
+                                        <RadioButton x:Name="AccessEngineCopilot" GroupName="AccessEngine" Content="GitHub Copilot CLI" Style="{StaticResource SegItem}" Margin="-1,0,0,0"/>
+                                    </StackPanel>
+                                    <Button x:Name="AccessAuthoriseButton" Content="Authorise this agent to task the hosts" Style="{StaticResource Btn}" Click="AccessAuthorise_Click" HorizontalAlignment="Left" Margin="0,16,0,0"/>
+                                </StackPanel>
+                            </Border>
+
                             <Border x:Name="AdminFleetPanel" Style="{StaticResource Card}">
                                 <StackPanel>
                                     <TextBlock Text="FLEET" Style="{StaticResource Label}"/>
