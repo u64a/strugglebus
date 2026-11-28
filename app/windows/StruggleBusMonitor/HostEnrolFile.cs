@@ -54,6 +54,9 @@ internal static partial class HostEnrolFile
     [GeneratedRegex(@"\A[A-Za-z0-9][A-Za-z0-9._@-]{0,63} namespaces=""(strugglebus-fleet|strugglebus-host-command)(,(strugglebus-fleet|strugglebus-host-command))?"" (ssh-ed25519|sk-ssh-ed25519@openssh\.com|ecdsa-sha2-nistp256|sk-ecdsa-sha2-nistp256@openssh\.com|ssh-rsa) [A-Za-z0-9+/]+={0,2}( [A-Za-z0-9._@-]{1,64})?\z")]
     private static partial Regex Signer();
 
+    /// <summary>True for an allowed_signers line a host's installer would accept for the site's two namespaces.</summary>
+    internal static bool IsSignerLine(string line) => Signer().IsMatch(line);
+
     private static readonly string[] FleetSources = ["bus", "git", "either"];
 
     /// <summary>The first thing wrong with the values, in words, or null when the installer would accept them.</summary>

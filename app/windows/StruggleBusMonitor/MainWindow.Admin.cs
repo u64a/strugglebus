@@ -227,6 +227,7 @@ public partial class MainWindow
         AdminSpnPanel.Visibility = VisibleWhen(AdminTabSpn.IsChecked == true);
         AdminHostsPanel.Visibility = VisibleWhen(AdminTabHosts.IsChecked == true);
         AdminAddHostPanel.Visibility = VisibleWhen(AdminTabHosts.IsChecked == true);
+        AdminFleetPanel.Visibility = VisibleWhen(AdminTabHosts.IsChecked == true);
         AdminEnrollPanel.Visibility = VisibleWhen(AdminTabEnroll.IsChecked == true);
         AdminAccessPanel.Visibility = VisibleWhen(AdminTabAccess.IsChecked == true);
         AdminExportPanel.Visibility = VisibleWhen(AdminTabExport.IsChecked == true);

@@ -22,6 +22,12 @@ internal interface IWindowPlatform
     /// <summary>Asks where to save a worker host's enrolment data file. Null when the operator cancels.</summary>
     string? PickHostFilePath(Window owner, string suggestedName);
 
+    /// <summary>Asks which signed fleet document to publish. Null when the operator cancels.</summary>
+    string? PickFleetFile(Window owner);
+
+    /// <summary>Asks Windows' own ssh-keygen whether the signature verifies for exactly these bytes, against one signer line.</summary>
+    Task<SshVerdict> VerifySshSignatureAsync(byte[] message, string signature, string signerLine, string principal, string purpose);
+
     /// <summary>Where a release puts the signed copy of the worker host's installer: beside the app.</summary>
     string SignedInstallerPath { get; }
 
@@ -92,6 +98,23 @@ internal sealed class WindowPlatform : IWindowPlatform
         get => SignInStart.IsOn;
         set => SignInStart.Set(value);
     }
+
+    public string? PickFleetFile(Window owner)
+    {
+        var dialog = FleetFileDialog();
+        return dialog.ShowDialog(owner) == true ? dialog.FileName : null;
+    }
+
+    internal static OpenFileDialog FleetFileDialog() => new()
+    {
+        Filter = "Fleet document (*.toml)|*.toml|All files (*.*)|*.*",
+        FileName = "fleet.toml",
+        CheckFileExists = true,
+        Title = "Choose the signed fleet document (its .sig must be beside it)"
+    };
+
+    public Task<SshVerdict> VerifySshSignatureAsync(byte[] message, string signature, string signerLine, string principal, string purpose) =>
+        SshKeygen.VerifyAsync(SshKeygen.DefaultPath, message, signature, signerLine, principal, purpose);
 
     public string? PickHostFilePath(Window owner, string suggestedName)
     {
