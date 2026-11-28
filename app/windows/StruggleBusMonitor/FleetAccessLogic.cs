@@ -20,7 +20,7 @@ public sealed class AgentChoice
 }
 
 /// <summary>What the operator filled in to authorise an agent.</summary>
-internal sealed record AccessForm(AgentChoice? Agent, string Project, string NotesRepo, string NotesChannel, string Repos, string Engine);
+internal sealed record AccessForm(AgentChoice? Agent, string Project, string NotesRepo, string NotesChannel, string Repos);
 
 /// <summary>
 /// "This agent may task the hosts", in the app: which agents can be chosen, what the operator is
@@ -128,7 +128,7 @@ internal static class FleetAccessLogic
     {
         var agent = form.Agent ?? throw new InvalidOperationException(ChooseAgent);
         return new CoordinatorEntry(
-            agent.Name, agent.Id, form.Project.Trim(), form.NotesRepo.Trim(), form.NotesChannel.Trim(), AddHostLogic.Lines(form.Repos), form.Engine);
+            agent.Name, agent.Id, form.Project.Trim(), form.NotesRepo.Trim(), form.NotesChannel.Trim(), AddHostLogic.Lines(form.Repos));
     }
 
     /// <summary>What the operator reads before authorising: who, on how many hosts, where, and what "broad" means.</summary>
@@ -141,7 +141,8 @@ internal static class FleetAccessLogic
         $"{entry.AgentName} will be able to have ALL {hosts} worker host{(hosts == 1 ? "" : "s")} in the fleet run agent workers, which run code, in:",
         .. entry.Repos.Select(repo => "  " + repo + (broad.Contains(repo) ? "   <<< WARNING: every repository under this, now and later" : string.Empty)),
         "",
-        $"Project: {entry.Project}.  Engine: {entry.DefaultEngine}.  Briefs are read from {entry.NotesRepo}, channel {entry.NotesChannel}.",
+        $"Project: {entry.Project}.  Briefs are read from {entry.NotesRepo}, channel {entry.NotesChannel}.",
+        "Which agent program a worker uses is chosen by each task, or by the host: it is not part of this.",
         "",
         "Only authorise an agent you set up and whose instructions you control. Taking this away later is not instant (see below).",
         "",

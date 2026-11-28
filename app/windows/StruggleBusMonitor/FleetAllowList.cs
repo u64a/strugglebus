@@ -2,9 +2,14 @@ using System.Text.RegularExpressions;
 
 namespace StruggleBusMonitor;
 
-/// <summary>An agent authorised to task the worker hosts: one <c>[[coordinator]]</c> table of the fleet.</summary>
+/// <summary>
+/// An agent authorised to task the worker hosts: one <c>[[coordinator]]</c> table of the fleet.
+/// <see cref="DefaultEngine"/> is optional and the app leaves it out: hosts never use it to choose
+/// an engine (a task names its own, and otherwise the host's default applies), so writing one
+/// would put a choice in the signed fleet that nobody made.
+/// </summary>
 internal sealed record CoordinatorEntry(
-    string AgentName, string AgentId, string Project, string NotesRepo, string NotesChannel, IReadOnlyList<string> Repos, string DefaultEngine);
+    string AgentName, string AgentId, string Project, string NotesRepo, string NotesChannel, IReadOnlyList<string> Repos, string? DefaultEngine = null);
 
 /// <summary>
 /// The fleet's allow list, changed one entry at a time: authorise an agent to task the hosts,
@@ -160,7 +165,7 @@ internal static partial class FleetAllowList
             ("notes_repo", Repository(entry.NotesRepo) is not null),
             ("notes_channel", Channel().IsMatch(entry.NotesChannel)),
             ("repos", entry.Repos.Count > 0 && entry.Repos.All(PrefixOk)),
-            ("default_engine", Engines.Contains(entry.DefaultEngine))
+            ("default_engine", entry.DefaultEngine is null || Engines.Contains(entry.DefaultEngine))
         ];
         return checks.FirstOrDefault(check => !check.Good).Field;
     }
@@ -181,12 +186,13 @@ internal static partial class FleetAllowList
     /// <summary>The table written for a coordinator: a blank line, the header, then each key padded as today's fleet pads them.</summary>
     internal static string Block(CoordinatorEntry entry)
     {
-        (string Key, string Value)[] pairs =
+        List<(string Key, string Value)> pairs =
         [
             ("agent_name", Quoted(entry.AgentName)), ("agent_id", Quoted(entry.AgentId)), ("project", Quoted(entry.Project)),
             ("notes_repo", Quoted(entry.NotesRepo)), ("notes_channel", Quoted(entry.NotesChannel)),
-            ("repos", "[" + string.Join(", ", entry.Repos.Select(Quoted)) + "]"), ("default_engine", Quoted(entry.DefaultEngine))
+            ("repos", "[" + string.Join(", ", entry.Repos.Select(Quoted)) + "]")
         ];
+        if (entry.DefaultEngine is { } engine) pairs.Add(("default_engine", Quoted(engine)));
         return "\n[[coordinator]]\n" + string.Concat(pairs.Select(pair => $"{pair.Key,-14} = {pair.Value}\n"));
     }
 

@@ -68,12 +68,13 @@ public sealed class FleetAccessLogicTests
     [Fact]
     public void TheFormBecomesAFleetEntryWithTheAgentTakenFromTheBusNeverTyped()
     {
-        var entry = FleetAccessLogic.Entry(new AccessForm(Chosen, " docs ", " https://github.com/acme/notes ", " docs-notes ", "https://github.com/acme/a\r\n\r\nhttps://github.com/acme/b\n", "claude"));
+        var entry = FleetAccessLogic.Entry(new AccessForm(Chosen, " docs ", " https://github.com/acme/notes ", " docs-notes ", "https://github.com/acme/a\r\n\r\nhttps://github.com/acme/b\n"));
 
-        Assert.Equal((Chosen.Name, Chosen.Id, "docs", "https://github.com/acme/notes", "docs-notes", "claude"),
-            (entry.AgentName, entry.AgentId, entry.Project, entry.NotesRepo, entry.NotesChannel, entry.DefaultEngine));
+        Assert.Equal((Chosen.Name, Chosen.Id, "docs", "https://github.com/acme/notes", "docs-notes"),
+            (entry.AgentName, entry.AgentId, entry.Project, entry.NotesRepo, entry.NotesChannel));
+        Assert.Null(entry.DefaultEngine);
         Assert.Equal(["https://github.com/acme/a", "https://github.com/acme/b"], entry.Repos);
-        Assert.Equal(FleetAccessLogic.ChooseAgent, Assert.Throws<InvalidOperationException>(() => FleetAccessLogic.Entry(new AccessForm(null, "", "", "", "", "claude"))).Message);
+        Assert.Equal(FleetAccessLogic.ChooseAgent, Assert.Throws<InvalidOperationException>(() => FleetAccessLogic.Entry(new AccessForm(null, "", "", "", ""))).Message);
     }
 
     [Fact]
@@ -89,6 +90,8 @@ public sealed class FleetAccessLogicTests
         Assert.Contains("  https://github.com/acme/   <<< WARNING: every repository under this, now and later", text);
         Assert.Contains("  https://github.com/acme/handbook\n", text);
         Assert.Contains(FleetAccessLogic.NotInstant, text);
+        Assert.DoesNotContain("Engine:", text);
+        Assert.Contains("chosen by each task, or by the host", text);
         Assert.Contains("ALL 1 worker host in the fleet", FleetAccessLogic.AuthoriseText(entry, Chosen, 1, []));
     }
 
@@ -127,6 +130,15 @@ public sealed class FleetAccessWindowTests(StaWindowAdminFixture sta)
     private static readonly string Vectors = Path.Combine(AppContext.BaseDirectory, "Contracts", "fleet", "compose");
 
     private static byte[] Vector(string name) => File.ReadAllBytes(Path.Combine(Vectors, name));
+
+    /// <summary>The shared vector as the app writes it: the same bytes without the one default_engine line the app no longer writes.</summary>
+    private static byte[] WithoutEngine(byte[] vector)
+    {
+        var text = Encoding.UTF8.GetString(vector);
+        var line = "default_engine = \"claude\"\n";
+        Assert.Single(System.Text.RegularExpressions.Regex.Matches(text, System.Text.RegularExpressions.Regex.Escape(line)));
+        return Encoding.UTF8.GetBytes(text.Replace(line, string.Empty));
+    }
 
     private static readonly string Managed =
         $$"""
@@ -257,7 +269,9 @@ public sealed class FleetAccessWindowTests(StaWindowAdminFixture sta)
         Assert.Equal([FleetAccessLogic.AuthoriseCaption, "Sign the fleet"], scene.Platform.Confirmations.Select(asked => asked.Item2));
         Assert.Contains("ALL 1 worker host in the fleet", scene.Platform.Confirmations[0].Item1);
         Assert.Contains("Change:   authorises coord-docs to task the hosts", scene.Platform.Confirmations[1].Item1);
-        var expected = Vector("add-coordinator-after.toml");
+        // The app asks for no engine and writes none: hosts never use a coordinator's default to choose one.
+        var expected = WithoutEngine(Vector("add-coordinator-after.toml"));
+        Assert.DoesNotContain("default_engine = \"claude\"", Encoding.UTF8.GetString(expected));
         Assert.Equal(expected, Assert.Single(scene.Platform.Signed).Document);
         Assert.Equal("strugglebus-fleet", scene.Platform.Signed[0].Purpose);
         Assert.Equal(Convert.ToBase64String(expected), Published(scene).GetProperty("body").GetString());
@@ -273,13 +287,11 @@ public sealed class FleetAccessWindowTests(StaWindowAdminFixture sta)
         using var scene = Open("before.toml", 5);
         FillDocs(scene.Window);
         scene.Window.AccessRepos.Text = "https://github.com/acme/";
-        scene.Window.AccessEngineCopilot.IsChecked = true;
         scene.Platform.ConfirmAnswer = false;
 
         StaWindowAdminScene.ClickAndWait(scene.Window.AccessAuthoriseButton);
 
         Assert.Contains("https://github.com/acme/   <<< WARNING", Assert.Single(scene.Platform.Confirmations).Item1);
-        Assert.Contains("Engine: ghcp.", scene.Platform.Confirmations[0].Item1);
         Assert.Empty(scene.Platform.Signed);
         Assert.Empty(scene.Bus.RequestsTo(PublishRoute));
     });
@@ -362,7 +374,7 @@ public sealed class FleetAccessWindowTests(StaWindowAdminFixture sta)
             StaWindowAdminScene.ClickAndWait(scene.Window.AccessAuthoriseButton);
             Wait(scene);
 
-            Assert.Equal(Vector("add-coordinator-after.toml"), File.ReadAllBytes(scene.Platform.FleetSavePath));
+            Assert.Equal(WithoutEngine(Vector("add-coordinator-after.toml")), File.ReadAllBytes(scene.Platform.FleetSavePath));
             Assert.True(File.Exists(scene.Platform.FleetSavePath + ".signers"));
             Assert.StartsWith("Saved fleet serial 6 (authorises coord-docs to task the hosts) as ", scene.Window.FleetResult.Text);
             Assert.Empty(scene.Bus.RequestsTo(PublishRoute));

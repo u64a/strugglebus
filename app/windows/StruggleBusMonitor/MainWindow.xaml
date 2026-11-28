@@ -781,11 +781,6 @@
                                     <TextBox x:Name="AccessNotesRepo" FontFamily="{StaticResource Mono}" Tag="https://github.com/your-org/notes"/>
                                     <TextBlock Text="Notes channel on the bus" Style="{StaticResource FieldLabel}"/>
                                     <TextBox x:Name="AccessNotesChannel" FontFamily="{StaticResource Mono}" Tag="for example docs-notes"/>
-                                    <TextBlock Text="Agent program its workers use" Style="{StaticResource FieldLabel}"/>
-                                    <StackPanel Orientation="Horizontal">
-                                        <RadioButton x:Name="AccessEngineClaude" GroupName="AccessEngine" Content="Claude Code" IsChecked="True" Style="{StaticResource SegItem}"/>
-                                        <RadioButton x:Name="AccessEngineCopilot" GroupName="AccessEngine" Content="GitHub Copilot CLI" Style="{StaticResource SegItem}" Margin="-1,0,0,0"/>
-                                    </StackPanel>
                                     <Button x:Name="AccessAuthoriseButton" Content="Authorise this agent to task the hosts" Style="{StaticResource Btn}" Click="AccessAuthorise_Click" HorizontalAlignment="Left" Margin="0,16,0,0"/>
                                 </StackPanel>
                             </Border>

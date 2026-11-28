@@ -108,8 +108,7 @@ public partial class MainWindow
     }
 
     private AccessForm ReadAccessForm() => new(
-        _accessAgent, AccessProject.Text, AccessNotesRepo.Text, AccessNotesChannel.Text, AccessRepos.Text,
-        AccessEngineCopilot.IsChecked == true ? "ghcp" : "claude");
+        _accessAgent, AccessProject.Text, AccessNotesRepo.Text, AccessNotesChannel.Text, AccessRepos.Text);
 
     internal async void AccessAuthorise_Click(object sender, RoutedEventArgs e) => await RunBusy(AuthoriseAgentAsync, sender);
 

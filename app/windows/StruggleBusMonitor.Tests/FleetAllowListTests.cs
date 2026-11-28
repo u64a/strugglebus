@@ -186,6 +186,16 @@ public sealed class FleetAllowListTests
     }
 
     [Fact]
+    public void AnEntryWithNoEngineIsValidAndWritesNoEngineLine()
+    {
+        var entry = Good with { DefaultEngine = null };
+
+        FleetAllowList.CheckEntry(entry, Remotes);
+        Assert.DoesNotContain("default_engine", FleetAllowList.Block(entry));
+        Assert.EndsWith("repos          = [\"https://github.com/acme/handbook\"]\n", FleetAllowList.Block(entry));
+    }
+
+    [Fact]
     public void TheTableIsWrittenWithEveryKeyPaddedAlike()
     {
         var block = FleetAllowList.Block(Good with { Repos = ["https://github.com/acme/", "https://github.com/acme/handbook"] });
