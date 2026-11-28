@@ -5,6 +5,10 @@
 # looked at by a person, not only the release file that names it.
 /worker-host/                 @NZCypher819
 
+# The coordinator guide: the bus serves it to every agent as guidance, and agents follow it, so it is named here on
+# its own (u64-security, #humans 29177, 29201), whatever becomes of the folder rule above.
+/worker-host/docs/coordinator-guide.md    @NZCypher819
+
 # Whatever signs or names a release, wherever it sits.
 release.toml                  @NZCypher819
 release.toml.sig              @NZCypher819
