@@ -100,23 +100,33 @@ def test_the_host_also_refuses_the_duplicates_the_app_refuses():
             fleet.parse(read(name))
 
 
+def _string(buf: bytes, p: int):
+    n = int.from_bytes(buf[p:p + 4], "big")
+    assert p + 4 + n <= len(buf), "cut short"
+    return buf[p + 4:p + 4 + n], p + 4 + n
+
+
 def _flags(armored: str):
-    """The reference flags reader (the same layout as sign-config.ps1's Get-SigFlags)."""
+    """The reference flags reader (the same layout as sign-config.ps1's Get-SigFlags), as strict as the App's: the
+    public key must be a real key blob whose type matches the signature's (bus-dev, #humans 29156)."""
     b = base64.b64decode("".join(ln for ln in armored.splitlines() if not ln.startswith("-----")))
     assert b[:6] == b"SSHSIG"
-    pos = 10
-
-    def string(buf, p):
-        n = int.from_bytes(buf[p:p + 4], "big")
-        return buf[p + 4:p + 4 + n], p + 4 + n
-
-    for _ in range(4):
-        _, pos = string(b, pos)
-    sig, _ = string(b, pos)
-    kind, p = string(sig, 0)
+    pub, pos = _string(b, 10)
+    key_type, k = _string(pub, 0)
+    key, k = _string(pub, k)
+    assert len(key) == 32  # an ed25519 public key
+    if key_type.startswith(b"sk-"):
+        application, k = _string(pub, k)
+        assert application.startswith(b"ssh:")
+    assert k == len(pub)
+    for _ in range(3):  # namespace, reserved, hash algorithm
+        _, pos = _string(b, pos)
+    sig, _ = _string(b, pos)
+    kind, p = _string(sig, 0)
+    assert kind == key_type
     if not kind.startswith(b"sk-"):
         return None
-    _, p = string(sig, p)
+    _, p = _string(sig, p)
     return sig[p]
 
 
