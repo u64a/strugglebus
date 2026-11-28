@@ -46,9 +46,7 @@ public partial class MainWindow
     private void ShowSigningKey()
     {
         var key = FleetSignLogic.KeyToUse(FleetPublishLogic.Signers(HostSigners.Text), _settings.SignerKeyFiles, _settings.SigningKey, _platform.FileExists);
-        SigningKeyText.Text = key is null
-            ? "The app cannot sign on this PC yet: none of the signers above has its key file here. Add the key from the .pub file beside its key file."
-            : $"The app signs the fleet with {key.Signer.Fingerprint} ({Path.GetFileName(key.KeyFile)}). To use another, plug it in and choose Sign with this key beside it.";
+        SigningKeyText.Text = FleetSignLogic.SigningKeyText(key, _platform.HardwareSigningTool is not null);
     }
 
     /// <summary>Offers the keys an earlier version kept unprotected, when there are any not yet confirmed.</summary>

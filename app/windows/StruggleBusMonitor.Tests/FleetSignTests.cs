@@ -111,6 +111,9 @@ public sealed class FleetSignLogicTests
         Assert.EndsWith("ssh-keygen said: device not found", FleetSignLogic.NotSignedText(key, "device not found\r\n"));
         Assert.True(FleetSignLogic.NotSignedText(key, new string('x', 2000)).Length < 800);
         Assert.Equal(256, FleetSignLogic.SignedReason(7, new string('x', 500)).Length);
+        Assert.Contains($"signs the fleet with {Held[0].Fingerprint} (id_sk_a)", FleetSignLogic.SigningKeyText(key, toolHere: true));
+        Assert.Equal(FleetSignLogic.NoTool, FleetSignLogic.SigningKeyText(key, toolHere: false));
+        Assert.StartsWith("The app cannot sign on this PC yet", FleetSignLogic.SigningKeyText(null, toolHere: true));
         Assert.Equal("Signed and published in the Windows app: fleet serial 7, adds worker host a", FleetSignLogic.SignedReason(7, FleetSignLogic.AddsHost("a")));
     }
 }
@@ -132,12 +135,16 @@ public sealed class SshKeygenSigningTests
         Assert.Null(SshKeygen.SigningTool(candidates, _ => false, _ => Microsoft));
     }
 
+    /// <summary>
+    /// Whatever this PC offers is a full path under one of the two folders and carries Microsoft's
+    /// own signature. A PC whose only copy is Windows' built-in one, signed through a catalog and
+    /// not in the file, offers none: that is refused, not waved through.
+    /// </summary>
     [Fact]
-    public void ThisPcsToolIsUnderProgramFilesOrWindowsAndSignedByMicrosoft()
+    public void WhatThisPcOffersIsAFullPathSignedByMicrosoftOrNothing()
     {
-        var tool = SshKeygen.SigningTool();
+        if (SshKeygen.SigningTool() is not { } tool) return;
 
-        Assert.NotNull(tool);
         Assert.True(Path.IsPathFullyQualified(tool));
         Assert.EndsWith(@"OpenSSH\ssh-keygen.exe", tool);
         Assert.True(UpdateTrust.IsMicrosoft(Authenticode.Read(tool)));
@@ -334,15 +341,27 @@ public sealed class FleetSignWindowTests(StaWindowAdminFixture sta)
     });
 
     [Fact]
-    public void WithoutAMicrosoftSignedSshKeygenTheKeyIsNotAsked() => sta.Run(() =>
+    public void WithoutAMicrosoftSignedSshKeygenTheKeyIsNotAskedAndTheDocumentIsSavedInstead() => sta.Run(() =>
     {
-        using var scene = Open();
-        scene.Platform.HardwareSigningTool = null;
+        var folder = Directory.CreateTempSubdirectory("fleet-sign-test-").FullName;
+        try
+        {
+            using var scene = Open();
+            scene.Platform.HardwareSigningTool = null;
+            scene.Platform.FleetSavePath = Path.Combine(folder, "fleet.toml");
+            scene.Window.HostSigners.Text = SshSignatureMaker.SignerLine(Key) + "\n";
 
-        Press(scene);
+            Press(scene);
 
-        Assert.Equal(FleetSignLogic.NoTool, scene.Notice);
-        Assert.Empty(scene.Platform.Signed);
+            Assert.Empty(scene.Platform.Signed);
+            Assert.Equal(After, File.ReadAllBytes(scene.Platform.FleetSavePath));
+            Assert.Equal(FleetSignLogic.NoTool, scene.Window.SigningKeyText.Text);
+            Assert.Equal(string.Empty, scene.Notice);
+        }
+        finally
+        {
+            Directory.Delete(folder, recursive: true);
+        }
     });
 
     [Fact]

@@ -26,7 +26,7 @@ internal static class FleetSignLogic
         "This PC has no key file for any of its site signers, so the app cannot ask a hardware key to sign. Add the key again with Add a hardware key, choosing the .pub file that sits beside the key's own file.";
 
     public const string NoTool =
-        @"No ssh-keygen signed by Microsoft was found in C:\Program Files\OpenSSH or in Windows' own System32\OpenSSH, so the app cannot ask the hardware key to sign. Add it in Windows Settings > System > Optional features > OpenSSH Client.";
+        @"The app cannot ask the hardware key to sign on this PC: it found no ssh-keygen carrying Microsoft's own signature in C:\Program Files\OpenSSH. (The copy built into Windows is signed through a Windows catalog, which this app does not check yet, so it is not used for signing.) Install Microsoft's OpenSSH, for example with: winget install Microsoft.OpenSSH.Preview. Until then a fleet change is saved for signing with sign-config.ps1 and published with Publish a signed fleet document.";
 
     public const string NotSigned =
         "The hardware key did not sign. Nothing was published. If no prompt appeared, check that the right key is plugged in: the app asked for";
@@ -88,6 +88,15 @@ internal static class FleetSignLogic
         "",
         "The app only ever asks your key to sign a fleet document, never a software release."
     ]);
+
+    /// <summary>Which key the app will ask to sign, or why it cannot ask any on this PC.</summary>
+    public static string SigningKeyText(SigningKey? key, bool toolHere)
+    {
+        if (key is null) return "The app cannot sign on this PC yet: none of the signers above has its key file here. Add the key from the .pub file beside its key file.";
+        return toolHere
+            ? $"The app signs the fleet with {key.Signer.Fingerprint} ({Path.GetFileName(key.KeyFile)}). To use another, plug it in and choose Sign with this key beside it."
+            : NoTool;
+    }
 
     public static string AddsHost(string agentName) => $"adds worker host {agentName}";
 

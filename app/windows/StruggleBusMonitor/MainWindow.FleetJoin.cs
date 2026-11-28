@@ -41,8 +41,9 @@ public partial class MainWindow
     }
 
     /// <summary>The key the app can ask to sign on this PC, or null when it has to hand the document over for signing elsewhere.</summary>
-    private SigningKey? SigningKeyHere() =>
-        FleetSignLogic.KeyToUse(FleetPublishLogic.Signers(HostSigners.Text), _settings.SignerKeyFiles, _settings.SigningKey, _platform.FileExists);
+    private SigningKey? SigningKeyHere() => _platform.HardwareSigningTool is null
+        ? null
+        : FleetSignLogic.KeyToUse(FleetPublishLogic.Signers(HostSigners.Text), _settings.SignerKeyFiles, _settings.SigningKey, _platform.FileExists);
 
     /// <summary>
     /// One journey: read what will be signed, touch the key, Windows Hello, published. The bytes
