@@ -209,6 +209,12 @@ def test_the_whole_fetch_against_this_repositorys_signed_release(tmp_path):
         pytest.skip("needs the monorepo layout")
     if subprocess.run(["git", "rev-parse", "--verify", "--quiet", "main"], cwd=top, capture_output=True).returncode:
         pytest.skip("no local main branch to clone (a CI checkout)")
+    # A push to main checks out with a main branch but shallow (actions/checkout, depth 1), and a partial
+    # (--filter=blob:none) clone of a shallow folder never finishes: the job timed out on every push to main
+    # (bus-dev, #humans 29253). A host always clones from github.com, never a shallow folder.
+    if subprocess.run(["git", "rev-parse", "--is-shallow-repository"], cwd=top, capture_output=True,
+                      text=True).stdout.strip() == "true":
+        pytest.skip("a shallow checkout can't be partially cloned (a CI push to main)")
     main_toml = subprocess.run(["git", "show", f"main:{folder}/release.toml"], cwd=top, capture_output=True).stdout
     git = shutil.which("git")
     body = (f"function Say([string]$t) {{ }}; $Keygen = '{KEYGEN}'; $GitTestAllow = @('-c', 'protocol.file.allow=always'); "
