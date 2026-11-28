@@ -59,7 +59,7 @@ public partial class MainWindow
         if (!_ready) return;
         ShowAdminTab();
         if (!_adminLoaded) _ = RunBusy(LoadAdminListsAsync);
-        if (AdminTabHosts.IsChecked == true && !_adminHostsLoaded) _ = RunBusy(LoadHostsAsync);
+        if (ShowsHostsOrFleet() && !_adminHostsLoaded) _ = RunBusy(LoadHostsAsync);
     }
 
     internal async void AdminHostsReload_Click(object sender, RoutedEventArgs e) => await RunBusy(LoadHostsAsync, sender);
@@ -225,21 +225,28 @@ public partial class MainWindow
         await LoadFleetAccessAsync();
     }
 
+    /// <summary>The tabs whose cards carry their own inputs and reasons, so the shared audit reason is not shown on them.</summary>
+    private System.Windows.Controls.RadioButton[] OwnInputsTabs() =>
+        [AdminTabEnroll, AdminTabExport, AdminTabHosts, AdminTabAddHost, AdminTabFleet, AdminTabSecurity];
+
+    /// <summary>The tabs that show the worker hosts or the fleet, which are loaded together.</summary>
+    private bool ShowsHostsOrFleet() => AdminTabHosts.IsChecked == true || AdminTabFleet.IsChecked == true;
+
     private void ShowAdminTab()
     {
         AdminAgentsPanel.Visibility = VisibleWhen(AdminTabAgents.IsChecked == true);
         AdminDevicesPanel.Visibility = VisibleWhen(AdminTabDevices.IsChecked == true);
         AdminSpnPanel.Visibility = VisibleWhen(AdminTabSpn.IsChecked == true);
         AdminHostsPanel.Visibility = VisibleWhen(AdminTabHosts.IsChecked == true);
-        AdminAddHostPanel.Visibility = VisibleWhen(AdminTabHosts.IsChecked == true);
-        AdminFleetPanel.Visibility = VisibleWhen(AdminTabHosts.IsChecked == true);
-        AdminFleetAccessPanel.Visibility = VisibleWhen(AdminTabHosts.IsChecked == true);
+        AdminAddHostPanel.Visibility = VisibleWhen(AdminTabAddHost.IsChecked == true);
+        AdminFleetAccessPanel.Visibility = VisibleWhen(AdminTabFleet.IsChecked == true);
+        AdminFleetPanel.Visibility = VisibleWhen(AdminTabFleet.IsChecked == true || AdminTabHosts.IsChecked == true);
+        AdminSecurityPanel.Visibility = VisibleWhen(AdminTabSecurity.IsChecked == true);
         AdminEnrollPanel.Visibility = VisibleWhen(AdminTabEnroll.IsChecked == true);
         AdminAccessPanel.Visibility = VisibleWhen(AdminTabAccess.IsChecked == true);
         AdminExportPanel.Visibility = VisibleWhen(AdminTabExport.IsChecked == true);
         // Enrollment and export carry their own inputs; everything else shares one audit reason.
-        AdminReasonCard.Visibility = VisibleWhen(
-            AdminTabEnroll.IsChecked != true && AdminTabExport.IsChecked != true && AdminTabHosts.IsChecked != true);
+        AdminReasonCard.Visibility = VisibleWhen(!OwnInputsTabs().Any(tab => tab.IsChecked == true));
     }
 
     internal async void AdminReload_Click(object sender, RoutedEventArgs e) => await RunBusy(LoadAdminListsAsync, sender);

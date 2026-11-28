@@ -143,7 +143,7 @@ public partial class MainWindow
     private string ComposedNote(SignedFleet fleet) =>
         _composedFleet is { } composed && composed.AsSpan().SequenceEqual(fleet.Body) ? "\n\n" + FleetJoinLogic.ComposedNote(_composedFor!) : string.Empty;
 
-    /// <summary>The document and the signature beside it, checked against the signer lines on this PC's Add a host form.</summary>
+    /// <summary>The document and the signature beside it, checked against the site signers this PC holds (Admin, Security).</summary>
     private async Task<SignedFleet> ReadSignedFleetAsync(string path)
     {
         var signaturePath = path + ".sig";

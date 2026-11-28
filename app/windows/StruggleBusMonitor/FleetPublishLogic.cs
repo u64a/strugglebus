@@ -49,7 +49,7 @@ internal static partial class FleetPublishLogic
     public const int MaxBytes = 64 * 1024;
 
     public const string NeedsOperator = "Publishing the fleet needs operator access saved on this PC. Save it on Admin first.";
-    public const string NoSigners = "This PC holds no signer lines to check a fleet against. Paste the site's signer lines under Add a host first; they are the ones every host was given.";
+    public const string NoSigners = "This PC holds no site signers to check a fleet against. Register your hardware keys on Admin, Security first; they are the ones every host was given.";
     public const string NotASignature = "The .sig file is not an OpenSSH signature file.";
     public const string WrongPurpose = "The signature was not made for a fleet document (namespace " + Namespace + "). It is not published.";
     public const string UnknownSigner = "The signature was made by a key that is not one of this PC's signer lines for the fleet. It is not published.";

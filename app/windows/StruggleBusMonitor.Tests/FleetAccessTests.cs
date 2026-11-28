@@ -32,6 +32,28 @@ public sealed class FleetAccessLogicTests
     }
 
     [Fact]
+    public void ABusWithHundredsOfAgentsShowsOnlyTheFewThatMatchWhatWasTyped()
+    {
+        var all = Enumerable.Range(0, 900).Select(number => new AgentChoice { Id = $"id-{number}", Name = $"agent-{number:000}" })
+            .Append(new AgentChoice { Id = "id-docs", Name = "coord-docs" })
+            .Append(new AgentChoice { Id = "id-mydocs", Name = "my-docs-helper" })
+            .Append(new AgentChoice { Id = "id-docsy", Name = "docs-writer" })
+            .ToList();
+
+        Assert.Empty(FleetAccessLogic.Matching(all, ""));
+        Assert.Empty(FleetAccessLogic.Matching(all, "   "));
+        Assert.Equal(["docs-writer", "coord-docs", "my-docs-helper"], FleetAccessLogic.Matching(all, " DOCS ").Select(choice => choice.Name));
+        Assert.Equal(FleetAccessLogic.ShownMatches, FleetAccessLogic.Matching(all, "agent").Count);
+        Assert.Equal("agent-000", FleetAccessLogic.Matching(all, "agent")[0].Name);
+
+        Assert.Equal(FleetAccessLogic.SearchHint + " 903 enabled agents can be authorised.", FleetAccessLogic.SearchText(all, ""));
+        Assert.Equal("Showing 8 of 900 matches. Keep typing to narrow them.", FleetAccessLogic.SearchText(all, "agent-"));
+        Assert.Equal("3 matches. Choose one.", FleetAccessLogic.SearchText(all, "docs"));
+        Assert.Equal("1 match. Choose one.", FleetAccessLogic.SearchText(all, "agent-042"));
+        Assert.StartsWith("No enabled agent has \"zzz\" in its name.", FleetAccessLogic.SearchText(all, "zzz"));
+    }
+
+    [Fact]
     public void TheFleetIsListedWithWhatEachEntryIs()
     {
         var rows = FleetAccessLogic.Rows([new("coordinator", "coord-main", "1"), new("host", "host-a-host", "2"), new("host", null, "3")]);
@@ -149,6 +171,7 @@ public sealed class FleetAccessWindowTests(StaWindowAdminFixture sta)
 
     private static void FillDocs(MainWindow window)
     {
+        window.AccessAgentSearch.Text = "docs";
         var choice = ((IEnumerable<AgentChoice>)window.AccessAgentsList.ItemsSource).Single();
         window.AccessAgent_Click(new Button { Tag = choice }, new RoutedEventArgs());
         window.AccessProject.Text = "docs";
@@ -168,11 +191,56 @@ public sealed class FleetAccessWindowTests(StaWindowAdminFixture sta)
         using var scene = Open("before.toml", 5);
         var window = scene.Window;
 
+        // The Worker hosts tab shows the hosts; the fleet and the hardware keys each have a tab of their own.
+        Assert.Equal(Visibility.Visible, window.AdminHostsPanel.Visibility);
+        Assert.Equal(Visibility.Collapsed, window.AdminFleetAccessPanel.Visibility);
+        Assert.Equal(Visibility.Collapsed, window.AdminAddHostPanel.Visibility);
+        Assert.Equal(Visibility.Collapsed, window.AdminSecurityPanel.Visibility);
+        Assert.Equal(Visibility.Collapsed, window.AdminReasonCard.Visibility);
+
+        window.AdminTabSecurity.IsChecked = true;
+        Assert.Equal(Visibility.Visible, window.AdminSecurityPanel.Visibility);
+        Assert.Equal(Visibility.Collapsed, window.AdminHostsPanel.Visibility);
+        Assert.Equal(Visibility.Collapsed, window.AdminReasonCard.Visibility);
+
+        window.AdminTabAddHost.IsChecked = true;
+        Assert.Equal(Visibility.Visible, window.AdminAddHostPanel.Visibility);
+        Assert.Equal(Visibility.Collapsed, window.AdminSecurityPanel.Visibility);
+
+        window.AdminTabFleet.IsChecked = true;
         Assert.Equal(Visibility.Visible, window.AdminFleetAccessPanel.Visibility);
+        Assert.Equal(Visibility.Visible, window.AdminFleetPanel.Visibility);
+        Assert.Equal(Visibility.Collapsed, window.AdminAddHostPanel.Visibility);
         Assert.Equal(["coord-main", "host-office1-host"], ((IEnumerable<FleetEntryRow>)window.FleetEntriesList.ItemsSource).Select(row => row.Name));
-        Assert.Equal(["coord-docs"], ((IEnumerable<AgentChoice>)window.AccessAgentsList.ItemsSource).Select(choice => choice.Name));
         Assert.Equal("The fleet on the bus lists 1 agent(s) that may task the hosts and 1 worker host(s).", window.FleetAccessSummary.Text);
-        Assert.StartsWith("No agent chosen.", window.AccessAgentText.Text);
+        Assert.StartsWith("No agent chosen", window.AccessAgentText.Text);
+
+        // No agent is listed until the operator searches: a bus can hold hundreds.
+        Assert.Empty((IEnumerable<AgentChoice>)window.AccessAgentsList.ItemsSource);
+        Assert.Equal(FleetAccessLogic.SearchHint + " 1 enabled agent can be authorised.", window.AccessAgentSearchText.Text);
+
+        window.AccessAgentSearch.Text = "DOC";
+        Assert.Equal(["coord-docs"], ((IEnumerable<AgentChoice>)window.AccessAgentsList.ItemsSource).Select(choice => choice.Name));
+        Assert.Equal("1 match. Choose one.", window.AccessAgentSearchText.Text);
+
+        window.AccessAgentSearch.Text = "old";
+        Assert.Empty((IEnumerable<AgentChoice>)window.AccessAgentsList.ItemsSource);
+        Assert.StartsWith("No enabled agent has \"old\" in its name.", window.AccessAgentSearchText.Text);
+    });
+
+    [Fact]
+    public void TheSitesRepositoryLocationsAreKeptAsSoonAsTheBoxIsLeft() => sta.Run(() =>
+    {
+        using var scene = Open("before.toml", 5);
+        var window = scene.Window;
+        Assert.Equal(string.Empty, AppSettings.Load().HostRemotes);
+
+        window.HostRemotes_LostFocus(window.HostRemotes, new RoutedEventArgs());
+        Assert.Equal("https://github.com/acme/", AppSettings.Load().HostRemotes);
+
+        window.HostRemotes.Text = "https://github.com/acme/\nhttps://github.com/other/";
+        window.HostRemotes_LostFocus(window.HostRemotes, new RoutedEventArgs());
+        Assert.Equal(window.HostRemotes.Text, AppSettings.Load().HostRemotes);
     });
 
     [Fact]

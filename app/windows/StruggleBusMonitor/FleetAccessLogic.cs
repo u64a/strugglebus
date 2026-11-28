@@ -35,7 +35,7 @@ internal static class FleetAccessLogic
     public const string ChooseAgent = "Choose the agent to authorise from the list first.";
 
     public const string NoRemotes =
-        "This PC has no repository locations for the site yet. Fill in \"Repository locations the host may work in\" under Add a host first: an agent can only be given repositories inside them.";
+        "This PC has no repository locations for the site yet. Fill in \"Repository locations the host may work in\" on Admin, Add a host first: an agent can only be given repositories inside them.";
 
     /// <summary>
     /// Removing an entry changes what hosts accept from now on; it does not stop anything at once.
@@ -57,6 +57,43 @@ internal static class FleetAccessLogic
             .OrderBy(agent => agent.Name, StringComparer.Ordinal)
             .Select(agent => new AgentChoice { Id = agent.Id, Name = agent.Name, Identity = Identity(agent, now) })
             .ToList();
+
+    /// <summary>How many matches are put on screen. A bus can hold hundreds of agents; the operator types to narrow them.</summary>
+    public const int ShownMatches = 8;
+
+    public const string SearchHint = "Type part of the agent's name to find it.";
+
+    /// <summary>
+    /// The agents whose name holds what was typed, names that start with it first, at most
+    /// <see cref="ShownMatches"/>. Nothing typed shows nothing: a list of every agent on a busy
+    /// bus is no use to anyone.
+    /// </summary>
+    public static IReadOnlyList<AgentChoice> Matching(IReadOnlyList<AgentChoice> choices, string typed)
+    {
+        var wanted = typed.Trim();
+        if (wanted.Length == 0) return [];
+        return choices
+            .Where(choice => choice.Name.Contains(wanted, StringComparison.OrdinalIgnoreCase))
+            .OrderBy(choice => choice.Name.StartsWith(wanted, StringComparison.OrdinalIgnoreCase) ? 0 : 1)
+            .ThenBy(choice => choice.Name, StringComparer.Ordinal)
+            .Take(ShownMatches)
+            .ToList();
+    }
+
+    /// <summary>What to say under the search box: how to start, that nothing matches, or that there are more than are shown.</summary>
+    public static string SearchText(IReadOnlyList<AgentChoice> choices, string typed)
+    {
+        var wanted = typed.Trim();
+        if (wanted.Length == 0) return $"{SearchHint} {choices.Count} enabled agent{(choices.Count == 1 ? "" : "s")} can be authorised.";
+        var matches = choices.Count(choice => choice.Name.Contains(wanted, StringComparison.OrdinalIgnoreCase));
+        return matches == 0
+            ? $"No enabled agent has \"{wanted}\" in its name. A blocked or retired agent, a worker host, and an agent already in the fleet are not offered."
+            : MatchesText(matches);
+    }
+
+    private static string MatchesText(int matches) => matches > ShownMatches
+        ? $"Showing {ShownMatches} of {matches} matches. Keep typing to narrow them."
+        : $"{matches} match{(matches == 1 ? "" : "es")}. Choose one.";
 
     /// <summary>What the bus knows of the agent, for the operator to recognise it by.</summary>
     internal static string Identity(ManagedAgent agent, DateTimeOffset now)
