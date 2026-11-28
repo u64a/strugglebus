@@ -90,7 +90,7 @@ There are three ways a key gets here, and the screen should offer them in this o
 
 | | For | What the operator does | State |
 |---|---|---|---|
-| a | **A new key**, never used for this before | Plugs it in, presses **Set up a new hardware key**, gives it a short name, enters the key's PIN and touches it when Windows asks | **Gap: not built** |
+| a | **A new key**, never used for this before | Plugs it in, presses **Set up a new hardware key**, gives it a short name, enters the key's PIN and touches it when Windows asks | Built, to be proven on a real key (see below) |
 | b | **A key already set up on this PC** | Presses **Add this key** beside the key the app found | Built (pull request 107) |
 | c | **A key set up somewhere else** | Chooses its public file | Built |
 
@@ -262,8 +262,8 @@ bus, hosts listed, agents listed). Nothing new is stored.
 
 | # | Gap | Where | Needs |
 |---|---|---|---|
-| 1 | Set up a new hardware key from the app, and restore a key's file from the key | Step 3 | The app; security has reviewed the proposal (29377) |
-| 2 | A first-run checklist tying the steps together | All | The app |
+| 1 | Restore a key's file from the key. (Setting up a new key is built; it has not yet been run against a real security key) | Step 3 | The app |
+| 2 | ~~A first-run checklist tying the steps together~~ Built: the Set up this site card on Admin | All | Done |
 | 3 | The site's repository locations on a Site card, not on Add a host | Step 4 | The app |
 | 4 | Show only the fleet action that applies (start, or take over) | Step 5 | The app |
 | 5 | Sign a host's agent programs in again from the app: signed commands to a host, the answer shown, a sealed token for Claude. **The largest gap: today it means a reinstall** | Step 7 | The app, to the worker host's design |
