@@ -468,7 +468,7 @@ async def test_integration_guide_has_rest_mcp_parity(
     assert rest_result.json()["guide_version"] == "1.19.0"
     assert mcp_info.is_error is False
     assert mcp_info.structured_content == rest_info.json() == {
-        "application_version": "0.2.74",
+        "application_version": "0.2.75",
         "release_id": "development",
         "integration_guide_version": "1.19.0",
         "coordination_protocol_version": 1,
