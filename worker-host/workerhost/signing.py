@@ -69,6 +69,16 @@ def fingerprint(key_type: str, blob_b64: str) -> str:
     return "SHA256:" + base64.b64encode(hashlib.sha256(raw).digest()).decode("ascii").rstrip("=")
 
 
+def count_signer_lines(path: Path) -> int | None:
+    """Every line of the pinned file that isn't blank or a comment, whether or not read_signers can parse it: what
+    ssh-keygen may trust. None if the file can't be read."""
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except (OSError, UnicodeDecodeError):
+        return None
+    return sum(1 for ln in lines if ln.strip() and not ln.lstrip().startswith("#"))
+
+
 def read_signers(path: Path) -> list[Signer]:
     """The pinned list as (principal, namespaces, key type, fingerprint, comment). Unparseable lines are skipped
     here; ssh-keygen is what decides, this is for showing what a host trusts."""

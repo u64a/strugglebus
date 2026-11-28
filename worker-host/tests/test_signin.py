@@ -87,7 +87,14 @@ class Rig:
         return subprocess.CompletedProcess(args, self.setup_git_code, "", "")
 
     def settle(self):
-        time.sleep(0.05)  # the reader threads
+        """Wait until the reader threads have read all the fake output (a fixed sleep flaked on a slow, covered run)."""
+        want = len(self.out) + len(self.err)
+        deadline = time.monotonic() + 2
+        while time.monotonic() < deadline:
+            a = self.s.current
+            if a is None or len("".join(a.out)) >= want:
+                return
+            time.sleep(0.01)
 
 
 def test_a_gh_sign_in_shows_its_code_then_sets_up_git_and_is_done():
