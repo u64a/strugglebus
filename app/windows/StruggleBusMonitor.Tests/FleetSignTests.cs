@@ -143,6 +143,35 @@ public sealed class SshKeygenSigningTests
         Assert.True(UpdateTrust.IsMicrosoft(Authenticode.Read(tool)));
     }
 
+    [Theory]
+    [InlineData("strugglebus-release")]
+    [InlineData("strugglebus-bus-release")]
+    [InlineData("strugglebus-baseline")]
+    [InlineData("strugglebus-fleet ")]
+    [InlineData("STRUGGLEBUS-FLEET")]
+    [InlineData("file")]
+    [InlineData("")]
+    public async Task TheLowestLayerRefusesToAskAKeyToSignForAnythingButTheFleetAndHostCommands(string purpose)
+    {
+        var before = Directory.GetDirectories(Path.GetTempPath(), "strugglebus-sign-*").Length;
+
+        // The tool path does not exist: the refusal comes before anything is started or written.
+        var error = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => SshKeygen.SignAsync(@"C:\no\such\ssh-keygen.exe", @"C:\no\such\key", purpose, "serial = 1\n"u8.ToArray(), TimeSpan.FromSeconds(5)));
+
+        Assert.Contains("never asks a hardware key to sign for", error.Message);
+        Assert.Equal(before, Directory.GetDirectories(Path.GetTempPath(), "strugglebus-sign-*").Length);
+    }
+
+    [Fact]
+    public void OnlyTheFleetAndHostCommandNamespacesCanBeSigned()
+    {
+        Assert.Equal(["strugglebus-fleet", "strugglebus-host-command"], SshKeygen.SignablePurposes);
+        Assert.Contains(FleetSignLogic.Namespace, SshKeygen.SignablePurposes);
+        SshKeygen.RequireSignablePurpose("strugglebus-fleet");
+        SshKeygen.RequireSignablePurpose("strugglebus-host-command");
+    }
+
     [Fact]
     public async Task AToolThatDoesNotSignIsAFailureWithWhatItSaidAndLeavesNothingBehind()
     {

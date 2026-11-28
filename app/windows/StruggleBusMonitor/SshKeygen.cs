@@ -62,6 +62,7 @@ internal static class SshKeygen
     /// </summary>
     public static async Task<string> SignAsync(string tool, string keyFile, string purpose, byte[] document, TimeSpan patience)
     {
+        RequireSignablePurpose(purpose);
         var folder = Directory.CreateTempSubdirectory("strugglebus-sign-").FullName;
         try
         {
@@ -76,6 +77,22 @@ internal static class SshKeygen
         finally
         {
             Directory.Delete(folder, recursive: true);
+        }
+    }
+
+    /// <summary>
+    /// The only namespaces this app may ever ask a hardware key to sign for: the site's own fleet
+    /// and commands to its hosts. The same keys sign software releases under other namespaces, and
+    /// this is the lowest place a signature can be asked for, so the refusal lives here: no screen
+    /// built later can turn the app into a release signer by passing something else.
+    /// </summary>
+    public static readonly IReadOnlyList<string> SignablePurposes = ["strugglebus-fleet", "strugglebus-host-command"];
+
+    internal static void RequireSignablePurpose(string purpose)
+    {
+        if (!SignablePurposes.Contains(purpose, StringComparer.Ordinal))
+        {
+            throw new InvalidOperationException($"This app never asks a hardware key to sign for \"{purpose}\". It signs only the site's fleet and commands to its hosts.");
         }
     }
 
