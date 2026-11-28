@@ -76,6 +76,54 @@ internal static partial class SiteSignersLogic
 
     public static string RemoveHelloPrompt(SiteSigner signer) => $"Remove site signer {signer.Fingerprint}";
 
+    [GeneratedRegex(@" (?<type>[a-z0-9@.-]+) (?<key>[A-Za-z0-9+/]+={0,2})( [A-Za-z0-9._@-]{1,64})?\z")]
+    private static partial Regex KeyOfLine();
+
+    /// <summary>
+    /// The hardware keys named in lines an earlier version of the app kept in its plain settings
+    /// file, as lines the app would write today, less any already held. That file could be changed
+    /// by any program running as the operator, and its lines could carry other namespaces. So
+    /// nothing is taken from it as it stands: only a hardware key survives, its line is rebuilt
+    /// with the app's own name and namespaces, and the operator confirms each fingerprint.
+    /// </summary>
+    public static IReadOnlyList<SiteSigner> Earlier(string earlierLines, string held)
+    {
+        var known = FleetPublishLogic.Signers(held).Select(signer => signer.KeyBase64).ToHashSet();
+        var rebuilt = earlierLines.Replace("\r\n", "\n").Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Select(Rebuilt)
+            .OfType<string>()
+            .Distinct();
+        return FleetPublishLogic.Signers(string.Join("\n", rebuilt)).Where(signer => !known.Contains(signer.KeyBase64)).ToList();
+    }
+
+    /// <summary>The line the app would write for the key on an earlier line, or null when it is not a hardware key's line.</summary>
+    private static string? Rebuilt(string earlierLine)
+    {
+        var match = KeyOfLine().Match(earlierLine);
+        if (!match.Success) return null;
+        try
+        {
+            return LineFor($"{match.Groups["type"].Value} {match.Groups["key"].Value}");
+        }
+        catch (InvalidOperationException)
+        {
+            return null;
+        }
+    }
+
+    public static string EarlierReview(IReadOnlyList<SiteSigner> earlier) =>
+        $"An earlier version of this app kept {earlier.Count} site signer key{(earlier.Count == 1 ? "" : "s")} in its settings file. Keep {(earlier.Count == 1 ? "it" : "them")} as site signers?\n\n" +
+        string.Join("\n", earlier.Select(signer => $"Fingerprint:  {signer.Fingerprint}")) +
+        "\n\nCheck each fingerprint against the key itself before saying yes. That file was not protected, so a key you do not recognise must not be kept; say no and add your keys with Add a hardware key instead.";
+
+    public static string EarlierHelloPrompt(int count) => $"Keep {count} earlier site signer key{(count == 1 ? "" : "s")}";
+
+    public static string EarlierButton(int count) => $"Confirm {count} signer key{(count == 1 ? "" : "s")} from an earlier version";
+
+    /// <summary>The held lines with these added.</summary>
+    public static string With(string held, IEnumerable<SiteSigner> more) =>
+        string.Join("\n", FleetPublishLogic.Signers(held).Concat(more).Select(signer => signer.Line));
+
     /// <summary>The held lines with one more. Throws when that key is already among them.</summary>
     public static string Add(string held, string line)
     {
