@@ -79,6 +79,32 @@ public sealed class SiteSignersLogicTests
     }
 
     [Fact]
+    public void HardwareKeysFoundOnThePcAreListedOnceEachAndNotWhenAlreadySigners()
+    {
+        var lineA = SiteSignersLogic.LineFor(PublicFile(KeyA));
+        (string Path, string Text)[] files =
+        [
+            (@"C:\u\.ssh\id_sk_b.pub", PublicFile(KeyB)),
+            (@"C:\u\.ssh\id_sk_a.pub", PublicFile(KeyA)),
+            (@"C:\u\.ssh\copy_of_b.pub", PublicFile(KeyB, comment: " again")),
+            (@"C:\u\.ssh\id_ed25519.pub", "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIA me"),
+            (@"C:\u\.ssh\notes.pub", "not a key at all")
+        ];
+
+        var none = SiteSignersLogic.Found(files, "");
+        Assert.Equal(["copy_of_b.pub", "id_sk_a.pub"], none.Select(key => key.FileName));
+        Assert.Equal(FleetPublishLogic.Signers(lineA)[0].Fingerprint, none[1].Fingerprint);
+        Assert.Equal(@"C:\u\.ssh\id_sk_a.pub", none[1].Path);
+
+        Assert.Equal(["copy_of_b.pub"], SiteSignersLogic.Found(files, lineA).Select(key => key.FileName));
+        Assert.Empty(SiteSignersLogic.Found([], lineA));
+
+        Assert.StartsWith("Found on this PC (2), not yet site signers.", SiteSignersLogic.FoundText(2, 0));
+        Assert.StartsWith("No hardware key's public file was found", SiteSignersLogic.FoundText(0, 0));
+        Assert.Equal("Every hardware key found in your .ssh folder is already a site signer.", SiteSignersLogic.FoundText(0, 3));
+    }
+
+    [Fact]
     public void TheQuestionsShowTheFingerprintAndSayWhatASignerCanDo()
     {
         var signer = FleetPublishLogic.Signers(SiteSignersLogic.LineFor(PublicFile(KeyA)))[0];
@@ -155,6 +181,46 @@ public sealed class SiteSignersWindowTests(StaWindowAdminFixture sta)
             Directory.Delete(folder, recursive: true);
         }
     });
+
+    [Fact]
+    public void AKeyFoundOnThePcIsAddedWithItsButtonAndNoFileIsChosen() => sta.Run(() =>
+    {
+        var folder = Directory.CreateTempSubdirectory("signers-test-").FullName;
+        try
+        {
+            var publicFile = WritePublicFile(folder, "id_ed25519_sk_a.pub", $"sk-ssh-ed25519@openssh.com {KeyA} me@pc\n");
+            File.WriteAllText(Path.Combine(folder, "id_ed25519_sk_a"), "a key handle");
+            File.WriteAllText(Path.Combine(folder, "other.pub"), "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIA me\n");
+            using var scene = new StaWindowAdminScene().Enroll();
+            scene.Platform.PublicKeys.AddRange(WindowPlatform.PublicKeyFilesIn(folder));
+            var window = scene.Open().Window;
+            window.AdminNav.IsChecked = true;
+            window.AdminTabSecurity.IsChecked = true;
+
+            var found = Assert.Single((IEnumerable<FoundKey>)window.FoundKeysList.ItemsSource);
+            Assert.Equal("id_ed25519_sk_a.pub", found.FileName);
+            Assert.StartsWith("Found on this PC (1), not yet site signers.", window.FoundKeysText.Text);
+
+            window.FoundKeyAdd_Click(new System.Windows.Controls.Button { Tag = "not a key" }, new System.Windows.RoutedEventArgs());
+            window.FoundKeyAdd_Click(new System.Windows.Controls.Button { Tag = found }, new System.Windows.RoutedEventArgs());
+            StaWindowAdminScene.Until(() => Listed(window).Count == 1, "the key to be added");
+
+            Assert.Equal(LineA, window.HostSigners.Text);
+            Assert.Contains($"Fingerprint:  {found.Fingerprint}", Assert.Single(scene.Platform.Confirmations).Item1);
+            Assert.Contains(SiteSignersLogic.AddHelloPrompt(Listed(window)[0]), scene.Platform.HelloPrompts);
+            Assert.Equal(Path.Combine(folder, "id_ed25519_sk_a"), AppSettings.Load().SignerKeyFiles[KeyA]);
+            Assert.Empty((IEnumerable<FoundKey>)window.FoundKeysList.ItemsSource);
+            Assert.Equal("Every hardware key found in your .ssh folder is already a site signer.", window.FoundKeysText.Text);
+        }
+        finally
+        {
+            Directory.Delete(folder, recursive: true);
+        }
+    });
+
+    [Fact]
+    public void AFolderThatIsNotThereHoldsNoKeys() =>
+        Assert.Empty(WindowPlatform.PublicKeyFilesIn(Path.Combine(Path.GetTempPath(), "no-such-folder-" + Guid.NewGuid().ToString("N"))));
 
     [Fact]
     public void SayingNoToTheFingerprintAddsNothing() => sta.Run(() =>

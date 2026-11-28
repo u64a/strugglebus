@@ -94,6 +94,10 @@ internal sealed class StaWindowAdminPlatform : IWindowPlatform
 
     public bool FileExists(string path) => KeyFiles.Contains(path) || System.IO.File.Exists(path);
 
+    public List<(string Path, string Text)> PublicKeys { get; } = [];
+
+    public IReadOnlyList<(string Path, string Text)> PublicKeyFiles() => PublicKeys;
+
     public string? PublicKeyPath { get; set; }
 
     public string? PickPublicKeyFile(Window owner) => PublicKeyPath;

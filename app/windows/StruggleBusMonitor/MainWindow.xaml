@@ -809,8 +809,23 @@
                             <Border x:Name="AdminSecurityPanel" Style="{StaticResource Card}">
                                 <StackPanel>
                                     <TextBlock Text="SITE SIGNERS" Style="{StaticResource Label}"/>
-                                    <TextBlock Text="The hardware keys (YubiKeys) that may sign this site's fleet: which agents may task the worker hosts, and which PCs are hosts. Register each key you own, spares included; a site keeps at least two so that losing one does not lock it out. Choose a key's public file (for example id_ed25519_sk_....pub in your .ssh folder) and the app writes its line. Adding or removing a key shows its fingerprint to check against the key itself, and needs Windows Hello." Style="{StaticResource MutedText}" TextWrapping="Wrap" Margin="0,8,0,12"/>
-                                    <Button x:Name="SignerAddButton" Content="Add a hardware key" Style="{StaticResource BtnOutline}" Click="SignerAdd_Click" HorizontalAlignment="Left" Margin="0,0,0,8"/>
+                                    <TextBlock Text="The hardware keys (YubiKeys) that may sign this site's fleet: which agents may task the worker hosts, and which PCs are hosts. Register each key you own, spares included; a site keeps at least two so that losing one does not lock it out. The app looks in your .ssh folder for hardware keys you already have and lists them below; add each with its button. Adding or removing a key shows its fingerprint to check against the key itself, and needs Windows Hello." Style="{StaticResource MutedText}" TextWrapping="Wrap" Margin="0,8,0,12"/>
+                                    <TextBlock x:Name="FoundKeysText" TextWrapping="Wrap" Margin="0,0,0,8"/>
+                                    <ItemsControl x:Name="FoundKeysList" Focusable="False" Margin="0,0,0,8">
+                                        <ItemsControl.ItemTemplate>
+                                            <DataTemplate>
+                                                <DockPanel Margin="0,0,0,6">
+                                                    <Button DockPanel.Dock="Right" Content="Add this key" Tag="{Binding}" Style="{StaticResource Btn}" Click="FoundKeyAdd_Click" Margin="12,0,0,0"/>
+                                                    <TextBlock VerticalAlignment="Center" TextTrimming="CharacterEllipsis">
+                                                        <Run Text="{Binding Fingerprint, Mode=OneWay}" FontFamily="{StaticResource Mono}" FontSize="12"/>
+                                                        <Run Text="  "/>
+                                                        <Run Text="{Binding FileName, Mode=OneWay}" Foreground="{DynamicResource Muted}" FontSize="12"/>
+                                                    </TextBlock>
+                                                </DockPanel>
+                                            </DataTemplate>
+                                        </ItemsControl.ItemTemplate>
+                                    </ItemsControl>
+                                    <Button x:Name="SignerAddButton" Content="Choose a key file from somewhere else" Style="{StaticResource BtnOutline}" Click="SignerAdd_Click" HorizontalAlignment="Left" Margin="0,0,0,8"/>
                                     <Button x:Name="SignersEarlierButton" Style="{StaticResource BtnOutline}" Click="SignersEarlier_Click" HorizontalAlignment="Left" Margin="0,0,0,8" Visibility="Collapsed"/>
                                     <TextBlock x:Name="SignersSummary" Style="{StaticResource MutedText}" TextWrapping="Wrap" Margin="0,0,0,8"/>
                                     <ItemsControl x:Name="SignersList" Focusable="False" Margin="0,0,0,8">
