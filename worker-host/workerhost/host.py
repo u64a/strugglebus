@@ -254,6 +254,7 @@ class Host:
         # kept copy cannot be checked, the host trusts nobody until a refresh succeeds (fail closed).
         self.fleet_required = bool(self.fleet_sync.accepted())
         self.next_fleet = 0.0
+        self.offer_after, self.offer_logged = 0.0, None  # offering the accepted fleet while the bus holds none
         self.fleet_status = "accepted" if self.fleet else ("unavailable" if self.fleet_required else "legacy")
         self.fleet_posted: set[str] = set()
         self.log("fleet-loaded", state=self.fleet_status, fleet=self.fleet.label if self.fleet else "-")
@@ -1646,6 +1647,44 @@ class Host:
                 self.push_refused = code
             self.push_after = now + STATUS_PUSH_BACKOFF
 
+    def offer_fleet_if_due(self) -> None:
+        """While the bus holds no fleet (its last fetch answered 404), a host that reads the fleet from the bus offers
+        the one it accepted, so the App can publish it unchanged with no file (bus 0.2.75; bus-dev #humans 29304,
+        u64-security 29303). At most every fleet refresh. 204 is logged once per serial. 409 means the bus holds one
+        now, so it stops. Any other refusal (404: an older bus; 403: not marked as a host) is logged once and
+        retried hourly, as the status push is."""
+        now = time.time()
+        call = getattr(self.bus, "call", None)
+        if (call is None or self.cfg.fleet_source not in ("bus", "either") or now < self.offer_after
+                or not getattr(self.fleet_sync, "bus_holds_none", False)):
+            return
+        body = self.fleet_sync.offer_body(self.fleet)
+        if body is None:
+            return
+        self.offer_after = now + 60 * max(1, self.cfg.fleet_refresh_minutes)
+        try:
+            code, _ = call("POST", fleet_mod.OFFER_PATH, body=body)
+        except (BusError, OSError, ValueError) as e:
+            self.log("fleet-offer-failed", error=type(e).__name__)
+            return
+        self._fleet_offer_answer(code, body["serial"], now)
+
+    def _fleet_offer_answer(self, code: int, serial: int, now: float) -> None:
+        if code in (200, 201, 204):
+            if self.offer_logged != ("offered", serial):
+                self.log("fleet-offered", serial=serial)
+                self.offer_logged = ("offered", serial)
+        elif code == 409:
+            self.fleet_sync.bus_holds_none = False  # the bus holds a fleet now: the next refresh reads it
+            self.log("fleet-offer-held")
+        elif code == 429:
+            self.offer_after = now + 60
+        else:
+            if self.offer_logged != ("refused", code):
+                self.log("fleet-offer-refused", status=code)
+                self.offer_logged = ("refused", code)
+            self.offer_after = now + STATUS_PUSH_BACKOFF
+
     def track_problem(self) -> None:
         """A `problem-raised` / `problem-cleared` line (and event, section 1b) when the status's problem code changes.
         Checked at most every 10 s, whatever the bus says."""
@@ -1953,6 +1992,7 @@ class Host:
             self.log.error("restart-check-error", e)
         self.openbao_tick()
         self.refresh_fleet()
+        self.offer_fleet_if_due()
         try:
             self.update_tick()
         except Exception as e:  # noqa: BLE001 - a failed update step never stops the host
