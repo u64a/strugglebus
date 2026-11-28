@@ -56,7 +56,7 @@ public partial class MainWindow
         if (change.Fresh == 0) return;
 
         ShowHumansArrival(HumansPageLogic.Arrival(HumansVisible, wasAtBottom), change.Fresh);
-        if (change.FreshFromAgents > 0 && _ready) FlashTaskbar();
+        if (_ready && HumansLogic.Flashes(change, _settings.FlashWhenAddressed)) FlashTaskbar();
         UpdateHumansSummary();
     }
 

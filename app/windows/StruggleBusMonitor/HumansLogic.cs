@@ -82,6 +82,30 @@ internal static class HumansLogic
     public static bool IsOperator(BusMessage message) =>
         message.AgentName.Equals(OperatorAuthor, StringComparison.Ordinal);
 
+    public const string OperatorMention = "@" + OperatorAuthor;
+
+    /// <summary>
+    /// True when an agent's message is for the operator: it names them (@human:operator) or it
+    /// replies to something they posted. Agents talking to each other in #humans do neither, and
+    /// those are counted on the badge without asking for the operator's attention.
+    /// </summary>
+    public static bool AddressesOperator(BusMessage message, BusMessage? parent)
+    {
+        if (IsOperator(message)) return false;
+        return (parent is not null && IsOperator(parent)) || NamesOperator(message.Body);
+    }
+
+    /// <summary>The mention as a whole name: "@human:operator-two" is someone else.</summary>
+    private static readonly System.Text.RegularExpressions.Regex OperatorNamed = new(
+        System.Text.RegularExpressions.Regex.Escape(OperatorMention) + "(?![A-Za-z0-9_-])",
+        System.Text.RegularExpressions.RegexOptions.IgnoreCase | System.Text.RegularExpressions.RegexOptions.CultureInvariant,
+        TimeSpan.FromMilliseconds(250));
+
+    private static bool NamesOperator(string body) => OperatorNamed.IsMatch(body);
+
+    /// <summary>Whether a batch of new messages should flash the taskbar button, given the operator's choice in Settings.</summary>
+    public static bool Flashes(HumansChange change, bool flashWhenAddressed) => flashWhenAddressed && change.FreshForOperator > 0;
+
     /// <summary>Trimmed body with Unix newlines, or null when empty or too long.</summary>
     public static string? NormalizeBody(string? text)
     {

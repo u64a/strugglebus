@@ -48,10 +48,18 @@ public partial class MainWindow
     {
         _showingTrayOptions = true;
         KeepInTrayCheck.IsChecked = _settings.KeepInTray;
+        FlashWhenAddressedCheck.IsChecked = _settings.FlashWhenAddressed;
         var canStart = TrayLogic.CanStartAtSignIn(_settings.KeepInTray, _platform.CanUpdate);
         StartAtSignInCheck.IsEnabled = canStart;
         StartAtSignInCheck.IsChecked = canStart && _platform.StartsAtSignIn;
         _showingTrayOptions = false;
+    }
+
+    internal void FlashWhenAddressed_Changed(object sender, RoutedEventArgs e)
+    {
+        if (!_ready || _showingTrayOptions) return;
+        _settings.FlashWhenAddressed = FlashWhenAddressedCheck.IsChecked == true;
+        _settings.Save();
     }
 
     private void KeepInTray_Changed(object sender, RoutedEventArgs e)

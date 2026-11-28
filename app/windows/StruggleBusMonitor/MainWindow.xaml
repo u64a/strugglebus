@@ -838,6 +838,8 @@
                                 <TextBlock Text="The app keeps watching the bus. Open it again from its tray icon, or right-click the icon to quit." Style="{StaticResource MutedText}" TextWrapping="Wrap" Margin="0,4,0,0"/>
                                 <CheckBox x:Name="StartAtSignInCheck" Content="Start when I sign in to Windows, in the tray" Style="{StaticResource Check}" Margin="0,12,0,0" Checked="StartAtSignIn_Changed" Unchecked="StartAtSignIn_Changed"/>
                                 <TextBlock Text="Needs the option above, and a copy installed with the Setup program." Style="{StaticResource MutedText}" TextWrapping="Wrap" Margin="0,4,0,0"/>
+                                <CheckBox x:Name="FlashWhenAddressedCheck" Content="Flash the taskbar button when an agent addresses me in #humans" Style="{StaticResource Check}" Margin="0,12,0,0" Checked="FlashWhenAddressed_Changed" Unchecked="FlashWhenAddressed_Changed"/>
+                                <TextBlock Text="Only while you are working in another window, and only for a message that names @human:operator or replies to one of yours. Other new messages are counted on the Humans badge without flashing." Style="{StaticResource MutedText}" TextWrapping="Wrap" Margin="0,4,0,0"/>
                             </StackPanel>
                         </Border>
 

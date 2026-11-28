@@ -92,6 +92,26 @@ public class TrayWindowTests(StaWindowAdminFixture sta)
     });
 
     [Fact]
+    public void TheTaskbarFlashIsOnUntilTurnedOffAndTheChoiceIsKept() => sta.Run(() =>
+    {
+        using (var scene = new StaWindowAdminScene())
+        {
+            var window = scene.Open().Window;
+            window.SettingsNav.IsChecked = true;
+            Assert.True(window.FlashWhenAddressedCheck.IsChecked);
+
+            window.FlashWhenAddressedCheck.IsChecked = false;
+            Assert.False(AppSettings.Load().FlashWhenAddressed);
+            window.FlashWhenAddressedCheck.IsChecked = true;
+            Assert.True(AppSettings.Load().FlashWhenAddressed);
+        }
+
+        using var again = new StaWindowAdminScene().WithSettings(settings => settings.FlashWhenAddressed = false);
+        again.Open().Window.SettingsNav.IsChecked = true;
+        Assert.False(again.Window.FlashWhenAddressedCheck.IsChecked);
+    });
+
+    [Fact]
     public void TurningTheOptionOnShowsTheIconAndTurningItOffRemovesItAndTheSignInStart() => sta.Run(() =>
     {
         using var scene = new StaWindowAdminScene();
