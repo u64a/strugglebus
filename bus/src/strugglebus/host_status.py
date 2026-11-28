@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import math
+import re
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any, Callable, Protocol
@@ -33,7 +34,11 @@ TASK_OUTCOMES = ("finished", "failed", "timed-out", "interrupted", "refused", "y
 MACHINE = ("cpu_pct", "ram_free_gb", "disk_free_gb", "commit_pct")
 #: Returned only with the operator grant. The account and its weaknesses map the weakest machine,
 #: and a host's channel may be private.
-ADMIN_ONLY = (("account",), ("dedicated",), ("warnings",), ("bus", "channel"), ("bus", "channel_state"))
+ADMIN_ONLY = (
+    ("account",), ("dedicated",), ("warnings",), ("bus", "channel"), ("bus", "channel_state"),
+    # Which keys a host trusts, and anything about signing it in, are for the operator alone.
+    ("signers",), ("signers_total",), ("sign_in",), ("sign_in_key",), ("claude_token_since",),
+)
 
 _COUNT = ("int", 0, 2_000_000_000)
 
@@ -54,6 +59,13 @@ def _later(spec: object) -> tuple[str, object]:
     """
     return ("later", spec)
 
+
+def _match(pattern: str) -> tuple[str, re.Pattern[str]]:
+    """Text that is exactly this pattern, start to end."""
+    return ("match", re.compile(pattern))
+
+
+_FINGERPRINT = r"SHA256:[A-Za-z0-9+/]{43}"
 
 #: The shape of a v2 snapshot. An object is a dict of exactly these keys: one more or one fewer is
 #: refused, so nothing a snapshot must never carry (a task id, a path, message text) can ride in on
@@ -103,6 +115,29 @@ SNAPSHOT: dict[str, object] = {
     # archive that an inventory agent cannot see, so the status is where its version is shown.
     "pwsh": _later(_maybe(_text(32))),
     "tasks": {name: _COUNT for name in TASK_OUTCOMES},
+    # The signer keys this host pins, so the App can warn when its own set and a host's differ.
+    # Only each key's fingerprint, type and namespaces: never the key or its name. The list is
+    # capped and a line the host could not read is left out, so the count of every line the
+    # host's file holds goes beside it.
+    "signers": _later(("list", {
+        "fingerprint": _match(_FINGERPRINT),
+        "key_type": _match(r"[a-z0-9@.-]{1,48}"),
+        "namespaces": _match(r"[a-z0-9-]{0,64}(?:,[a-z0-9-]{1,64}){0,7}"),
+    }, 16)),
+    "signers_total": _later(("int", 0, 1000)),
+    # Signing a host's tools in from the App. Absent unless a sign-in was asked for. A code is
+    # the short code a person types at the tool's own website; it is useless once used or expired.
+    "sign_in": _later({
+        "nonce": _text(64),
+        "tool": _text(32),
+        "state": ("one-of", ("starting", "code", "done", "failed")),
+        "code": _later(_match(r"[A-Z0-9]{4}-[A-Z0-9]{4}")),
+        "expires_at": _later(_text(40)),
+        "reason": _later(_maybe(_text(200))),
+    }),
+    # The host's public key for a token sealed to it, and the day a sealed token arrived.
+    "sign_in_key": _later({"x25519": _match(r"[A-Za-z0-9+/]{43}="), "fingerprint": _match(_FINGERPRINT)}),
+    "claude_token_since": _later(_match(r"[0-9]{4}-[0-9]{2}-[0-9]{2}")),
 }
 
 
@@ -115,6 +150,7 @@ _CHECKS: dict[str, Callable[..., bool]] = {
     "str": lambda value, longest: type(value) is str and len(value) <= longest,
     "int": lambda value, lowest, highest: type(value) is int and lowest <= value <= highest,
     "one-of": lambda value, allowed: type(value) is str and value in allowed,
+    "match": lambda value, pattern: type(value) is str and pattern.fullmatch(value) is not None,
 }
 
 

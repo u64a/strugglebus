@@ -173,6 +173,60 @@ def test_a_field_added_later_is_accepted_with_or_without_it_and_checked_when_sen
     assert host_status.refusal(snapshot(pwsh="x" * 33), HOST) == "bad-value:pwsh"
 
 
+FINGERPRINT = "SHA256:" + "A" * 43
+NEWER = {
+    "signers": [{"fingerprint": FINGERPRINT, "key_type": "sk-ssh-ed25519@openssh.com", "namespaces": "strugglebus-fleet,strugglebus-host-command"}],
+    "signers_total": 3,
+    "sign_in": {"nonce": "n-1", "tool": "gh", "state": "code", "code": "AB12-CD34", "expires_at": "2026-11-28T05:00:00Z"},
+    "sign_in_key": {"x25519": "B" * 43 + "=", "fingerprint": FINGERPRINT},
+    "claude_token_since": "2026-11-28",
+}
+
+
+def test_the_newer_admin_only_fields_are_accepted_together_or_not_at_all_and_hidden_from_devices(hosts) -> None:
+    """What a host trusts and how it is signed in: sent by newer hosts, never required, never shown without the grant."""
+    client, secret, grant, key, *_ = hosts
+
+    assert host_status.refusal(snapshot(), HOST) is None
+    assert host_status.refusal(snapshot(**NEWER), HOST) is None
+    assert report(client, key, **NEWER).status_code == 201
+
+    shown = client.get(HOSTS, headers=_auth(secret)).json()["hosts"][0]["snapshot"]
+    assert not set(NEWER) & set(shown)
+    whole = client.post(ADMIN_HOSTS, json={"grant_secret": grant}, headers=_auth(secret)).json()["hosts"][0]["snapshot"]
+    assert {name: whole[name] for name in NEWER} == NEWER
+
+
+@pytest.mark.parametrize(
+    ("changed", "reason"),
+    [
+        ({"signers": "none"}, "bad-value:signers"),
+        ({"signers": [{"fingerprint": FINGERPRINT, "key_type": "ssh-ed25519"}]}, "missing-field:signers"),
+        ({"signers": [{"fingerprint": "MD5:abc", "key_type": "ssh-ed25519", "namespaces": ""}]}, "bad-value:signers.fingerprint"),
+        ({"signers": [{"fingerprint": FINGERPRINT, "key_type": "ssh-ed25519", "namespaces": "a b"}]}, "bad-value:signers.namespaces"),
+        ({"signers": [{"fingerprint": FINGERPRINT, "key_type": "ssh-ed25519", "namespaces": "", "key": "AAAA"}]}, "unknown-field:signers"),
+        ({"signers": [NEWER["signers"][0]] * 17}, "bad-value:signers"),
+        ({"signers_total": -1}, "bad-value:signers_total"),
+        ({"signers_total": 1001}, "bad-value:signers_total"),
+        ({"sign_in": {"nonce": "n", "tool": "gh"}}, "missing-field:sign_in"),
+        ({"sign_in": {"nonce": "n", "tool": "gh", "state": "waiting"}}, "bad-value:sign_in.state"),
+        ({"sign_in": {"nonce": "n", "tool": "gh", "state": "code", "code": "a token, not a code"}}, "bad-value:sign_in.code"),
+        ({"sign_in": {"nonce": "n", "tool": "gh", "state": "done", "token": "x"}}, "unknown-field:sign_in"),
+        ({"sign_in_key": {"x25519": "short", "fingerprint": FINGERPRINT}}, "bad-value:sign_in_key.x25519"),
+        ({"claude_token_since": "yesterday"}, "bad-value:claude_token_since"),
+        ({"claude_token_since": "2026-11-28\n"}, "bad-value:claude_token_since"),
+    ],
+)
+def test_a_newer_field_that_is_sent_is_checked_as_hard_as_any_other(changed, reason) -> None:
+    assert host_status.refusal(snapshot(**changed), HOST) == reason
+
+
+def test_a_failed_sign_in_may_say_why_and_one_with_no_code_carries_none() -> None:
+    assert host_status.refusal(snapshot(sign_in={"nonce": "n", "tool": "claude", "state": "failed", "reason": None}), HOST) is None
+    assert host_status.refusal(snapshot(sign_in={"nonce": "n", "tool": "claude", "state": "failed", "reason": "timed out"}), HOST) is None
+    assert host_status.refusal(snapshot(sign_in={"nonce": "n", "tool": "gh", "state": "starting"}), HOST) is None
+
+
 def test_fields_that_may_be_empty_are_accepted_empty() -> None:
     quiet = snapshot(
         update=None, last_command=None, problem=None, model=None, ghcp_ok=None, warnings=[],
