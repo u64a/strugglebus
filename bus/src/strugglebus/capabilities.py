@@ -169,6 +169,8 @@ ROUTE_CAPABILITIES: dict[tuple[str, str], str] = {
     ("POST", "/api/hosts/enrollments/redeem"): HOST_ENROLLMENT,
     ("POST", "/api/hosts/status"): AGENT_OPERATIONAL,
     ("POST", "/api/hosts/events"): AGENT_OPERATIONAL,
+    ("POST", "/api/hosts/fleet-offer"): AGENT_OPERATIONAL,
+    ("POST", "/api/mobile/admin/hosts/fleet-offers"): MOBILE_WRITE,
     ("POST", "/api/mobile/admin/logs/full"): MOBILE_WRITE,
     ("GET", "/api/mobile/hosts/status"): MOBILE_READ,
     ("GET", "/api/mobile/hosts/{agent_id}/status/history"): MOBILE_READ,

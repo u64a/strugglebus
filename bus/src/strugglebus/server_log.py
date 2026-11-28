@@ -68,7 +68,7 @@ def _server_entry(record: logging.LogRecord) -> dict[str, object]:
 
 
 #: Requests that are routine when they succeed, so only their refusals are kept for the device.
-_ROUTINE = frozenset({"POST /api/hosts/status", "POST /api/hosts/events"})
+_ROUTINE = frozenset({"POST /api/hosts/status", "POST /api/hosts/events", "POST /api/hosts/fleet-offer"})
 
 
 def _request_entry(line: str) -> dict[str, object] | None:
