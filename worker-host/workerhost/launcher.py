@@ -226,6 +226,8 @@ def launch(cmd: list[str], clone: Path, env: dict, log: Path, temp: Path, worker
 
 
 BUS_SECRET_ENV = {"SB_BUS_TOKEN", "SB_BUS_STORE"}
+# Never inherited: the host adds the sealed Claude token to Claude Code workers only (docs/app-host-integration.md 4a).
+INHERIT_NEVER = {"CLAUDE_CODE_OAUTH_TOKEN"}
 
 
 def worker_env(base: dict, *, bus_ca: str, bus_url: str, store: Path | None, temp: Path, gh_exe: str,
@@ -243,7 +245,7 @@ def worker_env(base: dict, *, bus_ca: str, bus_url: str, store: Path | None, tem
         raise ValueError("a worker gets exactly one of token or store")
     env = {k: v for k, v in base.items()
            if not k.upper().startswith("WORKERHOST_") and k.upper() not in NOTES_ENV
-           and k.upper() not in BUS_SECRET_ENV}
+           and k.upper() not in BUS_SECRET_ENV and k.upper() not in INHERIT_NEVER}
     values = {"BUS_CA": bus_ca, "BUS_URL": bus_url}
     if store:
         values["BUS_STORE"] = str(store)

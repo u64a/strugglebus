@@ -38,13 +38,13 @@ PROBLEMS = {  # code -> the one plain sentence the App shows
     "disk-low": "Disk space on the workers' drive is below the safe limit.",
     "memory-high": "Committed memory is above the safe limit; no new tasks until it drops.",
 }
-WARNINGS = ("not-dedicated", "isolation-weak")
+WARNINGS = ("not-dedicated", "isolation-weak", "claude-token-old")  # the last: rotate it (section 4a, 335 days)
 # v2: how each task this host process has ended so far ended (state.TERMINAL), always all seven, in this order.
 TASK_OUTCOMES = ("finished", "failed", "timed-out", "interrupted", "refused", "yielded", "cancelled")
 # v2 fields the bus returns to an admin (operator grant) only (u64-security, #humans 28828; bus-dev 28832): the
 # Windows account and its weaknesses map the weakest machine, and a host's channel may be private.
 ADMIN_ONLY = (("account",), ("dedicated",), ("warnings",), ("bus", "channel"), ("bus", "channel_state"),
-              ("sign_in",))  # section 4a: a one-time code, for the person who asked only
+              ("sign_in",), ("sign_in_key",), ("claude_token_since",))  # section 4a
 
 
 @dataclass
@@ -91,6 +91,9 @@ class Facts:
     tasks: dict = field(default_factory=dict)          # outcome -> count since started_at (TASK_OUTCOMES)
     pwsh: str | None = None                            # PowerShell 7's version (a zip install Wazuh can't see)
     sign_in: dict | None = None                        # section 4a: the sign-in in progress or just ended (signin.py)
+    sign_in_key: dict | None = None                    # section 4a: this host's X25519 public key and its fingerprint
+    claude_token_since: str | None = None              # section 4a: the date the sealed Claude token arrived
+    claude_token_old: bool = False                     # ... 335 days or more ago: rotate it
 
 
 def state_of(f: Facts) -> str:
@@ -141,6 +144,8 @@ def warnings_of(f: Facts) -> list[str]:
         out.append("not-dedicated")
     if f.isolation_weak:
         out.append("isolation-weak")
+    if f.claude_token_old:
+        out.append("claude-token-old")
     return out + [w for w in f.extra_warnings if w in WARNINGS and w not in out]
 
 
@@ -198,7 +203,19 @@ def build_v2(f: Facts) -> dict:
     # sees nothing new until an App sends a sign-in command. Never in the v1 status, the heartbeat or a history sample.
     if f.sign_in:
         s["sign_in"] = sign_in_field(f.sign_in)
+    # sign_in_key and claude_token_since (section 4a): admin-only, present once there is a key / a token. Unlike
+    # sign_in they are sent routinely, so a host release carrying them waits for a bus that accepts them.
+    key = f.sign_in_key or {}
+    if B64_KEY_RE.fullmatch(str(key.get("x25519", ""))) and FINGERPRINT_RE.fullmatch(str(key.get("fingerprint", ""))):
+        s["sign_in_key"] = {"x25519": key["x25519"], "fingerprint": key["fingerprint"]}
+    if f.claude_token_since and DATE_RE.fullmatch(f.claude_token_since):
+        s["claude_token_since"] = f.claude_token_since
     return s
+
+
+B64_KEY_RE = re.compile(r"[A-Za-z0-9+/]{43}=")             # base64 of 32 bytes
+FINGERPRINT_RE = re.compile(r"SHA256:[A-Za-z0-9+/]{43}")   # unpadded base64 of SHA-256
+DATE_RE = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}")
 
 
 SIGN_IN_STATES = ("starting", "code", "done", "failed")

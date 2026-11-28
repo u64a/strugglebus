@@ -121,6 +121,16 @@ class SignIns:
         for stream in (a.proc.stdout, a.proc.stderr):
             threading.Thread(target=_drain, args=(stream, a.out), daemon=True).start()
 
+    def record(self, tool: str, nonce: str, now: float, *, ok: bool, reason: str | None = None) -> None:
+        """A sign-in with no tool to run (Claude Code's sealed token, section 4a): its outcome, as a finished attempt,
+        so the status and events read the same as for gh and Copilot."""
+        if self.current and self.current.state in ("starting", "code"):
+            self._end(self.current, "failed", "replaced")
+        a = Attempt(tool, nonce, now)
+        self.current = a
+        self.log("sign-in-requested", tool=tool, nonce=nonce)
+        self._end(a, "done" if ok else "failed", reason)
+
     def poll(self, now: float) -> None:
         """Called on every host tick: reads the code when it appears, and ends the attempt on exit or timeout."""
         a = self.current

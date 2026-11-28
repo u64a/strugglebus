@@ -329,6 +329,17 @@ def cmd_enrol(cfg, args) -> int:
     return 0
 
 
+def cmd_sign_in_key(cfg, args) -> int:
+    """This host's key for a sealed Claude token (docs/app-host-integration.md 4a): made the first time, as the
+    account that runs it (DPAPI), and its fingerprint printed. The App shows the same fingerprint when it first pins
+    the key: compare them. Never the private half."""
+    from . import claudesignin
+
+    _, public = claudesignin.ensure_key(creds.Store(cfg.creds_dir))
+    print(f"sign-in key: {claudesignin.fingerprint(public)}")
+    return 0
+
+
 def cmd_pin(cfg, args) -> int:
     if not UUID_RE.fullmatch(args.coordinator_id or ""):
         print("pin: --coordinator-id must be a lower-case UUID")
@@ -780,6 +791,8 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--coordinator-id", required=True)
     s = sub.add_parser("probe")
     s.add_argument("--out")
+    sub.add_parser("sign-in-key", help="make this host's key for a sealed Claude token if it has none, and print its "
+                                       "fingerprint (the bootstrap runs it as the host's account)")
     fl = sub.add_parser("fleet", help="fleet.toml: what this host trusts, and entries for a PR")
     fsub = fl.add_subparsers(dest="fleet_cmd")
     s = fsub.add_parser("status")
@@ -833,6 +846,7 @@ def main(argv: list[str] | None = None) -> int:
                "run": cmd_run, "supervise": cmd_supervise, "panel": lambda c, a: panel.run(c),
                "fleet": cmd_fleet_entry if getattr(args, "fleet_cmd", None) == "entry" else cmd_fleet_status,
                "selftest": cmd_selftest, "update": cmd_update, "openbao": cmd_openbao,
+               "sign-in-key": cmd_sign_in_key,
                }[args.cmd]
     if args.cmd == "fleet" and args.fleet_cmd is None:
         args.refresh = False
