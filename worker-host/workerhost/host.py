@@ -24,6 +24,7 @@ from types import SimpleNamespace
 from . import cleanup, creds, fleet as fleet_mod, ghcp, launcher, prompt, resources, signing, urls, usage, winapi
 from . import hoststatus
 from . import commands as commands_mod
+from . import signin as signin_mod
 from . import engines as engines_mod
 from . import models as models_mod
 from . import openbao as openbao_mod
@@ -243,6 +244,7 @@ class Host:
         self.signers = Path(self.signers) if self.signers else signing.pinned_path()
         self.ssh_keygen = signing.find_ssh_keygen(cfg.ssh_keygen_exe)
         self.nonces = commands_mod.NonceStore(cfg.state_dir / "command-nonces.json")  # signed commands (stage D)
+        self.signins = signin_mod.SignIns(cfg.gh_exe, cfg.copilot_exe, self.log)     # signing in again (section 4a)
         self.fleet_sync = fleet_mod.FleetSync(cfg.fleet_mirror_dir, cfg.fleet_store_dir, cfg.fleet_remote(),
                                               cfg.git_exe, self.ssh_keygen, self.signers)
         self.fleet: fleet_mod.Fleet | None = self.fleet_sync.load_last_good()
@@ -788,14 +790,18 @@ class Host:
                 self.set_last_command(e.nonce, e.verb, "refused", e.reason)
             return True
         self.log("command", seq=m["seq"], verb=cmd.verb, nonce=cmd.nonce, signer=cmd.signer)
-        self.run_command(cmd.verb)
+        self.run_command(cmd.verb, cmd.nonce)
         self.set_last_command(cmd.nonce, cmd.verb, "done", None)
         return True
 
-    def run_command(self, verb: str) -> None:
+    def run_command(self, verb: str, nonce: str = "") -> None:
         """The fixed verbs, mapped to the existing control paths. A remote drain leaves the host running and paused
-        (unlike a local drain, which stops it), so the App can resume it."""
+        (unlike a local drain, which stops it), so the App can resume it. A sign-in starts in the background, as this
+        host's own account; its code and outcome follow in the status's sign_in (section 4a)."""
         d = self.st.data
+        if verb in ("sign-in-gh", "sign-in-copilot"):
+            self.signins.start(verb.removeprefix("sign-in-"), nonce, time.time())
+            return
         if verb == "pause":
             d["paused"] = True
         elif verb == "resume":
@@ -1527,6 +1533,7 @@ class Host:
                                              "disk_free_gb": s.free_disk / resources.GB},
             "bus_state": self.bus_state, "channel": self.cfg.channel, "channel_state": self.channel_state,
             "model": self.default_model(), "ghcp_ok": self.ghcp_ok, "tasks": tasks, "pwsh": self.pwsh_version(),
+            "sign_in": self.signins.status(),
         }
 
     def pwsh_version(self) -> str | None:
@@ -2284,6 +2291,7 @@ class Host:
         self.supervise()
         self.flush_outbox()
         self.heartbeat_if_due()
+        self.signins.poll(time.time())
         self.status_if_changed()
         self.push_status_if_due()
         self.track_problem()

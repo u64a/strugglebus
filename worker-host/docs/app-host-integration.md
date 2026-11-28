@@ -632,11 +632,19 @@ names a URL, path or account.
    form (8 letters and digits, a hyphen in the middle). Anything else ends the attempt (`sign-in-failed`,
    `reason=unexpected-prompt`).
 2. **It puts them in its status** as `sign_in` (admin-only, §1a), for this attempt only:
-   `{"nonce": "<the command's nonce>", "tool": "gh" | "copilot", "code": "ABCD-1234", "expires_at": "..."}`.
+   `{"nonce": "<the command's nonce>", "tool": "gh" | "copilot", "state": "code", "code": "ABCD-1234",
+   "expires_at": "..."}`.
    - The nonce ties the code to the command that asked for it.
    - `expires_at` is GitHub's own expiry, capped at 15 minutes.
-   - It's cleared when the sign-in completes, fails or expires. It's **never** in a history sample (§1a), an event
-     (§1b) or a log line.
+   - **`state`** (as built, `workerhost/signin.py`): `starting`, then `code`, then `done` or `failed` (with
+     `reason`: `unexpected-prompt`, `no-code`, `expired`, `tool-exit`, `setup-git`, `replaced` or `not-started`).
+     `code` and `expires_at` are present only in state `code`.
+   - The code is cleared when the sign-in completes, fails or expires. It's **never** in a history sample (§1a), an
+     event (§1b), a log line, or the v1 status and heartbeat.
+   - **The field is absent unless a sign-in was asked for,** like `pwsh` "may be absent". The bus must accept it (and
+     the four event types below) before an App can send a sign-in command: a bus that doesn't know an event type
+     refuses the whole batch.
+   - **One sign-in at a time:** a new command replaces one still running (`replaced`).
 3. **The App shows a code only for a command this device sent,** under 15 minutes old, with the same nonce. Any other
    code a host reports is dropped and recorded in the App's log, never shown. Otherwise a compromised host could push
    codes at the operator: device-code phishing.
@@ -734,10 +742,25 @@ security events, through bus-dev's existing App audit path. None carries a code,
 
 ### To prove first, on the test VM (`host-sbtest-host`)
 
-1. `gh auth login --web` and `copilot login --device-code` run headless under the batch logon. Neither may wait for
-   Enter or a TTY, and the code and URL must be readable from their output.
+1. **Proven (28 Nov, #humans 29169):** `gh auth login --web` and `copilot login --device-code` run headless under the
+   batch logon, with stdin closed and no TTY. gh prints `One-time code (XXXX-XXXX) copied to clipboard` and the URL
+   on stderr; copilot prints `visit https://github.com/login/device and enter code XXXX-XXXX` on stdout. Both then
+   wait for the approval.
 2. `CLAUDE_CODE_OAUTH_TOKEN` alone is enough for Claude Code in a worker, with no `/login` state in the profile.
-3. A real `sign-in-claude` document, with a token of realistic length, stays under 1 KB.
+   **Not yet:** it needs a real `claude setup-token` from the operator.
+3. **Proven:** a `sign-in-claude` document is 461 bytes with a 108-character token, and 529 with 160 (the longest
+   host name), under §4's 1 KB.
+
+### Built so far
+
+- **The device-code sign-ins** (gh and Copilot): the verbs `sign-in-gh` and `sign-in-copilot`, `workerhost/signin.py`
+  (the strict parser and the attempt), the `sign_in` status field, and the four event types `sign-in-requested`,
+  `sign-in-code-issued`, `sign-in-done` and `sign-in-failed`.
+- **Next, the Claude token:** the host's code is standard-library Python only, and it already calls Windows itself
+  for DPAPI through `ctypes`. X25519 and AES-GCM aren't in Python's standard library, so the host will use Windows'
+  own CNG (`bcrypt.dll`: `BCRYPT_ECDH` on curve25519, and AES in GCM mode) the same way. That adds no package and
+  hand-written crypto is never used. HKDF-SHA256 is `hmac`, which is standard. The App can use .NET's
+  `ECDiffieHellman` (curve25519 on Windows CNG) and `AesGcm`.
 
 If any of these fails, this section changes before anything is built.
 

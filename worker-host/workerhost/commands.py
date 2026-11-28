@@ -29,7 +29,9 @@ from .state import atomic_write_json
 
 NS_COMMAND = "strugglebus-host-command"
 METADATA_KEY = "sb_host_command"
-VERBS = ("pause", "resume", "drain", "update")
+# sign-in-gh / sign-in-copilot (section 4a): the host signs itself in with a device code shown in the App. Like the
+# others they carry no field of their own: the tool's command line is fixed in workerhost/signin.py.
+VERBS = ("pause", "resume", "drain", "update", "sign-in-gh", "sign-in-copilot")
 FIELDS = frozenset({"v", "type", "host", "verb", "nonce", "issued_at", "expires_at"})
 MAX_DOC, MAX_SIG = 1024, 4096
 MAX_LIFETIME, MAX_AHEAD, NONCE_DAYS = 600, 120, 1

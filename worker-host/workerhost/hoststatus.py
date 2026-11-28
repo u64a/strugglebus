@@ -43,7 +43,8 @@ WARNINGS = ("not-dedicated", "isolation-weak")
 TASK_OUTCOMES = ("finished", "failed", "timed-out", "interrupted", "refused", "yielded", "cancelled")
 # v2 fields the bus returns to an admin (operator grant) only (u64-security, #humans 28828; bus-dev 28832): the
 # Windows account and its weaknesses map the weakest machine, and a host's channel may be private.
-ADMIN_ONLY = (("account",), ("dedicated",), ("warnings",), ("bus", "channel"), ("bus", "channel_state"))
+ADMIN_ONLY = (("account",), ("dedicated",), ("warnings",), ("bus", "channel"), ("bus", "channel_state"),
+              ("sign_in",))  # section 4a: a one-time code, for the person who asked only
 
 
 @dataclass
@@ -89,6 +90,7 @@ class Facts:
     ghcp_ok: bool | None = None                        # the last Copilot CLI update worked (None: not tried)
     tasks: dict = field(default_factory=dict)          # outcome -> count since started_at (TASK_OUTCOMES)
     pwsh: str | None = None                            # PowerShell 7's version (a zip install Wazuh can't see)
+    sign_in: dict | None = None                        # section 4a: the sign-in in progress or just ended (signin.py)
 
 
 def state_of(f: Facts) -> str:
@@ -192,7 +194,27 @@ def build_v2(f: Facts) -> dict:
     # pwsh: added after v2 was agreed (u64-security, #humans 28927; bus-dev 28936): the bus accepts it with or
     # without, so hosts and buses can be updated in either order. Not in the history sample.
     s["pwsh"] = f.pwsh if f.pwsh and PWSH_RE.fullmatch(f.pwsh) else None
+    # sign_in (section 4a): admin-only, and ABSENT unless a sign-in was asked for, so a bus that doesn't know it yet
+    # sees nothing new until an App sends a sign-in command. Never in the v1 status, the heartbeat or a history sample.
+    if f.sign_in:
+        s["sign_in"] = sign_in_field(f.sign_in)
     return s
+
+
+SIGN_IN_STATES = ("starting", "code", "done", "failed")
+SIGN_IN_CODE_RE = re.compile(r"[A-Z0-9]{4}-[A-Z0-9]{4}")
+
+
+def sign_in_field(raw: dict) -> dict:
+    """The status's sign_in, built from known keys only: a code only in state "code" and only in GitHub's form."""
+    out = {"nonce": str(raw.get("nonce", "")), "tool": str(raw.get("tool", "")), "state": raw.get("state")}
+    if out["state"] not in SIGN_IN_STATES:
+        out["state"] = "failed"
+    if out["state"] == "code" and SIGN_IN_CODE_RE.fullmatch(str(raw.get("code", ""))):
+        out["code"], out["expires_at"] = raw["code"], str(raw.get("expires_at", ""))
+    if out["state"] == "failed":
+        out["reason"] = raw.get("reason")
+    return out
 
 
 def for_device(snapshot: dict) -> dict:
@@ -235,4 +257,4 @@ def change_key(status: dict) -> tuple:
     return (status["state"], tuple(status["warnings"]), (status["problem"] or {}).get("code"),
             (status["update"] or {}).get("version"), json.dumps(status["last_command"], sort_keys=True),
             tuple((e["name"], e["signed_in"]) for e in status["engines"]), status["fleet"].get("serial"),
-            status["release"]["source"])
+            status["release"]["source"], json.dumps(status.get("sign_in"), sort_keys=True))

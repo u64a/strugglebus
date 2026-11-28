@@ -61,6 +61,12 @@ TYPES = {
     "pressure": (),
     "problem-raised": ("code",),
     "problem-cleared": ("code",),
+    # Signing in again (section 4a): the tool in `code`; never the one-time code itself. The bus must know these types
+    # before an App sends a sign-in command (an unknown type makes it refuse the whole batch).
+    "sign-in-requested": ("code",),
+    "sign-in-code-issued": ("code",),
+    "sign-in-done": ("code",),
+    "sign-in-failed": ("reason",),
 }
 # Dropped last when the queue is full: what an operator most needs to see afterwards.
 KEEP_LONGEST = frozenset({"update-failed", "update-rolled-back", "fatal", "restarted-after-crash",
@@ -272,6 +278,10 @@ SIMPLE = {
     "pressure": ("pressure", {}),
     "problem-raised": ("problem-raised", {"code": "code"}),
     "problem-cleared": ("problem-cleared", {"code": "code"}),
+    "sign-in-requested": ("sign-in-requested", {"code": "tool"}),
+    "sign-in-code-issued": ("sign-in-code-issued", {"code": "tool"}),
+    "sign-in-done": ("sign-in-done", {"code": "tool"}),
+    "sign-in-failed": ("sign-in-failed", {"reason": "reason"}),
 }
 
 
