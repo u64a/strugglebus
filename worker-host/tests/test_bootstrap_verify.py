@@ -511,10 +511,11 @@ def test_the_winget_root_must_be_safe_before_a_package_inherits_from_it(owner, a
 @pytest.mark.parametrize("shell", SHELLS)
 def test_the_winget_root_check_reads_the_acl_in_both_powershells(shell, tmp_path):
     """Under PowerShell 7 the check died calling DirectoryInfo.GetAccessControl, which .NET Core doesn't have (the
-    DevBox, 28 Nov). A folder the test user owns must be refused by the check itself, in both shells."""
+    DevBox, 28 Nov). A test's temporary folder must be refused BY THE CHECK, in both shells: its reason depends on the
+    machine (owned by the test user here; OWNER RIGHTS may write on GitHub's runner, whose user is an administrator)."""
     got = run(f"try {{ Assert-WingetRootSafe '{tmp_path}'; ConvertTo-Json @('passed') }} "
               "catch { ConvertTo-Json @($_.Exception.Message) }", shell)
-    assert "is not safe to inherit from" in got[0] and "owned by" in got[0], got
+    assert "is not safe to inherit from" in got[0] and ("owned by" in got[0] or "may write" in got[0]), got
 
 
 @pytest.mark.parametrize("shell", SHELLS)
