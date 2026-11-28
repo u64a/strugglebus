@@ -13,6 +13,8 @@ contract is one pull request that every side's tests have to pass.
 | `host-events/` | host events for the bus's event log: `batch-good.json` (stored) and one batch for each refusal (`batch-unknown-type`, `batch-unknown-field`, `batch-free-text`, `batch-wrong-agent`, `batch-21-events`), with `expected.json` giving each status and reason. Spec: `worker-host/docs/app-host-integration.md` 1b | the worker host (`worker-host/workerhost/hostevents.py`) | the bus (checks and stores them) |
 | `fleet/` | the signed fleet document: a good one, one changed byte, one signed in the wrong namespace, the test signer, and `expected.json`. **`fleet/compose/`:** the App's step 10, adding one host: the exact bytes it must write, each refusal (an unknown key, a duplicate agent, the host already listed, a serial line missing or twice, a host reporting a higher serial), and the signature flags it requires (0x05) | the Windows App (composes and publishes) | the worker host (`worker-host/workerhost/fleet.py`; the reference is `worker-host/tests/test_fleet_compose_vectors.py`) |
 
+| `sealed-signin/` | `vector.json`: a Claude setup token sealed to a host (X25519, HKDF-SHA256, AES-256-GCM), every input fixed, so the App's sealing and the host's opening make and accept the exact `epk` and `ct`. Spec: `worker-host/docs/app-host-integration.md` 4a | the Windows App (seals) | the worker host (`worker-host/workerhost/sealed.py`, opens) |
+
 The worker host's tests pin every file here by SHA-256 (`worker-host/tests/vectors.py`). The signatures were made
 with a throwaway RSA-2048 key, as a Windows Hello key would make them, and its private half was discarded.
 
