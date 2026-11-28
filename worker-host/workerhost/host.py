@@ -1615,12 +1615,16 @@ class Host:
         if call is None or now < self.push_after or now - self.push_at < STATUS_PUSH_MIN_GAP:
             return
         snap = hoststatus.build_v2(self.status_facts())
-        key = hoststatus.change_key(snap)
+        # A bus that doesn't know the newer admin-only fields yet refuses the whole snapshot (400). Then they're left
+        # out and offered again hourly, so hosts and buses can be updated in either order (as `pwsh` was).
+        newer_off = now < getattr(self, "newer_fields_off_until", 0.0)
+        sent = hoststatus.without_newer(snap) if newer_off else snap
+        key = hoststatus.change_key(sent)
         if key == self.push_key and now - self.push_at < STATUS_PUSH_SECONDS:
             return
         self.push_at = now
         try:
-            code, _ = call("POST", STATUS_PUSH_PATH, body=hoststatus.body(snap))
+            code, _ = call("POST", STATUS_PUSH_PATH, body=hoststatus.body(sent))
         except (BusError, OSError, ValueError) as e:  # the bus unreachable (shown by bus_state anyway), or over the cap
             self.log("status-push-failed", error=type(e).__name__)
             return
@@ -1631,6 +1635,11 @@ class Host:
                 self.push_refused = None
         elif code == 429:
             self.push_after = now + 60
+        elif code == 400 and not newer_off and hoststatus.has_newer(snap):
+            # Not a refusal of the host: the next push (after the bus's 10 s gap) goes without the newer fields.
+            if getattr(self, "newer_fields_off_until", 0.0) == 0.0:
+                self.log("status-push-without-newer-fields")
+            self.newer_fields_off_until = now + STATUS_PUSH_BACKOFF
         else:
             if self.push_refused != code:
                 self.log("status-push-refused", status=code)
