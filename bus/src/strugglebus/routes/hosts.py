@@ -15,6 +15,7 @@ from strugglebus.errors import (
     StorageError,
 )
 from strugglebus.errors import ConfigurationError
+from strugglebus import fleet_offers
 from strugglebus.host_status import NotAHostError, RefusedError, TooLargeError, TooSoonError
 from strugglebus.models import Agent
 from strugglebus.routes.dependencies import _secret_response_headers, require_agent
@@ -70,7 +71,61 @@ def _report_refusal(error: Exception) -> HTTPException:
     return HTTPException(status_code=503, detail=UNAVAILABLE)
 
 
+FLEET_HELD = "fleet-held"
+
+
+def _offer_refusal(error: Exception) -> HTTPException:
+    """Why a host's fleet offer was not kept, in fixed words a host can act on."""
+    if isinstance(error, fleet_offers.FleetHeldError):
+        return HTTPException(status_code=409, detail=FLEET_HELD)
+    if isinstance(error, fleet_offers.TooLargeError):
+        return HTTPException(status_code=413, detail=TOO_LARGE)
+    if isinstance(error, fleet_offers.NotAHostError):
+        return HTTPException(status_code=403, detail=NOT_A_HOST)
+    if isinstance(error, fleet_offers.TooSoonError):
+        return HTTPException(
+            status_code=429, detail=TOO_SOON, headers={"Retry-After": str(error.retry_after)},
+        )
+    if isinstance(error, fleet_offers.RefusedError):
+        return HTTPException(status_code=400, detail=error.reason)
+    return HTTPException(status_code=503, detail=UNAVAILABLE)
+
+
 def add_host_routes(router: APIRouter) -> None:
+    @router.post(
+        "/api/hosts/fleet-offer",
+        status_code=status.HTTP_204_NO_CONTENT,
+        responses={
+            400: {"description": "The offer does not fit the contract; the detail says how"},
+            403: {"description": "not-a-host"},
+            409: {"description": "fleet-held: the bus already holds a fleet, stop offering"},
+            413: {"description": "too-large"},
+            429: {"description": "too-soon"},
+            503: {"description": "unavailable"},
+        },
+    )
+    async def offer_fleet(
+        request: Request,
+        agent: Annotated[Agent, Depends(require_agent)],
+    ) -> Response:
+        """A worker host offers the fleet it already accepts, while the bus holds none.
+
+        The body is ``{"serial", "fleet", "sig"}``: the serial, base64 of the
+        exact accepted bytes, and the signature file's text. Only an agent the
+        bus has marked as a host may offer, at most once a minute. The bus
+        checks the shape and nothing else: an administrator's App verifies the
+        signature before it publishes anything.
+        """
+
+        body = await request.body()
+        try:
+            await asyncio.to_thread(
+                request.app.state.fleet_offer_service.offer, agent.id, agent.name, body,
+            )
+        except (DomainValidationError, StorageError) as error:
+            raise _offer_refusal(error) from None
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
+
     @router.post(
         "/api/hosts/status",
         response_model=HostReportResponse,

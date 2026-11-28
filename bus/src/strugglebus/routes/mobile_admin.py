@@ -45,6 +45,8 @@ from strugglebus.routes.schemas import (
     MobileAdminControlResponse,
     MobileAgentControlRequest,
     MobileFullLogRequest,
+    MobileFleetOffer,
+    MobileFleetOffersResponse,
     MobileGrantRequest,
     MobileHostHistoryResponse,
     MobileHostMarkRequest,
@@ -350,6 +352,36 @@ def add_mobile_admin_routes(router: APIRouter) -> None:
             return await asyncio.to_thread(_hosts, request, admin=True)
         except StorageError as error:
             raise HTTPException(status_code=503, detail=str(error)) from None
+
+    @router.post("/api/mobile/admin/hosts/fleet-offers", response_model=MobileFleetOffersResponse)
+    async def mobile_admin_fleet_offers(
+        request: Request, payload: MobileGrantRequest, response: Response,
+    ) -> MobileFleetOffersResponse:
+        """The fleets worker hosts say they already accept, for an administrator.
+
+        Offered only while the bus holds no fleet. Nothing here is verified:
+        the App checks each signature against the signer keys it holds, and
+        publishes one unchanged through the site-document route. A read, sent
+        as a POST so the grant travels in the body.
+        """
+
+        identity = _identity(request)
+        await _require_write_grant(request, identity, payload.grant_secret)
+        _secret_response_headers(response)
+        try:
+            held, offers = await asyncio.to_thread(request.app.state.fleet_offer_service.offers)
+        except StorageError as error:
+            raise HTTPException(status_code=503, detail=str(error)) from None
+        return MobileFleetOffersResponse(
+            held=held,
+            offers=[
+                MobileFleetOffer(
+                    agent_id=offer.agent_id, agent=offer.agent, serial=offer.serial,
+                    fleet=offer.fleet, sig=offer.sig, received_at=offer.received_at,
+                )
+                for offer in offers
+            ],
+        )
 
     @router.get(
         "/api/mobile/hosts/{agent_id}/status/history",

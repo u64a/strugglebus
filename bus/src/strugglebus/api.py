@@ -111,7 +111,7 @@ _AUDITED_CAPABILITIES = frozenset({
 })
 _AUDITED_REFUSALS = frozenset({401, 403, 429})
 # What a worker host reports about itself. Each report gets an audit line, stored or refused.
-_HOST_REPORT_TEMPLATES = frozenset({"/api/hosts/status", "/api/hosts/events"})
+_HOST_REPORT_TEMPLATES = frozenset({"/api/hosts/status", "/api/hosts/events", "/api/hosts/fleet-offer"})
 
 # The plane a request belongs to decides which gates apply to it.
 _PLANE_REST = "rest"

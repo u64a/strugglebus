@@ -500,6 +500,25 @@ class MobileHostHistoryResponse(StrictModel):
     samples: list[dict[str, Any]]
 
 
+class MobileFleetOffer(StrictModel):
+    """The fleet one host says it accepts. Unverified: check the signature before using it."""
+
+    agent_id: str
+    agent: str
+    serial: int
+    #: Base64 of the exact bytes the host accepted.
+    fleet: str
+    sig: str
+    received_at: str
+
+
+class MobileFleetOffersResponse(StrictModel):
+    """``held`` is whether the bus already holds a fleet; then there are no offers."""
+
+    held: bool
+    offers: list[MobileFleetOffer]
+
+
 class MobileGrantRequest(StrictModel):
     """A read that only an administrator may make: the device's grant, and nothing else."""
 

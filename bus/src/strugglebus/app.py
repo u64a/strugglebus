@@ -44,6 +44,7 @@ from strugglebus import __version__
 from strugglebus.bus_events import BusEventLog
 from strugglebus.migrations import LATEST_SCHEMA_VERSION
 from strugglebus.update_events import UpdateEventRecorder
+from strugglebus.fleet_offers import FleetOfferService
 from strugglebus.host_status import HostStatusService
 from strugglebus.site_documents import SiteDocumentService
 from strugglebus.satellite import SatelliteService, SiteAuthority
@@ -1210,6 +1211,9 @@ def create_app(
     )
     application.state.host_status_service = HostStatusService(
         resolved_agent_service.store, clock=utc_now,
+    )
+    application.state.fleet_offer_service = FleetOfferService(
+        resolved_agent_service.store, application.state.site_document_service, clock=utc_now,
     )
     application.state.event_log = BusEventLog(resolved_agent_service.store, clock=utc_now)
     application.state.access_freeze_service = resolved_access_freeze_service

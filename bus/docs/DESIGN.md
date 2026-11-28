@@ -3172,3 +3172,43 @@ morning. `bus_events` keeps an event for thirty days.
 
 This change stores and serves events and takes them from hosts. The bus's own
 update and security events are recorded by the change after it.
+
+## 26. Decision: hosts offer the fleet they accept, in memory only
+
+A site that kept its fleet in a repository has hosts running a signed fleet the bus has never
+held. The operator should be able to take that fleet over in the App without finding a file.
+
+### What happens
+
+- A marked host that reads its fleet from the bus, on finding the bus holds none, posts what it
+  already accepts to `POST /api/hosts/fleet-offer`: `{"serial", "fleet", "sig"}`, the serial,
+  base64 of the exact accepted bytes, and the signature file's text.
+- An administrator's App reads `POST /api/mobile/admin/hosts/fleet-offers` (the grant in the
+  body), verifies an offer against the signer keys it holds, and publishes it unchanged through
+  the site-document route. Nothing is re-signed.
+
+### The bus is a carrier, not a judge
+
+The bus checks who sent an offer (a marked host), its shape and its size: exact keys, a serial of
+1 or more, a fleet of at most 64 KB once decoded, a signature of at most 4,200 ASCII characters
+that begins as an SSH signature file does, the whole request at most 100 KB. It does **not**
+verify the signature and does **not** compare the serial with the bytes. A host or a bus that
+lied would produce something the App refuses, because the signature carries the trust. An older
+fleet that is validly signed would verify, so the App also requires an offer's signed serial to
+equal the highest fleet serial any host reports.
+
+### Why not a table
+
+Offers are kept in memory, one per host, at most 64 hosts. They are short-lived by design: a
+host offers again on its next fleet refresh, so a restart loses nothing that does not return,
+and every stored offer is dropped the moment the bus holds a fleet, after which the route
+answers 409 `fleet-held` and hosts stop. A table would have meant a schema change, a migration
+and a rollback path for data nobody needs to keep. The bus runs as one process, so memory is
+shared by every request.
+
+### Limits and the audit line
+
+One offer a minute per host (429 `too-soon` with `Retry-After`). Refusals are fixed words:
+`not-a-host`, `too-large`, `bad-json`, `bad-offer`, `missing-field:<name>`, `unknown-field`. Every
+post, kept or refused, writes one request line to the audit feed with the agent, the outcome and
+the declared size, as a status report does; the offer's contents are never logged.
