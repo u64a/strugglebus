@@ -122,13 +122,14 @@ def claude_signed_in(home: Path | None = None) -> bool:
     return (Path(home or Path.home()) / ".claude" / ".credentials.json").is_file()
 
 
-def available(copilot_exe: str, eng: Engines, home: Path | None = None) -> list[str]:
+def available(copilot_exe: str, eng: Engines, home: Path | None = None, token: bool = False) -> list[str]:
     """The engines a task may use here now. GHCP: its CLI is installed (whether the licence is current cannot be
-    told without spending a request). Claude: configured, installed and signed in."""
+    told without spending a request). Claude: configured, installed and signed in, by its own /login or by a token
+    the App sealed to this host (`token`, docs/app-host-integration.md 4a)."""
     out = []
     if resolve(copilot_exe):
         out.append("ghcp")
-    if eng.claude is not None and resolve(eng.claude.exe) and claude_signed_in(home):
+    if eng.claude is not None and resolve(eng.claude.exe) and (token or claude_signed_in(home)):
         out.append("claude")
     return out
 

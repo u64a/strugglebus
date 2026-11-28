@@ -3,7 +3,12 @@
   <home>\\creds\\spn.bin           the SPN credential, from `wh enrol` (hidden prompt)
   <home>\\creds\\<agent>.bin       a bus identity record {agent_id, agent_name, secret, ...}
 
-Nothing secret is ever printed, logged, put on a command line or in an environment variable.
+  <home>\\creds\\signin-key.bin    the host's X25519 key for a sealed Claude token (claudesignin.py)
+  <home>\\creds\\claude-token.bin  that token and the date it arrived
+
+Nothing secret is ever printed, logged or put on a command line. Two go in a worker's environment, deliberately: a
+worker's own bus token with OpenBao (SB_BUS_TOKEN), and the Claude token for Claude Code workers only
+(CLAUDE_CODE_OAUTH_TOKEN; docs/app-host-integration.md 4a, accepted by u64-security in #humans 29049).
 Honest limit: DPAPI current-user does not protect against processes running as the same user.
 """
 from __future__ import annotations

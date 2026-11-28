@@ -756,7 +756,21 @@ security events, through bus-dev's existing App audit path. None carries a code,
 - **The device-code sign-ins** (gh and Copilot): the verbs `sign-in-gh` and `sign-in-copilot`, `workerhost/signin.py`
   (the strict parser and the attempt), the `sign_in` status field, and the four event types `sign-in-requested`,
   `sign-in-code-issued`, `sign-in-done` and `sign-in-failed`.
-- **Next, the Claude token:** the host's code is standard-library Python only, and it already calls Windows itself
+- **The Claude token (B2):**
+  - **`workerhost/claudesignin.py`:** the host's key and the token, both kept in **this account's own DPAPI store**,
+    never OpenBao, even on a host that uses OpenBao for its identities.
+  - **The verb:** `sign-in-claude`, whose `epk` and `ct` are required and checked as base64; nothing else.
+  - **The outcome:** the status's `sign_in` (tool `claude`) reads `done`, or `failed` with `decrypt`.
+  - **The status:** `sign_in_key` and `claude_token_since`, admin-only, and the warning `claude-token-old`.
+  - **The event:** `claude-token-stored`.
+  - **The workers:** Claude Code workers get `CLAUDE_CODE_OAUTH_TOKEN`, and only they; any inherited copy is dropped
+    for every worker. Claude Code counts as signed in when a token is stored.
+  - **The command:** `wh sign-in-key` makes the key as the account and prints its fingerprint. The bootstrap runs it
+    after enrolment and before the logon denials.
+  - **Shipping order:** `sign_in_key` is sent routinely, and the bus's status schema refuses an unknown field, so
+    **a host release carrying B2 waits for a bus release that accepts `sign_in`, `sign_in_key` and
+    `claude_token_since`** (asked of bus-dev, #humans 29187).
+- **The crypto (B1):** the host's code is standard-library Python only, and it already calls Windows itself
   for DPAPI through `ctypes`. X25519 and AES-GCM aren't in Python's standard library, so the host will use Windows'
   own CNG (`bcrypt.dll`: `BCRYPT_ECDH` on curve25519, and AES in GCM mode) the same way. That adds no package and
   hand-written crypto is never used. HKDF-SHA256 is `hmac`, which is standard.

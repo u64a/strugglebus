@@ -90,6 +90,7 @@ HOST_TYPES: dict[str, tuple[tuple[str, ...], str]] = {
     "sign-in-code-issued": (("code",), "info"),
     "sign-in-done": (("code",), "info"),
     "sign-in-failed": (("reason",), "warning"),
+    "claude-token-stored": ((), "info"),
 }
 
 #: The bus's own event types, by source: the fields each may carry and its level. ``reason`` is

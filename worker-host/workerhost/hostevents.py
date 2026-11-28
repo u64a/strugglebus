@@ -67,6 +67,7 @@ TYPES = {
     "sign-in-code-issued": ("code",),
     "sign-in-done": ("code",),
     "sign-in-failed": ("reason",),
+    "claude-token-stored": (),  # a sealed Claude token was opened and kept (never the token)
 }
 # Dropped last when the queue is full: what an operator most needs to see afterwards.
 KEEP_LONGEST = frozenset({"update-failed", "update-rolled-back", "fatal", "restarted-after-crash",
@@ -282,6 +283,7 @@ SIMPLE = {
     "sign-in-code-issued": ("sign-in-code-issued", {"code": "tool"}),
     "sign-in-done": ("sign-in-done", {"code": "tool"}),
     "sign-in-failed": ("sign-in-failed", {"reason": "reason"}),
+    "claude-token-stored": ("claude-token-stored", {}),
 }
 
 

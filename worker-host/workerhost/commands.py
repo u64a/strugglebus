@@ -31,8 +31,12 @@ NS_COMMAND = "strugglebus-host-command"
 METADATA_KEY = "sb_host_command"
 # sign-in-gh / sign-in-copilot (section 4a): the host signs itself in with a device code shown in the App. Like the
 # others they carry no field of their own: the tool's command line is fixed in workerhost/signin.py.
-VERBS = ("pause", "resume", "drain", "update", "sign-in-gh", "sign-in-copilot")
+VERBS = ("pause", "resume", "drain", "update", "sign-in-gh", "sign-in-copilot", "sign-in-claude")
 FIELDS = frozenset({"v", "type", "host", "verb", "nonce", "issued_at", "expires_at"})
+# The one verb with fields of its own: both required, nothing else (section 4a). epk: base64 of 32 bytes; ct: base64
+# of IV + ciphertext + tag (sealed.py checks them precisely).
+VERB_FIELDS = {"sign-in-claude": frozenset({"epk", "ct"})}
+B64_RE = re.compile(r"[A-Za-z0-9+/]{4,1024}={0,2}")
 MAX_DOC, MAX_SIG = 1024, 4096
 MAX_LIFETIME, MAX_AHEAD, NONCE_DAYS = 600, 120, 1
 NONCE_RE = re.compile(r"[0-9a-f]{32}")
@@ -54,6 +58,7 @@ class Command:
     issued_at: float
     expires_at: float
     signer: str  # the signing key's fingerprint
+    extra: tuple[tuple[str, str], ...] = ()  # the verb's own fields (VERB_FIELDS), checked
 
 
 def carried(metadata) -> tuple[bytes, bytes] | None:
@@ -120,11 +125,14 @@ def _content(obj: dict, host: str, now: float, nonces: "NonceStore") -> Command:
         raise Refused("bad-document", None, verb)
     if nonces.seen(nonce, now):
         raise Refused("replayed", nonce, verb)
-    if set(obj) - FIELDS:
+    own = VERB_FIELDS.get(verb or "", frozenset())
+    if set(obj) - FIELDS - own:
         raise Refused("unknown-field", nonce, verb)
     if verb not in VERBS:
         raise Refused("bad-verb", nonce, None)
-    return Command(verb, nonce, issued, expires, "")
+    if any(not isinstance(obj.get(k), str) or not B64_RE.fullmatch(obj[k]) for k in own):
+        raise Refused("bad-document", nonce, verb)
+    return Command(verb, nonce, issued, expires, "", tuple(sorted((k, obj[k]) for k in own)))
 
 
 def check(doc: bytes, sig: bytes, *, host: str, now: float, nonces: "NonceStore", verify) -> Command:
@@ -135,7 +143,7 @@ def check(doc: bytes, sig: bytes, *, host: str, now: float, nonces: "NonceStore"
         raise Refused("bad-signature")
     cmd = _content(parse(doc), host, now, nonces)
     nonces.add(cmd.nonce, now)
-    return Command(cmd.verb, cmd.nonce, cmd.issued_at, cmd.expires_at, v.fingerprint)
+    return Command(cmd.verb, cmd.nonce, cmd.issued_at, cmd.expires_at, v.fingerprint, cmd.extra)
 
 
 def verifier(signers: Path, ssh_keygen: str | None, tmp: Path):

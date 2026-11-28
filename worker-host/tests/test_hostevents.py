@@ -71,8 +71,8 @@ def test_the_reference_check_gives_each_vector_its_expected_answer(name):
 
 
 def test_every_type_and_field_is_in_the_fixed_lists():
-    # 22 agreed in 1b, plus the 4 of section 4a's device-code sign-in (bus-dev adds them before the App sends one).
-    assert len(hostevents.TYPES) == 26
+    # 22 agreed in 1b, plus section 4a's 4 device-code sign-in types and claude-token-stored.
+    assert len(hostevents.TYPES) == 27
     assert all(f in hostevents.FIELDS for fields in hostevents.TYPES.values() for f in fields)
 
 

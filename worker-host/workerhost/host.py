@@ -17,7 +17,7 @@ import sys
 import time
 import uuid
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -25,6 +25,8 @@ from . import cleanup, creds, fleet as fleet_mod, ghcp, launcher, prompt, resour
 from . import hoststatus
 from . import commands as commands_mod
 from . import signin as signin_mod
+from . import claudesignin as claudesignin_mod
+from . import sealed as sealed_mod
 from . import engines as engines_mod
 from . import models as models_mod
 from . import openbao as openbao_mod
@@ -513,7 +515,8 @@ class Host:
         cached = getattr(self, "_engines_cache", None)
         if cached is None or now - cached[0] > 60:
             cached = (now, engines_mod.available(self.cfg.copilot_exe,
-                                                 engines_mod.Engines(self.cfg.default_engine, self.cfg.claude)))
+                                                 engines_mod.Engines(self.cfg.default_engine, self.cfg.claude),
+                                                 token=self.signin_store.has(claudesignin_mod.TOKEN_NAME)))
             self._engines_cache = cached
         return list(cached[1])
 
@@ -790,17 +793,20 @@ class Host:
                 self.set_last_command(e.nonce, e.verb, "refused", e.reason)
             return True
         self.log("command", seq=m["seq"], verb=cmd.verb, nonce=cmd.nonce, signer=cmd.signer)
-        self.run_command(cmd.verb, cmd.nonce)
+        self.run_command(cmd.verb, cmd.nonce, dict(cmd.extra))
         self.set_last_command(cmd.nonce, cmd.verb, "done", None)
         return True
 
-    def run_command(self, verb: str, nonce: str = "") -> None:
+    def run_command(self, verb: str, nonce: str = "", extra: dict | None = None) -> None:
         """The fixed verbs, mapped to the existing control paths. A remote drain leaves the host running and paused
         (unlike a local drain, which stops it), so the App can resume it. A sign-in starts in the background, as this
         host's own account; its code and outcome follow in the status's sign_in (section 4a)."""
         d = self.st.data
         if verb in ("sign-in-gh", "sign-in-copilot"):
             self.signins.start(verb.removeprefix("sign-in-"), nonce, time.time())
+            return
+        if verb == "sign-in-claude":
+            self.claude_sign_in(nonce, extra or {})
             return
         if verb == "pause":
             d["paused"] = True
@@ -816,6 +822,25 @@ class Host:
             self.update_now = True
             self.update_check(announce=True)
         self.st.save()
+
+    @property
+    def signin_store(self) -> creds.Store:
+        """The sealed Claude token's key and the token: always this account's own DPAPI store, never OpenBao (4a)."""
+        return creds.Store(self.cfg.creds_dir)
+
+    def claude_sign_in(self, nonce: str, fields: dict) -> None:
+        """sign-in-claude (section 4a): open the token the App sealed to this host's key for this command, and keep it.
+        A token that won't open (another key, changed bytes, another host or command) is sign-in-failed `decrypt`,
+        and the App says the host's key may have changed; never a silent failure. The token is never logged."""
+        try:
+            claudesignin_mod.receive(self.signin_store, fields.get("epk", ""), fields.get("ct", ""),
+                                     self.cfg.host_agent, nonce, date.today())
+        except sealed_mod.SealError:
+            self.signins.record("claude", nonce, time.time(), ok=False, reason="decrypt")
+            return
+        self.log("claude-token-stored")
+        self._engines_cache = None  # Claude Code is usable from the next check, not in a minute
+        self.signins.record("claude", nonce, time.time(), ok=True)
 
     def set_last_command(self, nonce: str | None, verb: str | None, result: str, reason: str | None) -> None:
         self.st.data["last_command"] = {"nonce": nonce, "verb": verb, "result": result, "reason": reason}
@@ -1142,6 +1167,9 @@ class Host:
                                   notes_name=own_name if agent != own_name else "")
         if plan.claude:
             env.update(engines_mod.CLAUDE_ENV)
+            sealed_token = claudesignin_mod.token(self.signin_store)
+            if sealed_token:  # Claude Code workers only (4a); launcher.worker_env dropped any inherited copy
+                env[claudesignin_mod.TOKEN_ENV] = sealed_token
         log = Path(self.cfg.workers_root) / f"{worker}.log"
         head = launcher.header({"seq": p.msg_seq, "task_id": task["task_id"], "project": plan.project,
                                 "repo": plan.repo_url, "brief": task["brief"], "vault_commit": task["vault_commit"],
@@ -1534,7 +1562,18 @@ class Host:
             "bus_state": self.bus_state, "channel": self.cfg.channel, "channel_state": self.channel_state,
             "model": self.default_model(), "ghcp_ok": self.ghcp_ok, "tasks": tasks, "pwsh": self.pwsh_version(),
             "sign_in": self.signins.status(),
+            **self.claude_signin_facts(),
         }
+
+    def claude_signin_facts(self) -> dict:
+        """The status's sign_in_key, claude_token_since and claude_token_old (section 4a); never the token itself. A
+        store that can't be read gives nothing rather than stopping the status."""
+        try:
+            since = claudesignin_mod.since(self.signin_store)
+            return {"sign_in_key": claudesignin_mod.key_status(self.signin_store), "claude_token_since": since,
+                    "claude_token_old": claudesignin_mod.is_old(since, date.today())}
+        except (OSError, ValueError, LookupError):
+            return {}
 
     def pwsh_version(self) -> str | None:
         """PowerShell 7's version, for the status (a zip install that Wazuh can't see, so monitoring needs it here).

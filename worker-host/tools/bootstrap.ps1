@@ -988,6 +988,24 @@ function Test-StrayGitConfig([switch]$Remove) {
     Say "removed $StrayGitConfig (left by a sign-in; git without a profile would read it)"
 }
 
+function Show-SignInKey([string]$python, [string]$hostHome, [string]$account, $password) {
+    # Spec 4a (u64-security, #humans 29120): the host's key for a sealed Claude token, made now as the account (its
+    # private half is DPAPI, so only that account can make or use it), and its fingerprint printed here, so the App's
+    # first pin is compared with what the machine itself showed, not trusted on first use.
+    try {
+        $r = Invoke-AsAccount $python @('-I', (Join-Path $hostHome 'app\wh.py'), '--home', $hostHome, 'sign-in-key') $account $password
+        $m = [regex]::Match($r.out, 'sign-in key: (SHA256:[A-Za-z0-9+/]{43})')
+        if ($r.code -eq 0 -and $m.Success) {
+            Say "this host's sign-in key: $($m.Groups[1].Value)"
+            Say '  (the App shows this the first time it signs Claude Code in here: check they match)'
+        } else {
+            Say "could not make the sign-in key (exit $($r.code)): 'wh sign-in-key', as the host's account, makes it later"
+        }
+    } catch {
+        Say "could not make the sign-in key ($($_.Exception.Message))"
+    }
+}
+
 function Show-SignInResult([string]$python, [string]$hostHome, [string]$account, $password) {
     # After the sign-ins, still able to run as the account: its probe, so a skipped or failed sign-in shows now
     # (on the test VM a cancelled Claude sign-in otherwise went unnoticed).
@@ -1045,6 +1063,7 @@ Invoke-IsolationCheck $verified.stage $account.Name $hostHome 'C:\sb-workers'   
 # code lasts 15 minutes, and the sign-ins take as long as the operator needs (on the test VM they outlasted it).
 try {
     $enrolled = Invoke-Enrol $tools.python $hostHome $account.Name $password $bytes $DataFile   # step 8
+    Show-SignInKey $tools.python $hostHome $account.Name $password               # spec 4a
     Invoke-SignIn $account.Name $password $SB.engines $tools $mode               # step 7
     Show-SignInResult $tools.python $hostHome $account.Name $password
     Test-StrayGitConfig -Remove
