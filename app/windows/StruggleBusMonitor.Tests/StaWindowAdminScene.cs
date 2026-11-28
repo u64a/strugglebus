@@ -75,6 +75,10 @@ internal sealed class StaWindowAdminPlatform : IWindowPlatform
 
     public string? PickFleetFile(Window owner) => FleetFilePath;
 
+    public string? PublicKeyPath { get; set; }
+
+    public string? PickPublicKeyFile(Window owner) => PublicKeyPath;
+
     public string? FleetSavePath { get; set; }
 
     public string? PickFleetSavePath(Window owner) => FleetSavePath;

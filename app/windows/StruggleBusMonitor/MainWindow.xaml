@@ -701,7 +701,7 @@
                             <Border x:Name="AdminAddHostPanel" Style="{StaticResource Card}">
                                 <StackPanel>
                                     <TextBlock Text="ADD A HOST" Style="{StaticResource Label}"/>
-                                    <TextBlock Text="Makes the data file a new worker host's installer reads. Windows Hello confirms first. The file holds a one-time code; nothing secret is kept on this PC." Style="{StaticResource MutedText}" TextWrapping="Wrap" Margin="0,8,0,0"/>
+                                    <TextBlock Text="Saves the two files a new worker host needs, side by side: the installer script (bootstrap.ps1) and the data file it reads. Windows Hello confirms first. The data file holds a one-time code; nothing secret is kept on this PC." Style="{StaticResource MutedText}" TextWrapping="Wrap" Margin="0,8,0,0"/>
                                     <TextBlock Text="PC name" Style="{StaticResource FieldLabel}"/>
                                     <TextBox x:Name="HostName" FontFamily="{StaticResource Mono}" Tag="for example office1" TextChanged="HostName_TextChanged"/>
                                     <TextBlock x:Name="HostNameFeedback" FontSize="12" TextWrapping="Wrap" Margin="0,6,0,0" Visibility="Collapsed"/>
@@ -712,9 +712,21 @@
                                     </WrapPanel>
                                     <CheckBox x:Name="HostDedicated" Content="Create a dedicated Windows account for the host (recommended)" IsChecked="True" Style="{StaticResource Check}" Margin="0,14,0,0"/>
                                     <TextBlock Text="Without it, the host's workers run as the person who installs it and can reach everything that person can." Style="{StaticResource MutedText}" TextWrapping="Wrap" Margin="0,4,0,0"/>
-                                    <TextBlock Text="Site signers (one allowed_signers line each, at least two)" Style="{StaticResource FieldLabel}"/>
-                                    <TextBox x:Name="HostSigners" MinHeight="64" MaxHeight="160" AcceptsReturn="True" TextWrapping="NoWrap" HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Auto" FontFamily="{StaticResource Mono}" FontSize="12" VerticalContentAlignment="Top" Tag="owner namespaces=&quot;strugglebus-fleet,strugglebus-host-command&quot; sk-ssh-ed25519@openssh.com AAAA... key-name"/>
-                                    <TextBlock Text="These are the public keys a host will trust to sign the fleet and commands. They are remembered for the next host." Style="{StaticResource MutedText}" TextWrapping="Wrap" Margin="0,4,0,0"/>
+                                    <TextBlock Text="Site signers (the hardware keys that may sign the fleet; at least two)" Style="{StaticResource FieldLabel}"/>
+                                    <Button x:Name="SignerAddButton" Content="Add a hardware key" Style="{StaticResource BtnOutline}" Click="SignerAdd_Click" HorizontalAlignment="Left" Margin="0,0,0,8"/>
+                                    <TextBlock x:Name="SignersSummary" Style="{StaticResource MutedText}" TextWrapping="Wrap" Margin="0,0,0,8"/>
+                                    <ItemsControl x:Name="SignersList" Focusable="False" Margin="0,0,0,8">
+                                        <ItemsControl.ItemTemplate>
+                                            <DataTemplate>
+                                                <DockPanel Margin="0,0,0,6">
+                                                    <Button DockPanel.Dock="Right" Content="Remove" Tag="{Binding}" Style="{StaticResource BtnOutline}" Click="SignerRemove_Click" Margin="12,0,0,0"/>
+                                                    <TextBlock Text="{Binding Fingerprint}" FontFamily="{StaticResource Mono}" FontSize="12" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"/>
+                                                </DockPanel>
+                                            </DataTemplate>
+                                        </ItemsControl.ItemTemplate>
+                                    </ItemsControl>
+                                    <TextBox x:Name="HostSigners" MinHeight="64" MaxHeight="160" AcceptsReturn="True" TextWrapping="NoWrap" HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Auto" FontFamily="{StaticResource Mono}" FontSize="12" VerticalContentAlignment="Top" IsReadOnly="True" TextChanged="HostSigners_TextChanged" Tag="owner namespaces=&quot;strugglebus-fleet,strugglebus-host-command&quot; sk-ssh-ed25519@openssh.com AAAA... key-name"/>
+                                    <TextBlock Text="Choose a hardware key's public file (for example id_ed25519_sk_....pub in your .ssh folder) and the app writes its line here. These are the public keys a host will trust to sign the fleet and commands, and the keys this app checks a fleet's signature against. They are kept on this PC, protected for your Windows account, and change only through the buttons, with Windows Hello." Style="{StaticResource MutedText}" TextWrapping="Wrap" Margin="0,4,0,0"/>
                                     <TextBlock Text="Repository locations the host may work in (one per line)" Style="{StaticResource FieldLabel}"/>
                                     <TextBox x:Name="HostRemotes" MinHeight="40" MaxHeight="120" AcceptsReturn="True" TextWrapping="NoWrap" HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Auto" FontFamily="{StaticResource Mono}" FontSize="12" VerticalContentAlignment="Top" Tag="https://github.com/your-org/"/>
                                     <TextBlock Text="Where the host reads its fleet from" Style="{StaticResource FieldLabel}"/>
@@ -725,7 +737,7 @@
                                     </StackPanel>
                                     <TextBlock Text="Audit reason" Style="{StaticResource FieldLabel}"/>
                                     <TextBox x:Name="HostReason" Tag="Why you are adding this host"/>
-                                    <Button x:Name="HostCreateButton" Content="Create code and save data file" Style="{StaticResource Btn}" Click="HostCreate_Click" HorizontalAlignment="Left" Margin="0,16,0,0"/>
+                                    <Button x:Name="HostCreateButton" Content="Create code and save the installer and data file" Style="{StaticResource Btn}" Click="HostCreate_Click" HorizontalAlignment="Left" Margin="0,16,0,0"/>
                                     <Border x:Name="HostResultPanel" Visibility="Collapsed" Background="{DynamicResource S1}" BorderBrush="{DynamicResource Accent}" BorderThickness="1" CornerRadius="6" Padding="14" Margin="0,14,0,0">
                                         <TextBox x:Name="HostResult" IsReadOnly="True" BorderThickness="0" Background="Transparent" FontFamily="{StaticResource Mono}" FontSize="12" TextWrapping="Wrap" AcceptsReturn="True"/>
                                     </Border>

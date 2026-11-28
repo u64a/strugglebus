@@ -61,6 +61,10 @@ public sealed class AppSettings
     /// The site's signer lines, repository locations and fleet source, as last used to add a
     /// worker host. Public values only: an allowed_signers line holds a public key.
     /// </summary>
+    /// <summary>
+    /// Where the signer lines used to be kept. They are now in <see cref="SiteSignersStore"/>,
+    /// protected for this Windows account; a value found here is moved there once.
+    /// </summary>
     public string HostSigners { get; set; } = string.Empty;
     public string HostRemotes { get; set; } = string.Empty;
     public string HostFleetSource { get; set; } = AddHostLogic.DefaultFleetSource;
