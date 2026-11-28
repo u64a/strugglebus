@@ -78,6 +78,9 @@ public sealed class FleetJoinLogicTests
         Assert.Contains("host-office2: revoked. Agent host-office2-host: retired.", FleetJoinLogic.RetiredText(join, true, true));
         Assert.Contains("NOT revoked", FleetJoinLogic.RetiredText(join, false, true));
         Assert.Contains("NOT retired", FleetJoinLogic.RetiredText(join, true, false));
+        Assert.EndsWith(
+            "Only the host agent was retired. Check Admin, Agents for any other agent named host-office2-... that this principal registered, and retire it.",
+            FleetJoinLogic.RetiredText(join, true, true));
     }
 
     [Fact]
@@ -92,8 +95,9 @@ public sealed class FleetJoinLogicTests
         Assert.Contains("The app does not sign it", sign);
 
         var saved = FleetJoinLogic.SavedText(@"C:\work\fleet.toml", 6, Join());
-        Assert.Contains(@"sign-config.ps1 -File ""C:\work\fleet.toml""", saved);
-        Assert.Contains("It writes fleet.toml.sig beside the document.", saved);
+        Assert.Contains(@"sign-config.ps1 -File ""C:\work\fleet.toml"" -Signers ""C:\work\fleet.toml.signers"" -KeyFile", saved);
+        Assert.Equal(signer.Line + "\n", FleetJoinLogic.SignersFile([signer]));
+        Assert.Contains("and writes fleet.toml.sig beside the document.", saved);
         Assert.Contains("Nothing has been sent to the bus yet.", saved);
     }
 
@@ -194,6 +198,7 @@ public sealed class FleetJoinWindowTests(StaWindowAdminFixture sta)
         Assert.Equal([FleetJoinLogic.CompareCaption, FleetJoinLogic.SignCaption], scene.Platform.Confirmations.Select(asked => asked.Item2));
         Assert.Contains("The next fleet will be serial 6.", scene.Platform.Confirmations[1].Item1);
         Assert.StartsWith("Saved fleet serial 6, adding host-office2-host, as ", scene.Window.FleetResult.Text);
+        Assert.Equal(SshSignatureMaker.SignerLine(Key) + "\n", File.ReadAllText(joining.Saved + ".signers"));
         Assert.Empty(scene.Bus.RequestsTo(PublishRoute));
         Assert.Empty(scene.Bus.RequestsTo(RevokeRoute));
         Assert.Single(scene.Platform.Verified);
@@ -255,6 +260,7 @@ public sealed class FleetJoinWindowTests(StaWindowAdminFixture sta)
         Assert.Contains("did not match the installer's", retire.GetProperty("reason").GetString());
         Assert.Contains("Revoke host-office2 and retire host-office2-host", scene.Platform.HelloPrompts);
         Assert.Contains("host-office2: revoked. Agent host-office2-host: retired.", scene.Window.FleetResult.Text);
+        Assert.Contains("Only the host agent was retired.", scene.Window.FleetResult.Text);
         Assert.Empty(scene.Bus.RequestsTo(FleetRoute));
         Assert.Empty(scene.Bus.RequestsTo(PublishRoute));
         Assert.False(File.Exists(joining.Saved));

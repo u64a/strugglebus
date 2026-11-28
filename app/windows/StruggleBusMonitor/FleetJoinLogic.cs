@@ -112,7 +112,15 @@ internal static class FleetJoinLogic
 
     public static string RetiredText(HostJoin join, bool principalRevoked, bool agentRetired) =>
         $"The code did not match. Service principal {join.Principal.Name}: {(principalRevoked ? "revoked" : "NOT revoked, the bus offers no revoke for it; do it on the Service principals tab")}. " +
-        $"Agent {join.AgentName}: {(agentRetired ? "retired" : "NOT retired, the bus offers no retire for it; do it on the Agents tab")}. The fleet was not changed.";
+        $"Agent {join.AgentName}: {(agentRetired ? "retired" : "NOT retired, the bus offers no retire for it; do it on the Agents tab")}. The fleet was not changed.\n\n" +
+        OtherAgentsWarning(join);
+
+    /// <summary>
+    /// Revoking the principal stops it registering more agents; it does not retire ones it already
+    /// made. Whoever held a stolen code may have registered more than the host agent.
+    /// </summary>
+    public static string OtherAgentsWarning(HostJoin join) =>
+        $"Only the host agent was retired. Check Admin, Agents for any other agent named {join.Principal.AgentNamePrefix}-... that this principal registered, and retire it.";
 
     /// <summary>Exactly what the operator is about to save and sign: the serials and the lines added.</summary>
     public static string SignText(HostJoin join, long currentSerial, SiteSigner currentSigner) => string.Join("\n",
@@ -131,14 +139,21 @@ internal static class FleetJoinLogic
     public static string SavedText(string path, long serial, HostJoin join) => string.Join("\n",
     [
         $"Saved fleet serial {serial}, adding {join.AgentName}, as {path}",
+        $"Saved the signer lines this PC holds as {SignersPath(path)}",
         "",
         "1. Sign it with the site's hardware key (touch and PIN). From a checkout of the project:",
-        $"   pwsh -File worker-host\\tools\\sign-config.ps1 -File \"{path}\" -KeyFile $HOME\\.ssh\\<your hardware key file>",
-        $"   It writes {System.IO.Path.GetFileName(path)}.sig beside the document.",
+        $"   pwsh -File worker-host\\tools\\sign-config.ps1 -File \"{path}\" -Signers \"{SignersPath(path)}\" -KeyFile $HOME\\.ssh\\<your hardware key file>",
+        $"   It checks the result against those signer lines, the same ones this app checks against, and writes {System.IO.Path.GetFileName(path)}.sig beside the document.",
         "2. Then choose Publish a signed fleet document below and pick the saved file.",
         "",
         "The file is not secret. Nothing has been sent to the bus yet."
     ]);
+
+    /// <summary>Where the held signer lines are saved, beside the document, for the signing tool to check against.</summary>
+    public static string SignersPath(string documentPath) => documentPath + ".signers";
+
+    /// <summary>The held lines as an allowed_signers file: one per line, LF, ending with a line feed.</summary>
+    public static string SignersFile(IEnumerable<SiteSigner> held) => string.Concat(held.Select(signer => signer.Line + "\n"));
 
     /// <summary>Added to the publish question when the document is the one this app composed in this run.</summary>
     public static string ComposedNote(string agentName) => $"These are exactly the bytes this app composed to add {agentName}.";
