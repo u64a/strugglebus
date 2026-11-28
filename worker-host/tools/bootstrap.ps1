@@ -427,10 +427,28 @@ function Get-AclProblem([string]$ownerSid, $aces) {
     return $null
 }
 
+function Remove-WorkFolder([string]$work) {
+    # Only ever this run's own folder: a bootstrap-<32 hex> folder directly under ProgramData\strugglebus. A git
+    # mirror's files are read-only, hence -Force. A failure is said, never thrown: the folder is admin-only.
+    $parent = Join-Path $env:ProgramData 'strugglebus'
+    $leaf = Split-Path -Leaf $work
+    if ((Split-Path -Parent $work) -ne $parent -or $leaf -notmatch '^bootstrap-[0-9a-f]{32}$') { return }
+    if (-not (Test-Path -LiteralPath $work)) { return }
+    try {
+        Remove-Item -LiteralPath $work -Recurse -Force -ErrorAction Stop
+        Say "removed the work folder $work"
+    } catch {
+        Say "could not remove the work folder $work ($($_.Exception.Message)): it is admin-only; delete it by hand"
+    }
+}
+
 function Assert-WingetRootSafe([string]$root = $WingetPackages) {
     # u64-security (#humans 29070): a reset package folder inherits from the root, which winget created; so the root
     # must be right first, or the reset would hand its flaw down. Refused, not fixed: an administrator looks at it.
-    $acl = (Get-Item -LiteralPath $root).GetAccessControl('Owner, Access')
+    # PowerShell 7 (.NET Core) has no DirectoryInfo.GetAccessControl (the DevBox, 28 Nov); and not Get-Acl, whose
+    # module Windows PowerShell 5.1 can't load when started from a PowerShell 7 window. As at Get-AclProblem's caller.
+    $info, $sections = (Get-Item -LiteralPath $root), [Security.AccessControl.AccessControlSections]'Owner, Access'
+    $acl = if ($PSVersionTable.PSVersion.Major -ge 6) { [IO.FileSystemAclExtensions]::GetAccessControl($info, $sections) } else { $info.GetAccessControl($sections) }
     $owner = $acl.GetOwner([Security.Principal.SecurityIdentifier]).Value
     $aces = foreach ($r in $acl.GetAccessRules($true, $true, [Security.Principal.SecurityIdentifier])) {
         @{ sid = $r.IdentityReference.Value; rights = [int]$r.FileSystemRights
@@ -466,8 +484,11 @@ function Install-Prereqs($engines, [string]$work) {
         if (-not $path) {
             $id = $Prereqs[$name].id
             Say "installing $id (winget, machine-wide)"
-            $wingetArgs = @('install', '--id', $id, '--exact', '--scope', 'machine', '--silent', '--accept-package-agreements',
-                            '--accept-source-agreements', '--disable-interactivity')
+            # --force: only reached when no machine-wide copy exists. A per-user copy (the DevBox's devhost01 had
+            # Copilot for its agents) makes winget say "already installed" and put nothing in WinGet\Links. --force
+            # installs the machine copy anyway and leaves the per-user one alone (checked on the DevBox, 28 Nov).
+            $wingetArgs = @('install', '--id', $id, '--exact', '--scope', 'machine', '--force', '--silent',
+                            '--accept-package-agreements', '--accept-source-agreements', '--disable-interactivity')
             if ($Prereqs[$name].ContainsKey('skipDeps') -and $Prereqs[$name].skipDeps) { $wingetArgs += '--skip-dependencies' }
             & (Get-Winget) @wingetArgs | Out-Host
             $path = Find-Prereq $name
@@ -1046,35 +1067,41 @@ $mode = Read-SignInMode $SignIn $Yes                    # asked now, so the rest
 Test-StrayGitConfig
 
 $work = New-AdminOnlyFolder (Join-Path $env:ProgramData ('strugglebus\bootstrap-' + [guid]::NewGuid().ToString('n')))
-$tools = Install-Prereqs $SB.engines $work              # step 2
-$verified = Get-VerifiedRelease $tools.git $work        # step 3
-Say "verified host code staged at $($verified.stage)"
-Protect-SbRoot
-$password = New-RandomPassword
-$account = New-HostAccount $SB.host_prefix $password    # step 4
-Grant-BatchLogon $account.SID.Value
-Write-PinnedFiles $SB                                    # step 5
-Invoke-Install $tools.pwsh $verified.stage $work $SB $account.Name $password $tools   # step 6
-$hostHome = Join-Path $SbRoot "host\$($account.Name)"
-Write-ReleaseRecord $hostHome $verified.release
-Invoke-IsolationCheck $verified.stage $account.Name $hostHome 'C:\sb-workers'   # step 11, straight after the install
-# Steps 8 and 7 run AS the account, which is an interactive logon (CreateProcessWithLogonW), so they come before the
-# denials; the finally applies the denials even when the enrolment or a sign-in fails. Enrolment first: the App's
-# code lasts 15 minutes, and the sign-ins take as long as the operator needs (on the test VM they outlasted it).
+# The work folder (a git mirror and staged copies of the release) is removed at the end, whether the run succeeds or
+# fails (u64-security, #humans 29403: tonight's DevBox runs left three). The host runs from its own home, never this.
 try {
-    $enrolled = Invoke-Enrol $tools.python $hostHome $account.Name $password $bytes $DataFile   # step 8
-    Show-SignInKey $tools.python $hostHome $account.Name $password               # spec 4a
-    Invoke-SignIn $account.Name $password $SB.engines $tools $mode               # step 7
-    Show-SignInResult $tools.python $hostHome $account.Name $password
-    Test-StrayGitConfig -Remove
+    $tools = Install-Prereqs $SB.engines $work              # step 2
+    $verified = Get-VerifiedRelease $tools.git $work        # step 3
+    Say "verified host code staged at $($verified.stage)"
+    Protect-SbRoot
+    $password = New-RandomPassword
+    $account = New-HostAccount $SB.host_prefix $password    # step 4
+    Grant-BatchLogon $account.SID.Value
+    Write-PinnedFiles $SB                                    # step 5
+    Invoke-Install $tools.pwsh $verified.stage $work $SB $account.Name $password $tools   # step 6
+    $hostHome = Join-Path $SbRoot "host\$($account.Name)"
+    Write-ReleaseRecord $hostHome $verified.release
+    Invoke-IsolationCheck $verified.stage $account.Name $hostHome 'C:\sb-workers'   # step 11, straight after the install
+    # Steps 8 and 7 run AS the account, which is an interactive logon (CreateProcessWithLogonW), so they come before
+    # the denials; the finally applies the denials even when the enrolment or a sign-in fails. Enrolment first: the
+    # App's code lasts 15 minutes, and the sign-ins take as long as the operator needs (on the test VM they outlasted it).
+    try {
+        $enrolled = Invoke-Enrol $tools.python $hostHome $account.Name $password $bytes $DataFile   # step 8
+        Show-SignInKey $tools.python $hostHome $account.Name $password               # spec 4a
+        Invoke-SignIn $account.Name $password $SB.engines $tools $mode               # step 7
+        Show-SignInResult $tools.python $hostHome $account.Name $password
+        Test-StrayGitConfig -Remove
+    } finally {
+        $password = $null
+        Set-HostLogonRights $account.SID.Value                                       # step 7's denials
+    }
+    Start-Host $tools.python $hostHome                                                  # step 9
+    Say "enrolled as $($enrolled.identity). CONFIRMATION CODE: $($enrolled.code)"
+    Say 'In the App, compare this code with the one it shows for this host, then approve the host into the fleet.'
+    Say 'Until then the host waits in "needs-fleet" and takes no work (step 10).'
+    Say 'Note: this account''s password exists nowhere. A reinstall sets a new one, which makes the saved sign-ins and'
+    Say 'secrets unreadable (DPAPI): a reinstall means signing in to the engines and enrolling again.'
+    Remove-DataFileOffer $DataFile $Yes                                              # step 12
 } finally {
-    $password = $null
-    Set-HostLogonRights $account.SID.Value                                       # step 7's denials
+    Remove-WorkFolder $work
 }
-Start-Host $tools.python $hostHome                                                  # step 9
-Say "enrolled as $($enrolled.identity). CONFIRMATION CODE: $($enrolled.code)"
-Say 'In the App, compare this code with the one it shows for this host, then approve the host into the fleet.'
-Say 'Until then the host waits in "needs-fleet" and takes no work (step 10).'
-Say 'Note: this account''s password exists nowhere. A reinstall sets a new one, which makes the saved sign-ins and'
-Say 'secrets unreadable (DPAPI): a reinstall means signing in to the engines and enrolling again.'
-Remove-DataFileOffer $DataFile $Yes                                              # step 12

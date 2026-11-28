@@ -462,7 +462,8 @@ def test_sign_in_commands_for_a_device_code_and_for_a_browser_here(shell):
 
 def test_enrolment_runs_before_the_sign_ins_and_the_denials_always_follow():
     main = SCRIPT.read_text(encoding="ascii").split("InvocationName -eq '.') { return }")[1]
-    block = main.split("try {")[1].split("} finally {")
+    inner = next(part for part in main.split("try {")[1:] if "Invoke-Enrol" in part.split("} finally {")[0])
+    block = inner.split("} finally {")  # the sign-ins' own try, inside the work folder's
     assert block[0].index("Invoke-Enrol") < block[0].index("Invoke-SignIn")  # the App's code lasts 15 minutes
     assert "Set-HostLogonRights" in block[1]
 
@@ -505,6 +506,49 @@ def test_the_winget_root_must_be_safe_before_a_package_inherits_from_it(owner, a
                       for s, r, a, i in aces)
     got = run(f"ConvertTo-Json @(Get-AclProblem '{owner}' @({items}))", shell)
     assert (got == [None]) if bad is None else (bad in got[0])
+
+
+@pytest.mark.parametrize("shell", SHELLS)
+def test_the_winget_root_check_reads_the_acl_in_both_powershells(shell, tmp_path):
+    """Under PowerShell 7 the check died calling DirectoryInfo.GetAccessControl, which .NET Core doesn't have (the
+    DevBox, 28 Nov). A folder the test user owns must be refused by the check itself, in both shells."""
+    got = run(f"try {{ Assert-WingetRootSafe '{tmp_path}'; ConvertTo-Json @('passed') }} "
+              "catch { ConvertTo-Json @($_.Exception.Message) }", shell)
+    assert "is not safe to inherit from" in got[0] and "owned by" in got[0], got
+
+
+@pytest.mark.parametrize("shell", SHELLS)
+def test_the_work_folder_is_removed_and_nothing_else_ever_is(shell, tmp_path):
+    """u64-security 29403: the DevBox's runs left their bootstrap-<guid> folders (a git mirror, staged copies)."""
+    sb = tmp_path / "strugglebus"
+    work = sb / ("bootstrap-" + "a" * 32)
+    (work / "mirror" / "objects").mkdir(parents=True)
+    obj = work / "mirror" / "objects" / "pack"
+    obj.write_bytes(b"x")
+    os.chmod(obj, 0o444)  # git's objects are read-only
+    other = sb / "bootstrap"  # prox-manager's sbdrop chroot: never touched
+    other.mkdir()
+    odd = sb / ("bootstrap-" + "b" * 31)
+    odd.mkdir()
+    outside = tmp_path / ("bootstrap-" + "c" * 32)
+    outside.mkdir()
+    pd = str(tmp_path)
+    run(f"$env:ProgramData = '{pd}'; function Say([string]$t) {{ }}; "
+        f"foreach ($w in @('{work}', '{other}', '{odd}', '{outside}')) {{ Remove-WorkFolder $w }}; ConvertTo-Json @('ok')", shell)
+    assert not work.exists() and other.is_dir() and odd.is_dir() and outside.is_dir()
+
+
+def test_the_work_folder_goes_in_a_finally_round_every_step():
+    main = SCRIPT.read_text(encoding="ascii").split("if ($MyInvocation.InvocationName -eq '.') { return }")[1]
+    body = main.split("$work = New-AdminOnlyFolder")[1]
+    assert body.index("try {") < body.index("Install-Prereqs") < body.index("Remove-DataFileOffer")
+    assert body.rstrip().endswith("} finally {\n    Remove-WorkFolder $work\n}")
+
+
+def test_a_missing_machine_copy_is_installed_even_beside_a_per_user_one():
+    """winget says "already installed" for a per-user copy and installs nothing machine-wide without --force."""
+    prereqs = SCRIPT.read_text(encoding="ascii").split("function Install-Prereqs")[1].split("\n}\n")[0]
+    assert "'--scope', 'machine', '--force'" in prereqs
 
 
 def test_the_winget_root_is_checked_before_any_reset():
